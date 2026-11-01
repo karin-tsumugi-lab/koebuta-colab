@@ -1,6 +1,6 @@
 # Koebuta 朗読シナリオJSON仕様書
 
-- 文書状態：v1交換形式／Koebuta Colab v1.1の実装基準
+- 文書状態：v1交換形式／Koebuta Colab v1.00の実装基準
 - 形式バージョン：`schema_version: 1`
 - 対象：Koebuta Colabノートブック、外部のJSON生成・処理パイプライン（CLI新規開発は保留）
 - 役割：シナリオJSONの**意味と基本構造**を定める。LLMへの依頼方法、画面操作、GPU実行条件は定めない。
