@@ -41,4 +41,6 @@ python test_merge_reading.py
 
 ## 上流と利用条件
 
-[Irodori-TTS](https://github.com/Aratako/Irodori-TTS) および関連モデルを利用します。上流コード・モデルのライセンスと利用条件、原稿・参照音声の権利を個別に確認してください。本リポジトリ独自部分のライセンスは現在未指定です。
+[Irodori-TTS](https://github.com/Aratako/Irodori-TTS) および関連モデルを利用します。上流コード・モデルのライセンスと利用条件、原稿・参照音声の権利を個別に確認してください。Koebuta独自部分は [Koebuta Responsible Use License 1.0](LICENSE) で提供します。商用利用・改変・再配布を許可しますが、無断の声の複製・なりすまし、詐欺、脅迫・嫌がらせ等の禁止用途があります。再配布時はライセンスと権利表示を保持してください。用途制限付きのソース公開であり、MITやOSI承認のオープンソースライセンスではありません。詳細はLICENSE本文が正です。
+
+第三者のコード・モデルには各提供元の条件が適用されます。[第三者の権利表示](THIRD_PARTY_NOTICES.md)も確認してください。
