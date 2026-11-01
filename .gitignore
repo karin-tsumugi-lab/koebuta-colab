@@ -1,0 +1,46 @@
+# Credentials and local settings
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+.netrc
+.config/
+
+# Python and local editors
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ipynb_checkpoints/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# User manuscripts, scenarios, audio, models and runtime data
+*.json
+*.jsonl
+*.txt
+!requirements*.txt
+*.wav
+*.mp3
+*.flac
+*.ogg
+*.m4a
+*.mp4
+*.zip
+*.safetensors
+*.pt
+*.pth
+*.ckpt
+data/
+inputs/
+outputs/
+models/
+cache/
+.cache/
+koebuta_work/
+upstream/
+*.log
