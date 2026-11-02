@@ -1,0 +1,18 @@
+name: Notebook Inspector P0 (CPU)
+on:
+  push:
+    branches: [feature/notebook-inspector-p0]
+  pull_request:
+    paths:
+      - Koebuta_Colabv1.00.ipynb
+      - test_inspector_p0.py
+      - .github/workflows/notebook_inspector_p0.yml
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m unittest -v test_inspector_p0.py
