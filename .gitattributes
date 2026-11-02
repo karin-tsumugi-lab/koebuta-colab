@@ -1,0 +1,2 @@
+# Preserve bundled CLI bytes so BUILD.json remains valid after checkout.
+cli/** -text

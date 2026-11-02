@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "speakers": {
+    "assistant": {"name": "案内役", "kind": "character"}
+  },
+  "segments": [
+    {"id": "t01", "speaker_id": "assistant", "text": "窓から明るい日差しが差し込んでいますね。今日は、ゆっくりお話しいたしましょう。", "emotion": "kind", "acting_description": "落ち着いたテンポで、柔らかく。"},
+    {"id": "t02", "speaker_id": "assistant", "text": "お話を最後まで音声にして、一つのファイルにまとめてお届けいたします。", "emotion": "neutral"}
+  ]
+}

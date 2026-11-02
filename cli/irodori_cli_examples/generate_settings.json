@@ -1,0 +1,13 @@
+{
+  "title": "Colab CLI生成サンプル",
+  "voiceMode": "design",
+  "reading": "shared",
+  "baseCaption": "柔らかく落ち着いた成人女性の声。自然で聞き取りやすい日本語。",
+  "acting": true,
+  "emotion": true,
+  "narratorEmotion": false,
+  "ttsModel": "Aratako/Irodori-TTS-v4.1-Small",
+  "seed": 314,
+  "steps": 40,
+  "pause": 0.28
+}
