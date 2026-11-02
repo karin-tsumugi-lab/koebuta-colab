@@ -127,6 +127,30 @@ class P0CompatibilityTests(unittest.TestCase):
             self.assertFalse(issues)
             self.assertTrue(Path(voices["narrator"]).is_file())
 
+    def test_notebook_tts_split_display(self):
+        """The Notebook must make part boundaries visible without creating JSON rows."""
+        cells = json.loads(NOTEBOOK.read_text(encoding="utf-8"))["cells"]
+        screen = "".join(cells[8]["source"])
+        tree = ast.parse(screen)
+        preview = next(node for node in tree.body
+                       if isinstance(node, ast.FunctionDef)
+                       and node.name == "inspector_tts_preview")
+        ns = {"check_tts_parts": self.api["check_tts_parts"]}
+        exec(compile(ast.Module(body=[preview], type_ignores=[]), NOTEBOOK.name, "exec"), ns)
+        p = self.sample()
+        displayed = ns["inspector_tts_preview"]({"project": p})
+        self.assertIn("t001#1", displayed)
+        self.assertIn("t001#2", displayed)
+        self.assertIn("2片", displayed)
+        self.assertEqual(len(p["segments"]), 1)  # do not duplicate original text
+
+    def test_notebook_ui_wires_split_preview(self):
+        cells = json.loads(NOTEBOOK.read_text(encoding="utf-8"))["cells"]
+        screen = "".join(cells[8]["source"])
+        self.assertIn("load_event.then(inspector_tts_preview", screen)
+        self.assertIn("outputs=[tts_split_preview_box]", screen)
+        self.assertIn("【TTS指定分割】", screen)
+
     def test_legacy_split_fallback(self):
         p = self.sample()
         del p["segments"][0]["_extras"]["koebuta_tts_parts"]
