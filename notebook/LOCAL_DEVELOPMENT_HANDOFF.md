@@ -127,7 +127,7 @@ git commit -m 'Add safe manual splitting and batch adjustment confirmation'
 git push
 ```
 
-**今の配布物にはリモートのGitリポジトリ情報がありません。** ここに記した手順は例であり、コミットやプッシュを実行したことを意味しません。
+公開先は [karin-tsumugi-lab/koebuta-colab](https://github.com/karin-tsumugi-lab/koebuta-colab) です。上記のGit操作は移植作業の例であり、未実装のローカルGPU移植が完了したことを意味しません。現行構成でNotebook関連のファイルを指定するときは `notebook/` 以下のパスを使ってください。
 
 
 ## v1.00安定化の引き継ぎ

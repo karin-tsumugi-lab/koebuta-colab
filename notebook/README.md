@@ -6,6 +6,8 @@ Irodori-TTSを利用し、シナリオJSONから話者ごとの朗読音声を�
 
 ## 起動
 
+このフォルダーの [NotebookをColabで開く](https://colab.research.google.com/github/karin-tsumugi-lab/koebuta-colab/blob/main/notebook/Koebuta_Colabv1.00.ipynb)。旧ルート直下のNotebookへのリンクは、このリンクへ更新してください。
+
 1. `Koebuta_Colabv1.00.ipynb` をGoogle Colabで開き、GPUランタイムを選択します。
 2. 冒頭の利用条件を確認し、セルを上から順に実行します。
 3. 表示されたGradio URLへ、そのセルに表示された認証情報でログインします。
@@ -29,6 +31,8 @@ Irodori-TTSを利用し、シナリオJSONから話者ごとの朗読音声を�
 ## 非GPUテスト
 
 専用のPython仮想環境で実行してください。検証環境はPython 3.12です。
+
+コマンドはこの `notebook/` フォルダー内で実行します。
 
 ```bash
 python -m pip install -r requirements-dev.txt

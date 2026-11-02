@@ -19,7 +19,9 @@
 
 HTML設定の既定はreading_mode=cast、use_emotion=true、use_acting=false、narrator_emotion=false、seed=314、steps=40、default_pause_ms=280、default_blank_line_pause_ms=1200、default_text_format=none、shared_reference_wav=nullです。短文・長文の判定閾値はUI状態で、JSONへ保存されません。拡張項目の保持と生成への反映は別であり、未知属性を変換時に黙って破棄しない方針です。
 
-整理日：2026-11-02（日本時間）。この一式はローカル整理用です。GitHubへの公開・プッシュは別操作です。
+初回整理日：2026-11-02（日本時間）。統合構成は公開済みです。2026-11-03、旧ルート直下のNotebook関連16ファイルを削除し、`notebook/` を正本へ統一しました。削除した旧版はGit履歴から復元できます。ライセンス・権利表示と元配布物の記録は役割が異なるため保持しています。
+
+既存のNotebook互換PR #1は旧ルートのファイルを対象としていたため、採用時には `notebook/` 以下へ変更を移して検証する必要があります。今回PRのマージや推論コードの変更はしていません。
 
 | 対象 | 収録元 | 今回の変更 |
 | --- | --- | --- |

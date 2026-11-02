@@ -98,3 +98,5 @@ Scenario Inspector v0.1.6の `koebuta_settings`、話者の `reference_wav`、`k
 ## 詳細資料
 
 配布ZIPに同梱された [v1.0.1の詳細仕様・出力・終了コード](DISTRIBUTED_README.md) と [AIエージェント用手順](AGENTS.md)、[トラブル対策](TROUBLESHOOTING.md) を参照してください。原配布物のコードは変更していません。
+
+`DISTRIBUTED_*` と第三者表示は元配布物の記録も兼ねています。第三者表示にある旧名Yomibuta・α版や調査用fixtureへの言及は配布当時の記述で、fixture本体はこの構成に含みません。現在の操作手順はこのREADMEを参照してください。

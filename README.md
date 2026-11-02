@@ -71,7 +71,7 @@ koebuta-colab/
 └── THIRD_PARTY_NOTICES.md
 ```
 
-ルート直下にもNotebook版のファイル（`Koebuta_Colabv1.00.ipynb`、仕様書、テスト等）が残っています。これは従来の単体公開時の配置で、`notebook/` 収録分と同じ内容です。案内文書からのリンクは `notebook/` 側を指します。
+Notebook版の本体・仕様書・依頼文・テストは `notebook/` に統一しています。旧ルート直下へのブックマークやColabリンクは、`notebook/` 以下のパスへ更新してください。
 
 AIエージェントへCLI導入を依頼する場合は [cli/AGENTS.md](cli/AGENTS.md) と [cli/README.md](cli/README.md) を渡してください。WSL/Ubuntuは操作端末、推論先はColabのGPUです。Notebookの [ローカルGPU移植案](notebook/LOCAL_DEVELOPMENT_HANDOFF.md) とは導入経路が異なります。
 
@@ -83,4 +83,4 @@ Koebuta独自部分は [Koebuta Responsible Use License 1.0](LICENSE) です。I
 
 Colabへ原稿・参照WAVを転送し、GPU利用枠を使用します。Notebookの共有URLと認証情報を公開しないでください。認証情報や作品データをGitへ登録しないでください。
 
-収録元・検証範囲は [収録記録](docs/PROVENANCE.md)、残る確認事項は [公開前チェック](docs/PUBLICATION_CHECKLIST.md) を参照してください。
+収録元・検証範囲は [収録記録](docs/PROVENANCE.md)、残る確認事項は [確認一覧](docs/PUBLICATION_CHECKLIST.md) を参照してください。
