@@ -6,10 +6,10 @@ AIの判断は生成前に確認し、生成後は誤読・話者・声の一貫
 
 このリポジトリは、Notebook版の単体公開に、CLI版・Fast版・HTMLエディタと関連文書を加えた統合構成です。
 
-Google Colab利用を前提としていますが、ローカル環境を構築しKoebutaを使うための関連文書も同梱しています。
+Google Colabの有料プランなどで、コンピューティングユニット（CU）を割り当てられているユーザーを前提としています。ただし、ローカル環境を構築して使うための関連文書も同梱しています。
 
 ## まずはここから
-
+Irodoriで読ませたい原稿をLLM(チャット型AIのこと)にシナリオJSON化してもらいます。やり方は後述。
 多くの場合はNotebook版が入口です。Google Colabで [Notebook](notebook/Koebuta_Colabv1.00.ipynb) を開き、GPUランタイムを選んでセルを上から実行し、表示された画面からシナリオJSONを読み込んで使います。詳しい手順は [Notebook版の案内](notebook/README.md) と [使い方・FAQ](notebook/USER_GUIDE_FAQ.md) を参照してください。
 
 ## 実行環境の選び方
@@ -35,7 +35,7 @@ Fast版は手元のGPUで動かす単一話者向けの実装例です。HTMLエ
 
 ## 始め方
 
-1. [シナリオ化の依頼文](notebook/02_CHAT_PROMPT.md) と [JSON仕様](notebook/01_SPEC_SHEET.md) を使い、LLMに原稿の話者・演技を整理させます。長編、ファイル操作エージェント、難読語には同フォルダーの `03A`、`03B`、`03C` の追加指示を組み合わせます。
+1. [シナリオ化の依頼文](notebook/02_CHAT_PROMPT.md) と [JSON仕様](notebook/01_SPEC_SHEET.md) を使い、LLMに原稿の話者・演技を整理させます。長編、ファイル操作エージェント、難読語には同フォルダーの `03A`、`03B`、`03C` の追加指示を組み合わせます。LLMはGeminiやChatGPT、Grok、Claude、Museなど、どんなLLMサービスでも利用可能なように作られています。ただし、LLMモデルごとに文書解釈結果には個性があります。
 2. [HTMLエディタ](Koebuta_Scenario_Inspector_v0.1.6.html) で内容を確認・修正し、JSONを保存します。参照WAVを追加した場合は作品フォルダー保存またはZIP出力を使います。
 3. [Notebook](notebook/Koebuta_Colabv1.00.ipynb) をColabで開いて声を試すか、[CLI手順](cli/README.md) に従って生成します。CLIのコマンドは `cli/` 内で実行します。
 4. 完成WAV、発話別WAV、JSONを手元に保存し、試聴します。
