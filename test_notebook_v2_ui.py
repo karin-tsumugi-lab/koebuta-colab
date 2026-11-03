@@ -78,6 +78,14 @@ class UiSmoke(unittest.TestCase):
             self.assertIn('声設定 無', labels['b'])
             self.assertTrue(Path(result[0]).is_file())
             self.assertEqual((project / 'scenario.json').read_bytes(), updated)
+            json_only = callbacks['load'](None, str(project / 'scenario.json'), '')
+            self.assertTrue(json_only[-3])
+            self.assertFalse(json_only[-1]['voices'])
+            self.assertEqual((project / 'scenario.json').read_bytes(), updated)
+            invalid = root / 'invalid.json'
+            invalid.write_text('{broken')
+            with self.assertRaises(Exception):
+                callbacks['load'](None, str(invalid), '')
             # Cold start: the module becomes importable only during runtime loading.
             events = []
             def cold_load():

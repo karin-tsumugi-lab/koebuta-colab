@@ -9,6 +9,10 @@ licensing documents before using an external WebUI.
 1. Optionally enable Drive mounting. Upload a ZIP OR specify a mounted project
    directory containing `scenario.json` and relative reference WAVs. ZIP takes
    priority if both are provided. One enclosing project directory is accepted.
+   A standalone scenario `.json` upload is also accepted: it is copied into an
+   isolated temporary project and uses the same validation/planning path. Relative
+   reference WAVs are not bundled with JSON alone; use automatic voices, manually
+   assign WAVs, or use ZIP/Drive for references. Original JSON is never overwritten.
 2. Review validation messages and assign missing reference WAVs. Voice design
    generates a trial voice which can be assigned to a speaker without editing JSON.
    Missing WAVs no longer block the plan. Before actual generation, speakers

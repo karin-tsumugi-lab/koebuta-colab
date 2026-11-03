@@ -135,7 +135,14 @@ def create_v2_ui(api):
 
     @guarded
     def load(state, archive, folder):
-        source = unpack_project(archive, state['root'] / uuid.uuid4().hex) if archive else folder
+        if archive and Path(archive).suffix.lower() == '.json':
+            source = state['root'] / uuid.uuid4().hex
+            path = Path(archive)
+            if path.stat().st_size > 16 * 1024 * 1024:
+                raise ValueError('シナリオJSONが16MiBを超えています')
+            atomic_bytes(source / 'scenario.json', path.read_bytes())
+        else:
+            source = unpack_project(archive, state['root'] / uuid.uuid4().hex) if archive else folder
         project, config, voices, warnings, digest = load_project(source,
             api['normalize_scenario'], api['require_ready'], api['notebook_settings'], api['resolve_project_wavs'])
         from notebook_v2 import find_project
@@ -309,7 +316,8 @@ def create_v2_ui(api):
         with gr.Row():
           with gr.Column(scale=1, min_width=400):
             gr.Markdown('## 1. 作品の読み込み')
-            archive = gr.File(label='作品ZIP（ZIPがある場合はこちらを優先）', type='filepath')
+            archive = gr.File(label='作品ZIP / シナリオJSON（アップロードを優先）', type='filepath', file_types=['.zip', '.json'])
+            gr.Markdown('JSON単体では参照WAVは付属しません。声は自動生成または手動で割り当てられます。')
             folder = gr.Textbox(label='マウント済みDrive作品フォルダ')
             load_button = gr.Button('作品を読み込む')
             validation = gr.Textbox(label='構造検証', interactive=False, lines=2)
@@ -333,8 +341,10 @@ def create_v2_ui(api):
             with gr.Row():
                 with gr.Column(scale=1, min_width=250):
                     with gr.Row(equal_height=True):
-                        seed = gr.Number(label='Seed', value=314, precision=0, min_width=140, scale=1)
-                        random_button = gr.Button('🎲 ランダムSeed', scale=0, min_width=110)
+                        with gr.Column(scale=0, min_width=40):
+                            gr.Markdown('Seed')
+                        random_button = gr.Button('🎲 ランダム', size='sm', scale=0, min_width=90)
+                    seed = gr.Number(label='Seed', show_label=False, value=314, precision=0)
                 steps = gr.Slider(1, 200, value=40, step=1, label='Steps')
                 pause = gr.Slider(0, 60000, value=280, step=1, label='共通休止時間 ms')
             with gr.Row():
