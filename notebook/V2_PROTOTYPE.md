@@ -53,6 +53,17 @@ no server was launched. Notebook cells also compile during rebuilding.
 Follow-up automatic-reference selection regression: 18 total tests passed.
 This extra test observes scream-first avoidance and single-utterance fallback;
 automatic no-reference GPU synthesis itself has not been exercised.
+The CPU end-to-end test now also executes the no-WAV flow using a mock runtime:
+one speaker receives an automatically generated reference, a single-utterance
+speaker stays reference-free, and the accepted speech is exported as WAV/ZIP.
+Original scenario bytes remain unchanged. Total remains 18 tests (the existing
+end-to-end case was extended). No real GPU/model inference was performed.
+
+UI follow-up: compact five-column plan, selection-driven read-only details and
+audio comparison, collapsed voice trial controls, purple Soft theme at launch.
+The concept mock is not pixel-identical to the Gradio implementation. Speaker
+reference assignment is still a textual listing; streaming logs and explicit
+separate utterance/unit action buttons remain prototype follow-ups.
 
 Observed specification evidence: the P0 adapter loads an actual scenario and
 relative reference WAV; the UI callbacks expose `t010#1` and `t010#2`, generate

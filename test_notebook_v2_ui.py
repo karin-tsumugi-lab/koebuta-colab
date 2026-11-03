@@ -6,6 +6,8 @@ import unittest
 import tempfile
 import json
 import numpy as np
+from unittest.mock import MagicMock, patch
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).parent / 'notebook'))
 from notebook_v2_ui import create_v2_ui
@@ -44,12 +46,35 @@ class UiSmoke(unittest.TestCase):
             self.assertTrue(Path(exported[0]).is_file())
             self.assertTrue(Path(exported[2]).is_file())
             self.assertEqual((project / 'scenario.json').read_bytes(), raw)
+            # Missing references: one multi-line speaker plus a single-line speaker.
+            data = json.loads(raw)
+            del data['speakers']['a']['reference_wav']
+            data['speakers']['b'] = {'name': 'B', 'kind': 'character', 'voice_caption': '明瞭な声'}
+            data['segments'].extend([
+                {'id': 't011', 'speaker_id': 'a', 'text': '今日はとてもよい天気ですから、少し遠くの公園まで歩いてみましょう。'},
+                {'id': 't012', 'speaker_id': 'b', 'text': 'わかりました。'}])
+            updated = json.dumps(data).encode()
+            (project / 'scenario.json').write_bytes(updated)
+            state = callbacks['load'](None, None, str(project))[-1]
+            callbacks['inspect'](state, *settings)  # Must never load a model.
+            tensor = MagicMock()
+            tensor.detach.return_value.cpu.return_value.float.return_value.view.return_value.numpy.return_value = np.ones(160, dtype=np.float32) * .1
+            runtime = SimpleNamespace(synthesize=lambda request: SimpleNamespace(audios=[tensor], sample_rate=16000))
+            api['load_runtime'] = lambda: runtime
+            fake = SimpleNamespace(SamplingRequest=lambda **kwargs: SimpleNamespace(**kwargs))
+            with patch.dict(sys.modules, {'irodori_tts.inference_runtime': fake}):
+                callbacks['generate'](state, *settings)
+                result = callbacks['output'](state, '', *settings)
+            self.assertIn('a', state['store'].references)
+            self.assertNotIn('b', state['store'].references)
+            self.assertTrue(Path(result[0]).is_file())
+            self.assertEqual((project / 'scenario.json').read_bytes(), updated)
 
     def test_constructs_without_editor_or_server(self):
         demo = create_v2_ui({'_CTX': ContextVar('test'), 'new_session': dict})
         callbacks = {fn.fn.__name__: fn for fn in demo.fns.values()}
         self.assertEqual(set(callbacks), {'load', 'inspect', 'assign', 'sample', 'adopt_sample',
-                                         'select', 'regenerate', 'adopt', 'discard', 'generate', 'output', 'restore'})
+                                         'details', 'regenerate', 'adopt', 'discard', 'generate', 'output', 'restore'})
         for callback in callbacks.values():
             self.assertEqual(callback.concurrency_id, 'koebuta-v2')
             self.assertEqual(callback.concurrency_limit, 1)

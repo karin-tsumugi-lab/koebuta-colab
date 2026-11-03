@@ -75,10 +75,24 @@ def create_v2_ui(api):
 
     def summary(state):
         segments = {s['id']: s for s in state['project']['segments']}
-        return [[u['unit_id'], u['segment_id'], segments[u['segment_id']].get('role'),
-                 segments[u['segment_id']].get('emotion'), segments[u['segment_id']]['text'], u['text'], u['caption'],
-                 u['pause_after_ms'], '採用済み' if u['unit_id'] in state['store'].accepted else '未生成',
-                 '候補あり' if u['unit_id'] in state['store'].candidates else ''] for u in state['plan']]
+        return [[u['unit_id'], segments[u['segment_id']].get('role'),
+                 segments[u['segment_id']]['text'][:45], u['segment_id'],
+                 '候補あり' if u['unit_id'] in state['store'].candidates else
+                 ('採用済み' if u['unit_id'] in state['store'].accepted else '未生成')] for u in state['plan']]
+
+    @guarded
+    def details(state, selected):
+        unit = next((u for u in state['plan'] if u['unit_id'] == selected), None)
+        if unit is None:
+            return '', None, None
+        segment = next(s for s in state['project']['segments'] if s['id'] == unit['segment_id'])
+        store = state['store']
+        def audio(records):
+            record = records.get(selected)
+            return str(store.root / record['file']) if record and store._valid(record) else None
+        return (f"{selected}\n話者: {segment['role']} / 感情: {segment['emotion']} / 休止: {unit['pause_after_ms']}ms\n"
+                f"読み上げ文: {unit['text']}\n演技・声質: {unit['caption'] or '指定なし'}",
+                audio(store.accepted), audio(store.candidates))
 
     @guarded
     def load(state, archive, folder):
@@ -250,11 +264,13 @@ def create_v2_ui(api):
                 upload = gr.File(label='参照WAV', type='filepath')
                 assign_button = gr.Button('参照WAVを割り当て')
                 reference_audio = gr.Audio(label='参照音声')
-            sample_text = gr.Textbox(label='試作の読み上げ文', value='こんにちは。今日はどのようなお話をいたしましょうか。')
-            caption = gr.Textbox(label='試作する声の説明')
-            sample_button = gr.Button('声を試作')
-            sample_audio = gr.Audio(label='試作音声')
-            adopt_sample_button = gr.Button('試作を話者の参照音声に採用')
+            gr.Markdown('WAV未設定でも生成できます。適切な台詞から声を自動作成し、候補がなければ参照なしで生成します。')
+            with gr.Accordion('声の試作', open=False):
+                sample_text = gr.Textbox(label='試作の読み上げ文', value='こんにちは。今日はどのようなお話をいたしましょうか。')
+                caption = gr.Textbox(label='試作する声の説明')
+                sample_button = gr.Button('声を試作')
+                sample_audio = gr.Audio(label='試作音声')
+                adopt_sample_button = gr.Button('試作を話者の参照音声に採用')
         with gr.Group():
             gr.Markdown('## 3. 生成・試聴・採用')
             with gr.Row():
@@ -269,15 +285,15 @@ def create_v2_ui(api):
             inspect_button = gr.Button('生成計画を更新')
             with gr.Row():
               with gr.Column(scale=1, min_width=400):
-                table = gr.Dataframe(headers=['生成単位', '発話', '話者', '感情', '原文', '読み上げ文', '演技', '休止ms', '採用', '候補'], interactive=False)
+                table = gr.Dataframe(headers=['生成単位', '話者', '原文（抜粋）', '発話', '状態'], interactive=False)
               with gr.Column(scale=1, min_width=400):
                 selected = gr.Dropdown(label='選択中のTTS生成単位')
+                detail = gr.Textbox(label='選択対象の詳細（読み取り専用）', interactive=False, lines=4)
                 group = gr.Checkbox(label='同じ発話の全片をまとめて操作', value=False)
                 with gr.Row():
                     accepted_audio = gr.Audio(label='採用済み音声')
                     candidate_audio = gr.Audio(label='最新候補')
                 with gr.Row():
-                    listen = gr.Button('試聴音声を表示')
                     regenerate_button = gr.Button('新しい候補を生成', variant='primary')
                 with gr.Row():
                     adopt_button = gr.Button('候補を採用', variant='primary')
@@ -304,7 +320,7 @@ def create_v2_ui(api):
         assign_button.click(assign, [state, role, upload], [voices, reference_audio, state], **queue)
         sample_button.click(sample, [state, sample_text, caption, seed, steps], [sample_audio, state], **queue)
         adopt_sample_button.click(adopt_sample, [state, role], [voices, state], **queue)
-        listen.click(select, [state, selected], [accepted_audio, candidate_audio, state], **queue)
+        selected.change(details, [state, selected], [detail, accepted_audio, candidate_audio, state], **queue)
         regenerate_button.click(regenerate, [state, selected, group, *settings], [table, status, state], **queue)
         adopt_button.click(adopt, [state, selected, group], [table, status, state], **queue)
         discard_button.click(discard, [state, selected, group], [table, status, state], **queue)
