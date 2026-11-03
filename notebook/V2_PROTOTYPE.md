@@ -11,6 +11,13 @@ licensing documents before using an external WebUI.
    priority if both are provided. One enclosing project directory is accepted.
 2. Review validation messages and assign missing reference WAVs. Voice design
    generates a trial voice which can be assigned to a speaker without editing JSON.
+   Missing WAVs no longer block the plan. Before actual generation, speakers
+   with multiple utterances use a neutral 20–100-character line nearest 60
+   characters as an automatic reference (excluding !/?/ellipsis and very low
+   character variety). This is a heuristic, not semantic recognition of screams.
+   Single-utterance speakers or groups without a suitable line use no-reference
+   generation with the speaker caption. Automatic references are persisted with
+   state and reused after restore. Supplied references take priority.
 3. Update the read-only generation plan. Select a unit such as `t010#2`. Check
    the group option to regenerate/adopt/discard all units of that utterance.
    Regeneration creates fresh candidates even with a fixed seed; a deterministic
@@ -43,6 +50,9 @@ Executed 2026-11-03: Python 3.14, Gradio 6.5.1, CPU only.
 `python -X utf8 -m unittest -v test_notebook_v2.py test_notebook_v2_ui.py test_inspector_p0.py`
 passed 17 tests. Gradio construction emitted unclosed event-loop ResourceWarnings;
 no server was launched. Notebook cells also compile during rebuilding.
+Follow-up automatic-reference selection regression: 18 total tests passed.
+This extra test observes scream-first avoidance and single-utterance fallback;
+automatic no-reference GPU synthesis itself has not been exercised.
 
 Observed specification evidence: the P0 adapter loads an actual scenario and
 relative reference WAV; the UI callbacks expose `t010#1` and `t010#2`, generate

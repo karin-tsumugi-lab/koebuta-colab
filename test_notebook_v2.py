@@ -4,7 +4,7 @@ import tempfile
 import unittest
 import wave
 import zipfile
-from notebook.notebook_v2 import CandidateStore, unpack_project
+from notebook.notebook_v2 import CandidateStore, unpack_project, reference_choices
 
 
 def wav(path):
@@ -16,6 +16,15 @@ def wav(path):
 
 
 class Transactions(unittest.TestCase):
+    def test_reference_selection_skips_scream_and_single_speaker(self):
+        project = {'reading': 'cast', 'segments': [
+            {'id': 'a1', 'role': 'a', 'text': 'うわー！'},
+            {'id': 'a2', 'role': 'a', 'text': '今日はとてもよい天気ですから、少し遠くの公園まで歩いてみましょう。'},
+            {'id': 'b1', 'role': 'b', 'text': '今日はとてもよい天気ですから、少し遠くの公園まで歩いてみましょう。'}]}
+        choices = reference_choices(project, lambda text, fmt: (text, []))
+        self.assertEqual(choices['a'][0], 'a2')
+        self.assertIsNone(choices['b'])
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)

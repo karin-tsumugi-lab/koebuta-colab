@@ -30,12 +30,46 @@ def create_v2_ui(api):
                 api['_CTX'].reset(token)
         return call
 
-    def plan(state, seed, steps, acting, emotion, narrator, pause):
+    def plan(state, seed, steps, acting, emotion, narrator, pause, prepare=False):
         if state['project'] is None:
             raise ValueError('作品を読み込んでください')
-        units = api['build_plan'](state['project'], state['voices'], use_acting=acting,
+        from notebook_v2 import reference_choices
+        import hashlib
+        choices = reference_choices(state['project'], api['reading'])
+        voices = dict(state['voices'])
+        for key, choice in choices.items():
+            if key in voices:
+                continue
+            record = state['store'].references.get(key)
+            if record and state['store']._valid(record):
+                voices[key] = str(state['store'].root / record['file'])
+            elif prepare and choice:
+                role = next(r for r in state['project']['roles'] if r['id'] == next(s['role'] for s in state['project']['segments'] if s['id'] == choice[0]))
+                unit = dict(text=choice[1], caption=role.get('caption') or state['project'].get('baseCaption') or None,
+                            ref_wav=None, no_ref=True, seed=int(seed), num_steps=int(steps))
+                path = state['store'].root / (uuid.uuid4().hex + '.wav')
+                synthesis(unit, path)
+                if not valid_wav(path):
+                    raise ValueError('自動参照音声が不正です')
+                record = dict(file=path.name, sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
+                              source_segment=choice[0], text=choice[1], seed=int(seed), steps=int(steps))
+                state['store'].references[key] = record
+                state['store']._save(state['store'].accepted, state['store'].candidates)
+                voices[key] = str(path)
+            else:
+                voices[key] = None
+        units = api['build_plan'](state['project'], voices, use_acting=acting,
             use_emotion=emotion, narrator_emotion=narrator, seed=int(seed),
             steps=int(steps), global_pause_ms=int(pause))
+        roles = {r['id']: r for r in state['project']['roles']}
+        segments = {s['id']: s for s in state['project']['segments']}
+        for unit in units:
+            key = 'shared' if state['project'].get('reading') == 'shared' else segments[unit['segment_id']]['role']
+            unit['ref_wav'] = voices[key]
+            unit['no_ref'] = voices[key] is None
+            if unit['no_ref']:
+                role_caption = roles[segments[unit['segment_id']]['role']].get('caption', '')
+                unit['caption'] = '\n'.join(x for x in [role_caption, unit['caption']] if x) or None
         state['plan'] = units
         return units
 
@@ -65,7 +99,13 @@ def create_v2_ui(api):
                 str(voices), [], gr.update(choices=[], value=None))
 
     def synthesis(unit, path):
-        audio, sr = api['synthesize'](unit, api['load_runtime']())
+        if unit.get('no_ref'):
+            from irodori_tts.inference_runtime import SamplingRequest
+            result = api['load_runtime']().synthesize(SamplingRequest(text=unit['text'], caption=unit['caption'],
+                    no_ref=True, num_steps=unit['num_steps'], seed=unit['seed']))
+            audio, sr = result.audios[0].detach().cpu().float().view(-1).numpy(), int(result.sample_rate)
+        else:
+            audio, sr = api['synthesize'](unit, api['load_runtime']())
         sf.write(str(path), audio, sr, subtype='PCM_16')
 
     @guarded
@@ -81,7 +121,7 @@ def create_v2_ui(api):
 
     @guarded
     def regenerate(state, selected, group, *settings):
-        plan(state, *settings)
+        plan(state, *settings, prepare=True)
         state['store'].regenerate(targets(state, selected, group), synthesis)
         return summary(state), '候補を更新しました。試聴後に採用してください'
 
@@ -135,7 +175,7 @@ def create_v2_ui(api):
 
     @guarded
     def generate(state, *settings):
-        units = plan(state, *settings)
+        units = plan(state, *settings, prepare=True)
         missing = [u for u in units if u['unit_id'] not in state['store'].accepted
                    or not state['store']._valid(state['store'].accepted[u['unit_id']])
                    or state['store'].accepted[u['unit_id']]['key'] != state['store'].key(u)]

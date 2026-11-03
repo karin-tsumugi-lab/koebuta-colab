@@ -15,6 +15,26 @@ import wave
 import zipfile
 
 
+def reference_choices(project, reading):
+    """Choose normal 20–100-character speech; no suitable line means no-ref."""
+    groups = {}
+    for segment in project['segments']:
+        if segment.get('segment_type') == 'separator':
+            continue
+        key = 'shared' if project.get('reading') == 'shared' else segment['role']
+        groups.setdefault(key, []).append(segment)
+    result = {}
+    for key, segments in groups.items():
+        suitable = []
+        for segment in segments:
+            text = segment.get('tts_text') or reading(segment['text'], segment.get('text_format', 'none'))[0]
+            if (20 <= len(text.strip()) <= 100 and segment.get('emotion', 'neutral') == 'neutral'
+                    and not any(c in text for c in '!！?？…') and len(set(text.strip())) >= 8):
+                suitable.append((abs(len(text) - 60), segment['id'], text))
+        result[key] = min(suitable)[1:] if len(segments) >= 2 and suitable else None
+    return result
+
+
 def atomic_bytes(path, data):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -106,13 +126,13 @@ class CandidateStore:
         self.root = Path(workspace)
         self.root.mkdir(parents=True, exist_ok=True)
         self.identity = dict(identity)
-        self.accepted, self.candidates, self.cache = {}, {}, {}
+        self.accepted, self.candidates, self.cache, self.references = {}, {}, {}, {}
         self.lock = threading.RLock()
 
     def key(self, unit):
         payload = {k: v for k, v in unit.items()
                    if k not in ('unit_id', 'segment_id', 'pause_after_ms', 'ref_wav')}
-        payload['reference_sha256'] = hashlib.sha256(Path(unit['ref_wav']).read_bytes()).hexdigest()
+        payload['reference_sha256'] = hashlib.sha256(Path(unit['ref_wav']).read_bytes()).hexdigest() if unit.get('ref_wav') else None
         payload['identity'] = self.identity
         return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False, allow_nan=False).encode()).hexdigest()
 
@@ -169,7 +189,7 @@ class CandidateStore:
         cache = {**self.cache, **{r['key']: r for group in (accepted, candidates) for r in group.values()}}
         atomic_bytes(self.root / 'state.json', json.dumps({
             'version': 2, 'identity': self.identity, 'accepted': accepted,
-            'candidates': candidates, 'cache': cache}, ensure_ascii=False, allow_nan=False).encode())
+            'candidates': candidates, 'cache': cache, 'references': self.references}, ensure_ascii=False, allow_nan=False).encode())
 
     def restore(self):
         with self.lock:
@@ -180,6 +200,7 @@ class CandidateStore:
             if any(not self._valid(r) for group in groups for r in group.values()):
                 raise ValueError('保存状態の音声が欠落または破損しています')
             self.accepted, self.candidates = groups
+            self.references = {k: r for k, r in state.get('references', {}).items() if self._valid(r)}
             self.cache = {k: r for k, r in state.get('cache', {}).items() if self._valid(r)}
             self.cache.update({r['key']: r for group in groups for r in group.values()})
 
@@ -189,7 +210,7 @@ class CandidateStore:
             destination = Path(destination)
             if destination.resolve() == self.root.resolve():
                 return None
-            for group in (self.accepted, self.candidates, self.cache):
+            for group in (self.accepted, self.candidates, self.cache, self.references):
                 for record in group.values():
                     if not self._valid(record):
                         raise ValueError('保存対象WAVが破損しています')
