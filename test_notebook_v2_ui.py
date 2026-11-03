@@ -37,7 +37,7 @@ class UiSmoke(unittest.TestCase):
             loaded = callbacks['load'](None, None, str(project))
             state = loaded[-1]
             self.assertEqual([row[0] for row in loaded[-3]], ['t010#1', 't010#2'])
-            self.assertIn('設定あり', callbacks['role_info'](state, 'a')[1])
+            self.assertIn('声設定 有', callbacks['role_info'](state, 'a')[1]['choices'][0][0])
             callbacks['edit_caption'](state, 'a', '穏やかで低い声')
             self.assertEqual(callbacks['role_info'](state, 'a')[0], '穏やかで低い声')
             self.assertEqual((project / 'scenario.json').read_bytes(), raw)
@@ -73,6 +73,9 @@ class UiSmoke(unittest.TestCase):
                 result = callbacks['output'](state, '', *settings)
             self.assertIn('a', state['store'].references)
             self.assertNotIn('b', state['store'].references)
+            labels = dict((key, label) for label, key in callbacks['role_info'](state, 'a')[1]['choices'])
+            self.assertIn('声設定 有', labels['a'])
+            self.assertIn('声設定 無', labels['b'])
             self.assertTrue(Path(result[0]).is_file())
             self.assertEqual((project / 'scenario.json').read_bytes(), updated)
             # Cold start: the module becomes importable only during runtime loading.
