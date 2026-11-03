@@ -3,6 +3,9 @@
 2026-11-03 JST. Branch `codex/cli-auto-reference`, same isolated worktree and
 PR #4. Fix base: `70c2be8`. No other branch or integration-ledger edits.
 
+Subsequently, `08d301c` passed a second review and the same three-condition real
+T4 matrix. See [the subsequent evidence](CLI_AUTO_REFERENCE_RECHECK.md).
+
 ## Requirements and observations
 
 1. A supplied valid WAV must replace an unused corrupt automatic reference
@@ -46,7 +49,7 @@ PR #4. Fix base: `70c2be8`. No other branch or integration-ledger edits.
   Same invocation as `CLI_AUTO_REFERENCE_ACCEPTANCE.md`;
   local `review-fix-root-tests.log`.
 - BUILD hash refresh: 57 files verified. CRLF-aware diff check passed.
-- New GPU generation after these fixes: **not run**. Tests use local PCM WAVs
+- At the initial fix handoff, new GPU generation was **not run**. Those tests use local PCM WAVs
   and a fake inference backend, including real worker orchestration. Prior
   three-condition T4 evidence applies to `db3c58d`; the user subsequently said
   those generated samples were fine. It is not a GPU test of these fixes.
