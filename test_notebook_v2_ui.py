@@ -86,8 +86,14 @@ class UiSmoke(unittest.TestCase):
             api['load_runtime'] = lambda: runtime
             fake = SimpleNamespace(SamplingRequest=lambda **kwargs: SimpleNamespace(**kwargs))
             with patch.dict(sys.modules, {'irodori_tts.inference_runtime': fake}):
-                callbacks['generate'](state, *settings)
+                updates = []
+                callbacks['generate'](state, *settings,
+                    progress=lambda value, **kw: updates.append((value, kw['desc'])))
                 result = callbacks['output'](state, '', *settings)
+            self.assertTrue(any('自動参照音声を生成中 1/1' in message for _, message in updates))
+            self.assertTrue(any('本文音声を生成中' in message for _, message in updates))
+            self.assertEqual(updates[-1][0], 1)
+            self.assertEqual([value for value, _ in updates], sorted(value for value, _ in updates))
             self.assertIn('a', state['store'].references)
             self.assertNotIn('b', state['store'].references)
             labels = dict((key, label) for label, key in callbacks['role_info'](state, 'a')[1]['choices'])

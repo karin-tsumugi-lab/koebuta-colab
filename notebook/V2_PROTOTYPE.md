@@ -50,6 +50,16 @@ The integration owner owns `AGENTS.md` and `docs/INTEGRATION_STATUS.md` updates.
 
 ## Prototype limitations / verification boundaries
 
+Progress follow-up: automatic reference creation now reports actual pending
+reference count, speaker name and source segment before synthesis, then completion.
+Speech generation reports unit counts and distinguishes synthesis/cache reuse.
+The obsolete model-loading message during generation was removed because the
+model is preloaded before UI publication. Progress uses weighted phases (reference
+preparation then speech generation); it is not elapsed-time or denoising-step
+percentage. CPU end-to-end checks reference 1/1 notification, speech stage and
+nondecreasing progress through completion. 18 tests pass. Actual browser rendering
+of these notifications in Colab remains unverified.
+
 Second review fixes: save/restore includes seed, steps, acting, emotion, narrator
 emotion and pause; restored values populate controls before refreshing the plan.
 Adoption checks candidate fingerprints against current UI conditions. Voice

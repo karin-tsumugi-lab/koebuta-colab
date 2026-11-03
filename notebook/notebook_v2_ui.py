@@ -32,12 +32,17 @@ def create_v2_ui(api):
                 api['_CTX'].reset(token)
         return call
 
-    def plan(state, seed, steps, acting, emotion, narrator, pause, prepare=False, selected_role=None):
+    def plan(state, seed, steps, acting, emotion, narrator, pause, prepare=False, selected_role=None, progress=None):
         if state['project'] is None:
             raise ValueError('作品を読み込んでください')
         from notebook_v2 import reference_choices
         import hashlib
         choices = reference_choices(state['project'], api['reading'])
+        reference_keys = [key for key, choice in choices.items() if choice and key not in state['voices']
+                          and (selected_role is None or key == selected_role)
+                          and not (state['store'].references.get(key) and state['store']._valid(state['store'].references[key]))]
+        if prepare and progress:
+            progress(0.05, desc='参照音声を確認中')
         voices = dict(state['voices'])
         for key, choice in choices.items():
             if key in voices:
@@ -50,6 +55,10 @@ def create_v2_ui(api):
                 unit = dict(text=choice[1], caption=(state['project'].get('baseCaption') if key == 'shared' else role.get('caption')) or None,
                             ref_wav=None, no_ref=True, seed=int(seed), num_steps=int(steps))
                 path = state['store'].root / (uuid.uuid4().hex + '.wav')
+                if progress:
+                    index = reference_keys.index(key)
+                    progress(0.05 + 0.2 * index / max(1, len(reference_keys)),
+                             desc=f"自動参照音声を生成中 {index + 1}/{len(reference_keys)}: {role['name']} ({choice[0]})")
                 synthesis(unit, path)
                 if not valid_wav(path):
                     raise ValueError('自動参照音声が不正です')
@@ -58,6 +67,9 @@ def create_v2_ui(api):
                 state['store'].references[key] = record
                 state['store']._save(state['store'].accepted, state['store'].candidates)
                 voices[key] = str(path)
+                if progress:
+                    progress(0.05 + 0.2 * (reference_keys.index(key) + 1) / max(1, len(reference_keys)),
+                             desc=f"自動参照音声が完了: {role['name']}")
             else:
                 voices[key] = None
         units = api['build_plan'](state['project'], voices, use_acting=acting,
@@ -190,12 +202,14 @@ def create_v2_ui(api):
     @guarded
     def regenerate(state, selected, group, seed, steps, acting, emotion, narrator, pause, progress=gr.Progress()):
         settings = (seed, steps, acting, emotion, narrator, pause)
-        progress(0, desc='モデル準備・自動参照音声を確認中（初回は時間がかかります）')
+        progress(0, desc='再生成の対象を確認中')
         target = targets(state, selected, group)[0]
         segment = next(s for s in state['project']['segments'] if s['id'] == target['segment_id'])
         selected_role = 'shared' if state['project'].get('reading') == 'shared' else segment['role']
-        plan(state, *settings, prepare=True, selected_role=selected_role)
-        state['store'].regenerate(targets(state, selected, group), synthesis, progress=progress)
+        plan(state, *settings, prepare=True, selected_role=selected_role, progress=progress)
+        state['store'].regenerate(targets(state, selected, group), synthesis,
+            progress=lambda value, **kw: progress(0.25 + 0.7 * value, **kw))
+        progress(1, desc='候補の生成・保存が完了しました')
         return summary(state), '候補を更新しました。試聴後に採用してください'
 
     @guarded
@@ -264,8 +278,8 @@ def create_v2_ui(api):
     @guarded
     def generate(state, seed, steps, acting, emotion, narrator, pause, progress=gr.Progress()):
         settings = (seed, steps, acting, emotion, narrator, pause)
-        progress(0, desc='モデル準備・自動参照音声を確認中（初回は時間がかかります）')
-        units = plan(state, *settings, prepare=True)
+        progress(0, desc='全編生成の計画を確認中')
+        units = plan(state, *settings, prepare=True, progress=progress)
         missing = [u for u in units if u['unit_id'] not in state['store'].accepted
                    or not state['store']._valid(state['store'].accepted[u['unit_id']])
                    or state['store'].accepted[u['unit_id']]['key'] != state['store'].key(u)]
@@ -273,7 +287,9 @@ def create_v2_ui(api):
             pending = [u['unit_id'] for u in missing if u['unit_id'] in state['store'].candidates]
             if pending:
                 raise ValueError('試聴待ち候補を先に採用または破棄してください: ' + '、'.join(pending))
-            state['store'].regenerate(missing, synthesis, force=False, progress=progress)
+            state['store'].regenerate(missing, synthesis, force=False,
+                progress=lambda value, **kw: progress(0.25 + 0.7 * value, **kw))
+            progress(0.96, desc='生成結果を採用・保存中')
             state['store'].adopt([u['unit_id'] for u in missing])
         progress(1, desc='全編の音声準備が完了しました')
         return summary(state), '全編の採用済み音声を準備しました。再結合してください'

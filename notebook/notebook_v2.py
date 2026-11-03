@@ -143,10 +143,12 @@ class CandidateStore:
             staged = {}
             for index, unit in enumerate(units):
                 if progress:
-                    progress(index / max(1, len(units)), desc=f"音声準備 {index + 1}/{len(units)}: {unit['unit_id']}")
+                    progress(index / max(1, len(units)), desc=f"本文音声を確認中 {index + 1}/{len(units)}: {unit['unit_id']}")
                 key = self.key(unit)
                 record = self.cache.get(key)
                 if force or not record or not self._valid(record):
+                    if progress:
+                        progress(index / max(1, len(units)), desc=f"本文音声を生成中 {index + 1}/{len(units)}: {unit['unit_id']}")
                     path = self.root / (uuid.uuid4().hex + '.wav')
                     try:
                         synthesize(unit, path)
@@ -159,6 +161,9 @@ class CandidateStore:
                     except Exception:
                         path.unlink(missing_ok=True)
                         raise
+                else:
+                    if progress:
+                        progress(index / max(1, len(units)), desc=f"キャッシュを再利用 {index + 1}/{len(units)}: {unit['unit_id']}")
                 staged[unit['unit_id']] = record
                 if progress:
                     progress((index + 1) / len(units), desc=f"完了 {index + 1}/{len(units)}: {unit['unit_id']}")
