@@ -27,7 +27,13 @@ def reference_choices(project, reading):
     for key, segments in groups.items():
         suitable = []
         for segment in segments:
-            text = segment.get('tts_text') or reading(segment['text'], segment.get('text_format', 'none'))[0]
+            default = project.get('_extras', {}).get('koebuta_settings', {}).get('default_text_format',
+                        (project.get('textOptions') or {}).get('format', 'none'))
+            text = segment.get('tts_text')
+            if not isinstance(text, str) or not text.strip():
+                text, warnings = reading(segment['text'], segment.get('text_format', default))
+                if warnings:
+                    raise ValueError(segment['id'] + ': ' + ' / '.join(warnings))
             if (20 <= len(text.strip()) <= 100 and segment.get('emotion', 'neutral') == 'neutral'
                     and not any(c in text for c in '!！?？…') and len(set(text.strip())) >= 8):
                 suitable.append((abs(len(text) - 60), segment['id'], text))
@@ -102,6 +108,10 @@ def load_project(folder, normalize, validate, settings, resolve_wavs):
     if not isinstance(data, dict):
         raise ValueError('JSONのルートはオブジェクトが必要です')
     project = normalize(data)
+    for segment in data.get('segments', []):
+        for key in ('pause_after_ms', 'blank_line_pause_ms'):
+            if key in segment and (type(segment[key]) is not int or not 0 <= segment[key] <= 60000):
+                raise ValueError(key + ' は0〜60000msの整数が必要です')
     validate(project)
     config = settings(project)
     voices, warnings = resolve_wavs(project, root)
@@ -128,6 +138,7 @@ class CandidateStore:
         self.identity = dict(identity)
         self.accepted, self.candidates, self.cache, self.references = {}, {}, {}, {}
         self.session_settings = {}
+        self.history = []
         self.lock = threading.RLock()
 
     def key(self, unit):
@@ -136,6 +147,15 @@ class CandidateStore:
         payload['reference_sha256'] = hashlib.sha256(Path(unit['ref_wav']).read_bytes()).hexdigest() if unit.get('ref_wav') else None
         payload['identity'] = self.identity
         return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False, allow_nan=False).encode()).hexdigest()
+
+    def compatible(self, record, unit):
+        """Sampling seed/steps belong to each accepted take, not global output."""
+        if not record or not self._valid(record):
+            return False
+        actual = dict(unit)
+        for key in ('seed', 'num_steps'):
+            actual[key] = record['unit'][key]
+        return record['key'] == self.key(actual)
 
     def regenerate(self, units, synthesize, force=True, progress=None):
         with self.lock:
@@ -171,6 +191,7 @@ class CandidateStore:
             self._save(self.accepted, updated)
             self.candidates = updated
             self.cache.update({r['key']: r for r in staged.values()})
+            self.prune()
             return staged
 
     def _valid(self, record):
@@ -187,6 +208,7 @@ class CandidateStore:
                 raise ValueError('全片の有効な候補が必要です')
             accepted = {**self.accepted, **{i: self.candidates[i] for i in ids}}
             candidates = {i: r for i, r in self.candidates.items() if i not in ids}
+            self.history.extend(self.accepted[i] for i in ids if i in self.accepted)
             self._save(accepted, candidates)
             self.accepted, self.candidates = accepted, candidates
 
@@ -195,13 +217,26 @@ class CandidateStore:
             candidates = {i: r for i, r in self.candidates.items() if i not in unit_ids}
             self._save(self.accepted, candidates)
             self.candidates = candidates
+            self.prune()
+
+    def prune(self, limit=32):
+        """Retain accepted history, current candidates/references, and bounded cache."""
+        import re
+        self.cache = dict(list(self.cache.items())[-limit:])
+        protected = {r['file'] for group in (self.accepted, self.candidates, self.references, self.cache)
+                     for r in group.values()}
+        protected.update(r['file'] for r in self.history)
+        self._save(self.accepted, self.candidates)
+        for path in self.root.iterdir():
+            if re.fullmatch(r'[0-9a-f]{32}\.wav', path.name) and path.name not in protected and not path.is_symlink():
+                path.unlink()
 
     def _save(self, accepted, candidates):
         cache = {**self.cache, **{r['key']: r for group in (accepted, candidates) for r in group.values()}}
         atomic_bytes(self.root / 'state.json', json.dumps({
             'version': 2, 'identity': self.identity, 'accepted': accepted,
             'candidates': candidates, 'cache': cache, 'references': self.references,
-            'session_settings': self.session_settings}, ensure_ascii=False, allow_nan=False).encode())
+            'session_settings': self.session_settings, 'history': self.history}, ensure_ascii=False, allow_nan=False).encode())
 
     def restore(self):
         with self.lock:
@@ -213,6 +248,7 @@ class CandidateStore:
                 raise ValueError('保存状態の音声が欠落または破損しています')
             self.accepted, self.candidates = groups
             self.session_settings = state.get('session_settings', {})
+            self.history = state.get('history', [])
             self.references = {k: r for k, r in state.get('references', {}).items() if self._valid(r)}
             self.cache = {k: r for k, r in state.get('cache', {}).items() if self._valid(r)}
             self.cache.update({r['key']: r for group in groups for r in group.values()})
@@ -221,9 +257,12 @@ class CandidateStore:
         """Copy audio first, publish the manifest last; local results stay intact."""
         try:
             destination = Path(destination)
+            manifest = destination / 'state.json'
+            if manifest.exists() and json.loads(manifest.read_bytes()).get('identity') != self.identity:
+                raise ValueError('別作品または非互換の保存先です。新しい作品専用フォルダを指定してください')
             if destination.resolve() == self.root.resolve():
                 return None
-            for group in (self.accepted, self.candidates, self.cache, self.references):
+            for group in (self.accepted, self.candidates, self.cache, self.references, {str(i): r for i, r in enumerate(self.history)}):
                 for record in group.values():
                     if not self._valid(record):
                         raise ValueError('保存対象WAVが破損しています')

@@ -16,6 +16,34 @@ def wav(path):
 
 
 class Transactions(unittest.TestCase):
+    def test_persistence_rejects_other_work(self):
+        self.store.regenerate(self.units, self.generate)
+        self.store._save(self.store.accepted, self.store.candidates)
+        destination = self.root / 'saved'
+        self.assertIsNone(self.store.persist(destination))
+        before = (destination / 'state.json').read_bytes()
+        other = CandidateStore(self.root / 'other', {'model': 'different'})
+        other._save({}, {})
+        self.assertIn('失敗', other.persist(destination))
+        self.assertEqual(before, (destination / 'state.json').read_bytes())
+
+    def test_cache_bound_preserves_accepted_history(self):
+        self.store.regenerate(self.units[:1], self.generate)
+        self.store.adopt(['t010#1'])
+        old = self.store.accepted['t010#1']['file']
+        for seed in range(36):
+            unit = dict(self.units[0], seed=seed)
+            self.store.regenerate([unit], self.generate)
+        self.assertLessEqual(len(self.store.cache), 32)
+        self.assertTrue((self.store.root / old).is_file())
+
+    def test_reference_uses_global_reading_format(self):
+        project = {'reading': 'cast', '_extras': {'koebuta_settings': {'default_text_format': 'aozora'}},
+                   'segments': [{'id': str(i), 'role': 'a', 'text': '十分な長さがある通常の文章を参照音声として使用します。'} for i in range(2)]}
+        observed = []
+        reference_choices(project, lambda text, fmt: (observed.append(fmt) or text, []))
+        self.assertEqual(observed, ['aozora', 'aozora'])
+
     def test_reference_selection_skips_scream_and_single_speaker(self):
         project = {'reading': 'cast', 'segments': [
             {'id': 'a1', 'role': 'a', 'text': 'うわー！'},

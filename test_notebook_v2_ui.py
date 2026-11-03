@@ -65,9 +65,22 @@ class UiSmoke(unittest.TestCase):
             self.assertTrue(Path(restored['voices']['a']).is_file())
             callbacks['inspect'](state, *settings)
             callbacks['adopt'](state, 't010#1', True)
+            second = dict(state['store'].accepted['t010#2'])
+            callbacks['regenerate'](state, 't010#1', False, 999, 50, False, False, False, 280)
+            callbacks['adopt'](state, 't010#1', False, 999, 50, False, False, False, 280)
+            self.assertEqual(second, state['store'].accepted['t010#2'])
             exported = callbacks['output'](state, '', *settings)
             self.assertTrue(Path(exported[0]).is_file())
             self.assertTrue(Path(exported[2]).is_file())
+            self.assertIn('_完成_', Path(exported[0]).name)
+            callbacks['save_state'](state, str(saved_folder), *settings)
+            mixed = callbacks['load'](None, None, str(project))[-1]
+            callbacks['restore'](mixed, str(saved_folder))
+            self.assertEqual(mixed['store'].accepted['t010#1']['unit']['seed'], 999)
+            self.assertEqual(mixed['store'].accepted['t010#2']['unit']['seed'], 314)
+            mixed_export = callbacks['output'](mixed, str(root / 'local-output'), *settings)
+            self.assertIn('Drive永続保存ではありません', mixed_export[3])
+            self.assertTrue(Path(mixed_export[0]).is_file())
             self.assertEqual((project / 'scenario.json').read_bytes(), raw)
             # Missing references: one multi-line speaker plus a single-line speaker.
             data = json.loads(raw)
@@ -109,6 +122,12 @@ class UiSmoke(unittest.TestCase):
             invalid.write_text('{broken')
             with self.assertRaises(Exception):
                 callbacks['load'](None, str(invalid), '')
+            old_project = state['project']
+            invalid.write_text(json.dumps({'schema_version': 1, 'speakers': data['speakers'],
+                'segments': [{'id': 'bad', 'speaker_id': 'a', 'text': 'bad', 'pause_after_ms': 10**20}]}))
+            with self.assertRaises(Exception):
+                callbacks['load'](state, str(invalid), '')
+            self.assertIs(state['project'], old_project)
             # Cold start: the module becomes importable only during runtime loading.
             events = []
             def cold_load():

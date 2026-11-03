@@ -151,6 +151,8 @@ def create_v2_ui(api):
 
     @guarded
     def load(state, archive, folder):
+        previous = state
+        state = {'root': previous['root'], 'project': None, 'voices': {}, 'store': None, 'plan': [], 'sample': None}
         if archive and Path(archive).suffix.lower() == '.json':
             source = state['root'] / uuid.uuid4().hex
             path = Path(archive)
@@ -171,6 +173,10 @@ def create_v2_ui(api):
         role_choices = speaker_choices(state)
         units = plan(state, config.get('seed', 314), config.get('steps', 40), config.get('use_acting', False),
                      config.get('use_emotion', True), config.get('narrator_emotion', False), config.get('default_pause_ms', 280))
+        state['title'] = Path(archive).stem if archive else Path(source).name
+        previous.clear()
+        previous.update(state)
+        state = previous
         return (f"発話数: {sum(s.get('segment_type') != 'separator' for s in project['segments'])} / 参照音声数: {len(voices)}\n" + '\n'.join(warnings),
                 gr.update(choices=role_choices, value=roles[0] if roles else None),
                 config.get('seed', 314), config.get('steps', 40), config.get('use_acting', False),
@@ -282,7 +288,7 @@ def create_v2_ui(api):
         units = plan(state, *settings, prepare=True, progress=progress)
         missing = [u for u in units if u['unit_id'] not in state['store'].accepted
                    or not state['store']._valid(state['store'].accepted[u['unit_id']])
-                   or state['store'].accepted[u['unit_id']]['key'] != state['store'].key(u)]
+                   or not state['store'].compatible(state['store'].accepted[u['unit_id']], u)]
         if missing:
             pending = [u['unit_id'] for u in missing if u['unit_id'] in state['store'].candidates]
             if pending:
@@ -295,46 +301,66 @@ def create_v2_ui(api):
         return summary(state), '全編の採用済み音声を準備しました。再結合してください'
 
     @guarded
-    def output(state, destination, seed, steps, acting, emotion, narrator, pause, progress=gr.Progress()):
+    def output(state, destination, seed, steps, acting, emotion, narrator, pause, output_name='', progress=gr.Progress()):
         settings = (seed, steps, acting, emotion, narrator, pause)
         progress(0, desc='採用音声の整合性を確認中')
         units = plan(state, *settings)
         store = state['store']
-        chunks, rate = [], None
-        zip_path = state['root'] / (uuid.uuid4().hex + '.zip')
+        import re, wave
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        title = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', output_name.strip() or state.get('title', '作品')).strip(' .')[:80] or '作品'
+        stamp = datetime.now(ZoneInfo('Asia/Tokyo')).strftime('%Y%m%d_%H%M%S_%f')
+        prefix = f'{title}_{{kind}}_{stamp}'
+        rate = None
+        zip_path = state['root'] / (prefix.format(kind='個別音声') + '.zip')
         # Validate all accepted inputs before publishing any output.
         for unit in units:
             record = store.accepted.get(unit['unit_id'])
-            if not record or not store._valid(record) or record['key'] != store.key(unit):
+            if not store.compatible(record, unit):
                 raise ValueError(unit['unit_id'] + ': 現在の条件に一致する採用音声が必要です')
-        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as archive:
+            if type(unit['pause_after_ms']) is not int or not 0 <= unit['pause_after_ms'] <= 60000:
+                raise ValueError('休止時間は0〜60000msで指定してください')
+        target = state['root'] / (prefix.format(kind='完成') + '.wav')
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as archive, wave.open(str(target), 'wb') as output_wav:
             for index, unit in enumerate(units):
                 progress(index / len(units) * 0.8, desc=f"結合・ZIP作成 {index + 1}/{len(units)}")
                 path = store.root / store.accepted[unit['unit_id']]['file']
-                audio, sr = sf.read(str(path), dtype='float32')
-                if audio.ndim != 1 or (rate is not None and sr != rate):
-                    raise ValueError('音声の形式が一致しません')
-                rate = sr
-                chunks.append(audio)
-                if index < len(units) - 1:
-                    chunks.append(np.zeros(int(sr * unit['pause_after_ms'] / 1000), dtype='float32'))
-                archive.write(path, f'{index + 1:06d}.wav')
-        target = state['root'] / (uuid.uuid4().hex + '.wav')
-        sf.write(str(target), np.concatenate(chunks), rate, subtype='PCM_16')
+                with wave.open(str(path), 'rb') as source_wav:
+                    sr = source_wav.getframerate()
+                    if source_wav.getnchannels() != 1 or source_wav.getsampwidth() != 2 or (rate is not None and sr != rate):
+                        raise ValueError('モノラルPCM16・同じサンプルレートが必要です')
+                    if rate is None:
+                        output_wav.setparams((1, 2, sr, 0, 'NONE', 'not compressed'))
+                    rate = sr
+                    while chunk := source_wav.readframes(65536):
+                        output_wav.writeframesraw(chunk)
+                    if index < len(units) - 1:
+                        remaining = int(sr * unit['pause_after_ms'] / 1000)
+                        while remaining:
+                            count = min(remaining, 65536)
+                            output_wav.writeframesraw(b'\0\0' * count)
+                            remaining -= count
+                segment = next(s for s in state['project']['segments'] if s['id'] == unit['segment_id'])
+                label = re.sub(r'[^\w.-]', '_', unit['unit_id'].replace('#', '_part'))
+                speaker = re.sub(r'[^\w.-]', '_', segment['role'])
+                archive.write(path, f'{index + 1:04d}_{label}_{speaker}.wav')
         message = '完成WAVと個別音声ZIPを作成しました'
         if destination.strip():
             progress(0.9, desc='Driveへ保存中（一時領域にも保持します）')
             resolved = Path(destination).resolve()
             if resolved == state['source'] or resolved.is_relative_to(state['source']):
                 raise ValueError('元作品の保護のため、作品フォルダ外の保存先を指定してください。完成結果は一時領域に保持しています')
-            saved_message = save_state(state, destination)[0]
-            warning = saved_message if '失敗' in saved_message else None
+            warning = None
             try:
-                atomic_bytes(Path(destination) / 'narration.wav', target.read_bytes())
-                atomic_bytes(Path(destination) / 'individual.zip', zip_path.read_bytes())
+                saved_message = save_state(state, destination)[0]
+                if '失敗' in saved_message:
+                    raise ValueError(saved_message)
+                atomic_bytes(Path(destination) / target.name, target.read_bytes())
+                atomic_bytes(Path(destination) / zip_path.name, zip_path.read_bytes())
             except Exception as exc:
                 warning = 'Drive出力保存失敗。一時領域の結果は保持しています: ' + str(exc)
-            message += '\n' + (warning or 'Driveへ保存しました')
+            message += '\n' + (warning or ('Driveへ保存しました' if Path('/content/drive').is_mount() and Path(destination).resolve().is_relative_to(Path('/content/drive').resolve()) else 'ローカル保存しました（Drive永続保存ではありません）'))
         progress(1, desc='完成WAV・ZIPの出力が完了しました')
         return str(target), str(target), str(zip_path), message
 
@@ -361,7 +387,7 @@ def create_v2_ui(api):
                                   'baseCaption': state['project'].get('baseCaption', ''), 'manual': manual,
                                   'generation': state.get('settings', [314, 40, False, True, False, 280])}
         store._save(store.accepted, store.candidates)
-        return store.persist(destination) or '作業途中の候補・採用状態と声の設定を保存しました'
+        return store.persist(destination) or ('Driveへ作業状態を保存しました' if Path('/content/drive').is_mount() and resolved.is_relative_to(Path('/content/drive').resolve()) else 'ローカルへ作業状態を保存しました（Drive永続保存ではありません）')
 
     @guarded
     def restore(state, folder):
@@ -443,6 +469,7 @@ def create_v2_ui(api):
             with gr.Row():
               with gr.Column(scale=3):
                 destination = gr.Textbox(label='Drive保存先（空欄なら一時領域のみ）')
+                output_name = gr.Textbox(label='出力作品名（空欄は作品フォルダ・アップロード名）')
                 with gr.Row():
                     generate_button = gr.Button('全編生成', variant='primary')
                     output_button = gr.Button('完成WAV再結合・出力')
@@ -476,7 +503,7 @@ def create_v2_ui(api):
         generate_button.click(generate, [state, *settings], [table, status, state], **queue).then(
             role_info, [state, role], [caption, role, reference_audio, state], **queue).then(
             details, [state, selected], [detail, accepted_audio, candidate_audio, state], **queue)
-        output_button.click(output, [state, destination, *settings], [master, download, individual, status, state], **queue)
+        output_button.click(output, [state, destination, *settings, output_name], [master, download, individual, status, state], **queue)
         restore_button.click(restore, [state, destination], [status, *settings, voices, state], **queue).then(
             inspect, [state, *settings], [table, selected, status, state], **queue).then(
             role_info, [state, role], [caption, role, reference_audio, state], **queue)
