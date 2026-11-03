@@ -1,7 +1,9 @@
 # CLI automatic reference voice: proposed changes
 
 Requested 2026-11-03. Implemented on `codex/cli-auto-reference` for review;
-not merged or GPU-validated. See [the adopted specification](CLI_AUTO_REFERENCE.md).
+not merged. Short three-condition T4 generation/recovery was verified on 2026-11-03;
+listening quality is unverified. See [the adopted specification](CLI_AUTO_REFERENCE.md)
+and [GPU observations](reviews/CLI_AUTO_REFERENCE_GPU.md).
 
 Accepted clarification: explicit design/no-ref remains unchanged; ambiguous
 speaker WAV assignments in shared reading fail unless a shared WAV is supplied;

@@ -5,6 +5,10 @@ Base: `c7ae251` on `codex/notebook-v2`. This is a dependency on the notebook-v2
 stream, not a merge of that stream into main. No main or integration-ledger edits.
 The integration owner must review the base dependency before integration.
 
+Update: the subsequent [real T4 matrix](CLI_AUTO_REFERENCE_GPU.md) passed all
+three short reference conditions. GPU mechanical generation/recovery is now
+verified for that scope; listening quality remains unverified.
+
 ## Changed interfaces and paths
 
 - `cli/irodori_generate.py`: CLI v1.1.0; `--yes`/`-y`; settings `confirm`,
@@ -45,8 +49,12 @@ The integration owner must review the base dependency before integration.
   verification covers 57 files with zero mismatches. No release ZIP has been published.
 - Shipped sample `irodori_generate.py --dry-run`: valid JSON with two requests;
   no generation output directory created. Local `outputs/sample-dry-run.json`.
-- Colab/GPU generation and listening: **not run**. CPU worker test substitutes
+- At initial CPU handoff, Colab/GPU generation and listening were **not run**. CPU worker test substitutes
   model imports with a local fake backend. No Colab connection or CU use.
+- After the GPU matrix, the output-only summary flush fix was checked with
+  `python -X utf8 -m unittest test_irodori_generate test_auto_reference`:
+  **51 passed**. Local `post-gpu-cpu-tests.log`. GPU inference was not repeated
+  for the flush-only change.
 
 ## Requirement-to-observation evidence
 
@@ -76,4 +84,5 @@ The integration owner must review the base dependency before integration.
 - Neutrality/content and voice consistency need human listening. The selection
   heuristic and CPU test success are not evidence of synthesis quality.
 - Acceptance/merge recommendation remains with Sol and the integration owner;
-  GPU/listening evidence and notebook UI smoke are still unverified.
+  GPU mechanical evidence is recorded separately. Listening and notebook UI
+  smoke remain unverified.

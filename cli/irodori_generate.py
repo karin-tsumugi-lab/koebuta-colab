@@ -121,7 +121,7 @@ def confirm_generation(summary, *, assume_yes=False, enabled=True):
         if group.get('warning'):
             print('  注意: ' + group['warning'])
     print(f'自動参照の新規作成・変更時に生成する音声: 最大{summary["potential_rebuild_utterances"]}発話')
-    print(summary['resume_policy'])
+    print(summary['resume_policy'], flush=True)
     if assume_yes or not enabled:
         return True
     if not sys.stdin.isatty():
