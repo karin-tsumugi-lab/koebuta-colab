@@ -1,6 +1,18 @@
 # CLI automatic reference voice: proposed changes
 
-Requested 2026-11-03. Planning document only; CLI code is unchanged.
+Requested 2026-11-03. Implemented on `codex/cli-auto-reference` for review;
+not merged. Short three-condition T4 generation/recovery was verified on 2026-11-03;
+listening quality is unverified. See [the adopted specification](CLI_AUTO_REFERENCE.md)
+and [GPU observations](reviews/CLI_AUTO_REFERENCE_GPU.md).
+
+Accepted clarification: explicit design/no-ref remains unchanged; ambiguous
+speaker WAV assignments in shared reading fail unless a shared WAV is supplied;
+changed reference conditions invalidate dependent speech. Show one pre-generation
+`[y/N]` prompt. `--yes` or settings `confirm: false` skips the prompt, never errors.
+Noninteractive execution requires an explicit confirmation bypass. The host shows
+the maximum affected utterances; actual remote cache reuse is known on the worker.
+
+The requirements below are retained as the acceptance checklist.
 
 - Preserve explicitly assigned WAVs. Missing assignments must no longer block
   generation. Distinguish an omitted reference from an explicitly supplied

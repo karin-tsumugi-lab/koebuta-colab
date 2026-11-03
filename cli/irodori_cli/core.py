@@ -251,6 +251,9 @@ def normalize_project(raw):
                 item['voiceId']=profile['voiceId']
             cleaned.append(item)
         clean['voiceProfiles']=cleaned
+    if 'autoReference' in raw:
+        from .auto_reference import configuration
+        clean['autoReference'] = configuration(raw['autoReference'])
     return clean
 
 
@@ -278,11 +281,18 @@ def export_analysis(project):
             'segments':[{'id':s['id'], 'speaker_id':s['role'], 'text':s['text'], 'emotion':s['emotion'], 'acting_description':s['acting'], **{k:s[k] for k in ('tts_text','pause_after_ms','emotion_locked') if k in s}, **metadata(s)} for s in project['segments']]}
 
 
-def sampling_plan(project, voices=None, *, selected=None):
+def sampling_plan(project, voices=None, *, selected=None, allow_pending=False):
     project = normalize_project(project)
     if not project['analyzed']:
         raise ValueError('先にQwen分析か分析JSONの取り込みを行ってください')
     voices = voices or {}
+    pending = {}
+    if 'autoReference' in project:
+        from .auto_reference import reference_plan
+        project, groups = reference_plan(project, voices)
+        pending = {r['profile']: r for r in groups if r['mode'] == 'automatic'}
+        if pending and not allow_pending:
+            raise ValueError('自動参照を準備してから最終音声計画を作成してください')
     roles = {r['id']:r for r in project['roles']}
     plan = []
     reference_cache = {}
@@ -317,18 +327,22 @@ def sampling_plan(project, voices=None, *, selected=None):
         reference = None
         if clone:
             profile = 'voice_a' if shared else role['voice']
-            if profile not in voices:
+            if profile in pending:
+                reference = {'profile': profile, 'pending': True, 'group': pending[profile]['group']}
+                request.update(max_ref_seconds=30)
+            elif profile not in voices:
                 raise ValueError(f'{profile}: --voice {profile}=音声ファイル の指定が必要です')
-            if profile not in reference_cache:
-                path = Path(voices[profile]).resolve(strict=True)
-                if not path.is_file():
-                    raise ValueError('参照音声はファイルを指定してください')
-                reference_cache[profile] = (path, file_hash(path))
-            path, checksum = reference_cache[profile]
-            reference = {'profile':profile, 'sha256':checksum}
-            request.update(ref_wav=str(path), max_ref_seconds=30)
+            else:
+                if profile not in reference_cache:
+                    path = Path(voices[profile]).resolve(strict=True)
+                    if not path.is_file():
+                        raise ValueError('参照音声はファイルを指定してください')
+                    reference_cache[profile] = (path, file_hash(path))
+                path, checksum = reference_cache[profile]
+                reference = {'profile':profile, 'sha256':checksum}
+                request.update(ref_wav=str(path), max_ref_seconds=30)
         identity = {k:v for k,v in request.items() if k != 'ref_wav'}
-        fingerprint = digest({'model':project['ttsModel'], 'request':identity, 'reference':reference, 'engine_contract':1})
+        fingerprint = None if reference and reference.get('pending') else digest({'model':project['ttsModel'], 'request':identity, 'reference':reference, 'engine_contract':1})
         plan.append({'id':segment['id'], 'role':segment['role'], 'request':request,
                      'reference':reference, 'fingerprint':fingerprint, **({'pause_after_ms':gap} if gap is not None else {}), **({'_manual_pause':True} if 'pause_after_ms' in segment else {})})
     for row in plan:row.pop('_manual_pause',None)

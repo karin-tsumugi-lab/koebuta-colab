@@ -87,6 +87,8 @@ def verify_recovery(recovered):
         raise ValueError('完了ジョブの結合音声がありません。ランタイムを停止しません')
     if not combined:
         return {'audio_checked':False, 'job_status':manifest['status']}
+    from irodori_cli.auto_reference import verify_references
+    references_checked = verify_references(root)
     for relative in combined['take_files']:
         take = next(t for t in reversed(manifest['takes']) if t['file']==relative)
         path = inside(root, relative)
@@ -95,7 +97,8 @@ def verify_recovery(recovered):
     path = inside(root, combined['file'])
     if file_hash(path)!=combined['sha256'] or wav_info(path)['frames']!=combined['frames']:
         raise ValueError('回収した結合WAVの検証に失敗しました。ランタイムを停止しません')
-    return {'audio_checked':True,'job_status':manifest['status'],'combined_seconds':combined['seconds'], 'speech_quality_validated':False}
+    return {'audio_checked':True,'job_status':manifest['status'],'combined_seconds':combined['seconds'],
+            'references_checked': references_checked, 'speech_quality_validated':False}
 
 
 def remote_path(path):

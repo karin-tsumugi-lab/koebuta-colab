@@ -116,6 +116,12 @@ def prepare_with_mapping(project):
         return result,{s['id']:[s['id']] for s in result['segments']}
     cfg=project.get('textOptions',{})
     result['segments'],mapping=split_segments(project['segments'],with_mapping=True,default_format=cfg.get('format','none'),symbol_separators=cfg.get('symbolSeparators',False),prefer_reading=True)
+    if 'autoReference' in result:
+        # Repeated host/parent/worker preparation must preserve original speech
+        # identity, rather than counting each TTS fragment as a new utterance.
+        origins = project['autoReference'].get('sourceSegments', {})
+        result['autoReference']['sourceSegments'] = {
+            part: origins.get(source, source) for source, parts in mapping.items() for part in parts}
     return result,mapping
 
 

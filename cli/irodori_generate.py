@@ -13,6 +13,7 @@ import zipfile
 from irodori_cli.core import (atomic_json, identifier, new_project, normalize_project,
                               read_json, sampling_plan)
 from irodori_cli.jobs import inside
+from irodori_cli.auto_reference import reference_plan, validate_supplied, active_reference_entries
 from irodori_cli.segmentation import prepare_project
 from irodori_colab_cli import verify_recovery
 from irodori_cli.terminal import (Console, command_text, duration, read_runtime,
@@ -21,7 +22,7 @@ from irodori_cli.terminal import (Console, command_text, duration, read_runtime,
 ROOT = Path(__file__).resolve().parent
 SETTINGS = {'title', 'reading', 'voiceMode', 'baseCaption', 'seed', 'steps', 'pause',
             'ttsModel', 'acting', 'emotion', 'narratorEmotion', 'textOptions',
-            'speakerVoices', 'voices'}
+            'speakerVoices', 'voices', 'autoReference', 'autoReferenceSegments', 'confirm'}
 
 
 def load_inputs(scenario_path, settings_path, voice_items=()):
@@ -35,15 +36,24 @@ def load_inputs(scenario_path, settings_path, voice_items=()):
         unknown = ', '.join(sorted(set(settings) - SETTINGS)) if isinstance(settings, dict) else 'オブジェクト以外'
         raise ValueError('生成設定に未対応の項目があります: ' + unknown)
     project = new_project('', scenario)
-    project.update({k: v for k, v in settings.items() if k not in ('speakerVoices', 'voices')})
+    for key in ('autoReference', 'confirm'):
+        if key in settings and type(settings[key]) is not bool:
+            raise ValueError(key + 'はbooleanです')
+    project.update({k: v for k, v in settings.items() if k not in
+                    ('speakerVoices', 'voices', 'autoReference', 'autoReferenceSegments', 'confirm')})
+    # Omission requests automatic preparation; an explicit design mode opts out.
+    if 'voiceMode' not in settings:
+        project['voiceMode'] = 'clone'
+    if settings.get('autoReference', True):
+        project['autoReference'] = {'version': 1, 'selections': settings.get('autoReferenceSegments', {})}
+    elif settings.get('autoReferenceSegments'):
+        raise ValueError('autoReference=falseでは参照文の選択を指定できません')
     assignments = settings.get('speakerVoices', {})
     if not isinstance(assignments, dict) or set(assignments) - {r['id'] for r in project['roles']}:
         raise ValueError('speakerVoicesに未登録の話者があります')
     for role in project['roles']:
         if role['id'] in assignments:
             role['voice'] = identifier(assignments[role['id']], 'voice profile')
-    if assignments and project.get('reading') != 'cast':
-        raise ValueError('speakerVoicesを使う場合はreadingをcastにしてください')
     project = prepare_project(normalize_project(project))
     declared = settings.get('voices', {})
     if not isinstance(declared, dict):
@@ -63,11 +73,63 @@ def load_inputs(scenario_path, settings_path, voice_items=()):
             raise ValueError('--voiceは重複のないprofile=ファイル形式です')
         overrides.add(key)
         voices[key] = str(Path(value).expanduser().resolve())
-    requests = sampling_plan(project, voices)
+    for path in voices.values():
+        validate_supplied(path)
+    if project['reading'] == 'shared':
+        if 'voice_a' in voices:
+            # The explicitly shared WAV takes precedence over per-speaker WAVs.
+            voices = {'voice_a': voices['voice_a']}
+        elif assignments or voices:
+            raise ValueError('一人朗読の声が競合しています。共通WAVをvoices.voice_aで指定するか、人物別朗読を選んでください')
+    requests = sampling_plan(project, voices, allow_pending=True)
     used = {row['reference']['profile'] for row in requests if row['reference']}
     if set(voices) - used:
         raise ValueError('未使用の参照音声があります。voicesと声の割当を確認してください')
     return project, voices, requests
+
+
+def generation_summary(project, voices, requests):
+    _, groups = reference_plan(project, voices)
+    if not groups:
+        grouped = {}
+        for row in requests:
+            group = 'shared' if project['reading'] == 'shared' else row['role']
+            item = grouped.setdefault(group, {'group': group,
+                'mode': 'supplied' if row['reference'] else 'design',
+                'profile': row['reference']['profile'] if row['reference'] else None, 'utterances': []})
+            item['utterances'].append(row['id'])
+        groups = list(grouped.values())
+    for group in groups:
+        if group['mode'] == 'supplied':
+            group['wav'] = voices[group['profile']]
+    return {'automatic_references': groups,
+            'utterances': len(requests),
+            'potential_rebuild_utterances': sum(len(g['utterances']) for g in groups if g['mode'] == 'automatic'),
+            'resume_policy': '設定とWAV検証が一致する参照のみ再利用。変更時は依存音声を作り直します。遠隔キャッシュの有無は実行時に確定します'}
+
+
+def confirm_generation(summary, *, assume_yes=False, enabled=True):
+    print('生成計画: ' + str(summary['utterances']) + '発話')
+    modes = {'automatic': '自動参照', 'supplied': '指定WAV', 'design': '参照なし', 'fallback': '参照なし（候補文なし・単一発話）'}
+    for group in summary['automatic_references']:
+        print(f'  {group["group"]}: {modes[group["mode"]]}' +
+              (f' / 参照文 {group["segment"]}: {group["text"]}' if group['mode'] == 'automatic' else ''))
+        if group.get('wav'):
+            print('  WAV: ' + group['wav'])
+        if group.get('caption'):
+            print('  声質: ' + group['caption'])
+        if group.get('warning'):
+            print('  注意: ' + group['warning'])
+    print(f'自動参照の新規作成・変更時に生成する音声: 最大{summary["potential_rebuild_utterances"]}発話')
+    print(summary['resume_policy'], flush=True)
+    if assume_yes or not enabled:
+        return True
+    if not sys.stdin.isatty():
+        raise ValueError('対話できません。--dry-runで計画を確認し、承認済みなら--yesを指定してください')
+    try:
+        return input('この内容で生成しますか？ [y/N] ').strip().lower() == 'y'
+    except EOFError:
+        return False
 
 
 def main(argv=None):
@@ -84,23 +146,30 @@ def main(argv=None):
     parser.add_argument('--stop-after-download', action='store_true', help='回収と検証の成功後に指定ランタイムを停止')
     parser.add_argument('--timeout', type=int, default=7200, help='工程ごとの待機上限秒（既定7200）。切断時は遠隔状態を確認')
     parser.add_argument('--dry-run', action='store_true', help='ローカル検査と生成計画のみ。Colabに接続しない')
+    parser.add_argument('--yes', '-y', action='store_true', help='生成前の確認を省略。入力の競合・不正は省略しない')
     parser.add_argument('--no-usage', action='store_true', help='CU残量の照会を省略する')
-    parser.add_argument('--version', action='version', version='Irodori Colab CLI 1.0.1')
+    parser.add_argument('--version', action='version', version='Irodori Colab CLI 1.1.0')
     args = parser.parse_args(argv)
     identifier(args.session, 'session', 60)
     identifier(args.job, 'job', 60)
     if args.timeout <= 0 or (args.new and args.skip_prepare):
         raise ValueError('timeoutは正の秒数です。--newと--skip-prepareは併用できません')
     project, voices, requests = load_inputs(args.scenario, args.settings, args.voice)
+    summary_plan = generation_summary(project, voices, requests)
     if args.dry_run:
         print(json.dumps({'session': args.session, 'new_runtime': args.new,
                           'prepare': not args.skip_prepare, 'engine': 'tts',
-                          'model': project['ttsModel'], 'requests': requests}, ensure_ascii=False, indent=2))
+                          'model': project['ttsModel'], 'plan': summary_plan,
+                          'requests': requests}, ensure_ascii=False, indent=2))
         return 0
     # Claim a fresh directory before invoking Colab; never overwrite previous results.
     out = args.out.resolve()
     if out.exists():
         raise FileExistsError(f'出力先が既にあります。新しいフォルダーを指定してください: {out}')
+    if not confirm_generation(summary_plan, assume_yes=args.yes,
+                              enabled=read_json(args.settings).get('confirm', True)):
+        print('生成を取りやめました。')
+        return 0
     out.mkdir(parents=True, exist_ok=False)
     console = Console(out / 'events.jsonl')
     telemetry = {'scope': 'account', 'usage_enabled': not args.no_usage}
@@ -148,7 +217,7 @@ def main(argv=None):
         save_telemetry()
 
     atomic_json(out / 'project.json', project)
-    atomic_json(out / 'plan.json', {'requests': requests})
+    atomic_json(out / 'plan.json', {'requests': requests, **summary_plan})
     atomic_json(out / 'pipeline.json', {'status': 'running', 'session': args.session, 'job': args.job})
     driver = [sys.executable, str(ROOT / 'irodori_colab_cli.py')]
     common = ['--session', args.session, '--job', args.job, '--timeout', str(args.timeout)]
@@ -206,6 +275,16 @@ def main(argv=None):
         if not verified.get('audio_checked') or verified.get('job_status') != 'complete':
             raise ValueError('全体の音声生成が完了していません。回収結果を確認してください')
         manifest = read_json(recovered / 'job' / 'job.json')
+        if (recovered / 'job' / 'references.json').exists():
+            state = read_json(recovered / 'job' / 'references.json')
+            entries = active_reference_entries(state)
+            for entry in entries.values():
+                destination = inside(out, entry['file'])
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(inside(recovered / 'job', entry['file']), destination)
+            # This public export includes current references only. Full history
+            # remains in the recovered job, where active_groups still applies.
+            atomic_json(out / 'references.json', {**state, 'entries': entries})
         combined = manifest['combined']
         shutil.copyfile(inside(recovered / 'job', combined['file']), out / 'result.wav')
         with zipfile.ZipFile(out / 'segments.zip', 'w', zipfile.ZIP_DEFLATED) as archive:

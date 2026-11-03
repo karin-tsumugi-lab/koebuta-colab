@@ -167,7 +167,7 @@ def main(argv=None):
     if args.command == 'plan':
         from .segmentation import prepare_project
         project=prepare_project(project)
-        print(json.dumps(sampling_plan(project, voices(args.voice)), ensure_ascii=False, indent=2))
+        print(json.dumps(sampling_plan(project, voices(args.voice), allow_pending=True), ensure_ascii=False, indent=2))
         return 0
     if args.command == 'bundle':
         output = Path(args.out)
@@ -230,7 +230,7 @@ def main(argv=None):
         if not args.allow_unreviewed and any(not s['reviewed'] for s in project['segments'] if s['id'] in selected&speaking):
             print('REVIEW_REQUIRED: プロジェクトJSONの話者・感情を確認し、reviewで確認済みにしてください。推論結果は保存済みです。')
             return 2
-        sampling_plan(project, voices(args.voice))  # Validate paths/settings before GPU load.
+        sampling_plan(project, voices(args.voice), allow_pending=True)  # Validate paths/settings before GPU load.
         worker('synthesize', args)
     return 0
 
