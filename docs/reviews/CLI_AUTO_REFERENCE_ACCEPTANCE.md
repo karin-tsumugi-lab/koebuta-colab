@@ -9,6 +9,10 @@ Update: the subsequent [real T4 matrix](CLI_AUTO_REFERENCE_GPU.md) passed all
 three short reference conditions. GPU mechanical generation/recovery is now
 verified for that scope; listening quality remains unverified.
 
+Subsequent review found and fixed two edge cases: recovery after replacing a
+corrupt unused automatic WAV, and original single-utterance detection after TTS
+splitting. See [the fix evidence](CLI_AUTO_REFERENCE_REVIEW_FIXES.md).
+
 ## Changed interfaces and paths
 
 - `cli/irodori_generate.py`: CLI v1.1.0; `--yes`/`-y`; settings `confirm`,

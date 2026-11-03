@@ -31,6 +31,8 @@ class GenerateTests(unittest.TestCase):
         self.incomplete = False
         self.reference_recovery = False
         self.corrupt_reference = False
+        self.inactive_reference = False
+        self.zero_active_references = False
         self.runtime = patch('irodori_generate.read_runtime', return_value={
             'hardware': 'T4', 'shape': 'Standard', 'identity': 'test-endpoint'})
         self.runtime.start(); self.addCleanup(self.runtime.stop)
@@ -63,6 +65,12 @@ class GenerateTests(unittest.TestCase):
                                'sha256': file_hash(reference), 'audio': wav_info(reference)}}})
                 if self.corrupt_reference:
                     reference.write_bytes(b'corrupted in transit')
+                if self.inactive_reference:
+                    state = read_json(job / 'references.json')
+                    state['entries']['unused'] = {**state['entries']['shared'], 'file': 'references/unused.wav'}
+                    (job / 'references/unused.wav').write_bytes(b'old corrupt unused reference')
+                    state['active_groups'] = [] if self.zero_active_references else ['shared']
+                    atomic_json(job / 'references.json', state)
             atomic_json(job / 'job.json', {'status': 'partial' if self.incomplete else 'complete',
                 'takes': [{'file': 'take.wav', 'sha256': checksum, 'frames': 48}],
                 'combined': {'file': 'take.wav', 'sha256': checksum, 'frames': 48,
@@ -113,6 +121,19 @@ class GenerateTests(unittest.TestCase):
         with self.assertRaises(ValueError): self.invoke('--stop-after-download')
         self.assertFalse((self.out / 'result.wav').exists())
         self.assertFalse(any('stop' in c for c in self.calls))
+    def test_only_current_references_are_exported_and_inactive_corruption_is_ignored(self):
+        self.reference_recovery = self.inactive_reference = True
+        self.assertEqual(self.invoke(), 0)
+        self.assertEqual(set(read_json(self.out / 'references.json')['entries']), {'shared'})
+        self.assertTrue((self.out / 'references/reference.wav').exists())
+        self.assertFalse((self.out / 'references/unused.wav').exists())
+        self.assertEqual(read_json(self.out / 'pipeline.json')['verification']['references_checked'], 1)
+    def test_zero_active_references_export_metadata_without_copying_unused_wavs(self):
+        self.reference_recovery = self.inactive_reference = self.zero_active_references = self.corrupt_reference = True
+        self.assertEqual(self.invoke(), 0)
+        self.assertEqual(read_json(self.out / 'references.json')['entries'], {})
+        self.assertFalse((self.out / 'references').exists())
+        self.assertEqual(read_json(self.out / 'pipeline.json')['verification']['references_checked'], 0)
     def test_existing_output_is_not_overwritten(self):
         self.out.mkdir()
         with self.assertRaises(FileExistsError):self.invoke()

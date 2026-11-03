@@ -104,6 +104,83 @@ class ReferenceTests(unittest.TestCase):
         self.assertTrue(all(r['request']['no_ref'] for r in plan))
         self.assertEqual([g['mode'] for g in reference_plan(project, voices)[1]], ['fallback', 'fallback'])
 
+    def test_one_original_utterance_stays_fallback_after_repeated_split_and_normalize(self):
+        from irodori_cli.segmentation import prepare_project
+        raw = read_json(self.scenario)
+        raw['segments'] = [{'id': 'a1', 'speaker_id': 'a', 'text': NORMAL * 4}]
+        atomic_json(self.scenario, raw)
+        for reading in ('cast', 'shared'):
+            with self.subTest(reading=reading):
+                atomic_json(self.settings, {'reading': reading})
+                project, voices, plan = self.load()
+                self.assertGreater(len(plan), 1)
+                origins = project['autoReference']['sourceSegments']
+                self.assertEqual(set(origins.values()), {'a1'})
+                for _ in range(3):
+                    project = prepare_project(normalize_project(project))
+                    self.assertEqual(project['autoReference']['sourceSegments'], origins)
+                    self.assertEqual(reference_plan(project, voices)[1][0]['mode'], 'fallback')
+                effective, resolved, contexts = prepare_references(project, voices, self.job, self.infer, self.engine)
+                self.assertEqual(self.calls, [])
+                self.assertTrue(all(r['request']['no_ref'] for r in final_speech_plan(effective, resolved, contexts, self.engine)))
+
+    def test_original_counts_are_per_speaker_and_multiple_originals_still_use_reference(self):
+        raw = read_json(self.scenario)
+        raw['segments'] = [{'id': 'a1', 'speaker_id': 'a', 'text': NORMAL * 4},
+                           {'id': 'b1', 'speaker_id': 'b', 'text': NORMAL},
+                           {'id': 'b2', 'speaker_id': 'b', 'text': NORMAL}]
+        atomic_json(self.scenario, raw)
+        project, voices, _ = self.load()
+        self.assertEqual([g['mode'] for g in reference_plan(project, voices)[1]], ['fallback', 'automatic'])
+        raw['segments'].append({'id': 'a2', 'speaker_id': 'a', 'text': 'はい。'})
+        atomic_json(self.scenario, raw)
+        project, voices, _ = self.load()
+        self.assertEqual([g['mode'] for g in reference_plan(project, voices)[1]], ['automatic', 'automatic'])
+
+    def test_corrupt_unused_reference_can_be_replaced_without_blocking_recovery(self):
+        from irodori_colab_cli import verify_recovery
+        raw = read_json(self.scenario)
+        raw['segments'].append({'id': 'b2', 'speaker_id': 'b', 'text': NORMAL})
+        atomic_json(self.scenario, raw)
+        project, voices, _ = self.load()
+        _, resolved, _ = prepare_references(project, voices, self.job, self.infer, self.engine)
+        state = read_json(self.job / 'references.json')
+        old_a = self.job / state['entries']['a']['file']
+        old_a.write_bytes(b'corrupt historical reference')
+        wav(self.root / 'provided.wav')
+        atomic_json(self.settings, {'reading': 'cast', 'speakerVoices': {'a': 'provided'},
+                                   'voices': {'provided': 'provided.wav'}})
+        project, voices, _ = self.load()
+        calls_before = len(self.calls)
+        effective, resolved, contexts = prepare_references(project, voices, self.job, self.infer, self.engine)
+        self.assertEqual(len(self.calls), calls_before)  # B reused; A supplied
+        state = read_json(self.job / 'references.json')
+        self.assertEqual(set(state['entries']), {'a', 'b'})
+        self.assertEqual(state['active_groups'], ['b'])
+        self.assertEqual(old_a.read_bytes(), b'corrupt historical reference')
+        plan = final_speech_plan(effective, resolved, contexts, self.engine)
+        self.assertEqual(generate(self.job, plan, .28, self.infer)['status'], 'complete')
+        self.assertEqual(verify_recovery(self.root)['references_checked'], 1)
+        # Still fail closed for corruption in a reference actually used now.
+        (self.job / state['entries']['b']['file']).write_bytes(b'corrupt active reference')
+        with self.assertRaises(ValueError): verify_recovery(self.root)
+
+    def test_switch_to_design_has_zero_active_references_and_legacy_metadata_still_verifies(self):
+        project, voices, _ = self.load()
+        prepare_references(project, voices, self.job, self.infer, self.engine)
+        state = read_json(self.job / 'references.json')
+        state.pop('active_groups')
+        atomic_json(self.job / 'references.json', state)
+        self.assertEqual(verify_references(self.job), 1)
+        path = self.job / state['entries']['a']['file']
+        path.unlink()
+        path.parent.rmdir()
+        atomic_json(self.settings, {'reading': 'cast', 'voiceMode': 'design'})
+        project, voices, _ = self.load()
+        effective, resolved, contexts = prepare_references(project, voices, self.job, self.infer, self.engine)
+        self.assertEqual(verify_references(self.job), 0)
+        self.assertEqual(read_json(self.job / 'references.json')['active_groups'], [])
+
     def test_shared_one_group_and_explicit_shared_overrides_per_speaker(self):
         atomic_json(self.settings, {'reading': 'shared'})
         project, voices, plan = self.load()

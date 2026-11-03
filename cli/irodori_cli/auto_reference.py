@@ -14,7 +14,7 @@ from .text_conversion import convert_project
 
 
 def configuration(raw):
-    if (not isinstance(raw, dict) or set(raw) - {'version', 'selections'}
+    if (not isinstance(raw, dict) or set(raw) - {'version', 'selections', 'sourceSegments'}
             or type(raw.get('version')) is not int or raw.get('version') != 1):
         raise ValueError('autoReferenceはversion: 1とselectionsのオブジェクトです')
     selections = raw.get('selections', {})
@@ -23,7 +23,16 @@ def configuration(raw):
     for group, segment in selections.items():
         identifier(group, 'reference group')
         identifier(segment, 'reference segment', 64)
-    return {'version': 1, 'selections': dict(selections)}
+    clean = {'version': 1, 'selections': dict(selections)}
+    if 'sourceSegments' in raw:
+        sources = raw['sourceSegments']
+        if not isinstance(sources, dict) or len(sources) > 2000:
+            raise ValueError('autoReference.sourceSegmentsは分割片ID→元発話IDのオブジェクトです')
+        for segment, source in sources.items():
+            identifier(segment, 'reference segment', 64)
+            identifier(source, 'source segment', 64)
+        clean['sourceSegments'] = dict(sources)
+    return clean
 
 
 def validate_supplied(path):
@@ -109,7 +118,9 @@ def reference_plan(project, voices):
         caption = project['baseCaption'] if shared else role['caption']
         if not caption.strip():
             raise ValueError(f'{group}: 参照未設定の声には声質説明が必要です')
-        automatic = len(segments) > 1 and chosen is not None
+        origins = cfg.get('sourceSegments', {})
+        original_count = len({origins.get(s['id'], s['id']) for s in segments})
+        automatic = original_count > 1 and chosen is not None
         if selected and not automatic:
             raise ValueError(f'{group}: 単一発話には自動参照を作りません')
         # Generated profile names cannot collide with user-assigned profiles.
@@ -183,7 +194,25 @@ def prepare_references(project, voices, job, infer, engine):
                 atomic_json(metadata, state)
             resolved[row['profile']] = str(path.resolve())
             contexts[row['profile']] = signature
+        # Keep historical entries/files for recovery, but do not make an unused
+        # (possibly corrupt) old reference a prerequisite for the current job.
+        active = [row['group'] for row in groups if row['mode'] == 'automatic']
+        if metadata.exists() or active:
+            state['active_groups'] = active
+            atomic_json(metadata, state)
     return effective, resolved, contexts
+
+
+def active_reference_entries(state):
+    if state.get('version') != 1 or not isinstance(state.get('entries'), dict):
+        raise ValueError('自動参照メタデータの形式が不正です')
+    entries = state['entries']
+    # Older version-1 jobs contain only entries; every entry was then active.
+    active = state.get('active_groups', list(entries))
+    if (not isinstance(active, list) or any(not isinstance(key, str) for key in active)
+            or len(set(active)) != len(active) or not set(active) <= set(entries)):
+        raise ValueError('使用中の自動参照グループが不正です')
+    return {key: entries[key] for key in active}
 
 
 def verify_references(job):
@@ -193,13 +222,12 @@ def verify_references(job):
     if not path.exists():
         return 0
     state = read_json(path)
-    if state.get('version') != 1 or not isinstance(state.get('entries'), dict):
-        raise ValueError('回収した自動参照メタデータが不正です')
-    for entry in state['entries'].values():
+    entries = active_reference_entries(state)
+    for entry in entries.values():
         wav = inside(job, entry['file'])
         if file_hash(wav) != entry['sha256'] or wav_info(wav) != entry['audio']:
             raise ValueError('回収した自動参照WAVの検証に失敗しました')
-    return len(state['entries'])
+    return len(entries)
 
 
 def final_speech_plan(project, voices, contexts, engine):

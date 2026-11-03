@@ -13,7 +13,7 @@ import zipfile
 from irodori_cli.core import (atomic_json, identifier, new_project, normalize_project,
                               read_json, sampling_plan)
 from irodori_cli.jobs import inside
-from irodori_cli.auto_reference import reference_plan, validate_supplied
+from irodori_cli.auto_reference import reference_plan, validate_supplied, active_reference_entries
 from irodori_cli.segmentation import prepare_project
 from irodori_colab_cli import verify_recovery
 from irodori_cli.terminal import (Console, command_text, duration, read_runtime,
@@ -276,8 +276,15 @@ def main(argv=None):
             raise ValueError('全体の音声生成が完了していません。回収結果を確認してください')
         manifest = read_json(recovered / 'job' / 'job.json')
         if (recovered / 'job' / 'references.json').exists():
-            shutil.copytree(recovered / 'job' / 'references', out / 'references')
-            shutil.copyfile(recovered / 'job' / 'references.json', out / 'references.json')
+            state = read_json(recovered / 'job' / 'references.json')
+            entries = active_reference_entries(state)
+            for entry in entries.values():
+                destination = inside(out, entry['file'])
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(inside(recovered / 'job', entry['file']), destination)
+            # This public export includes current references only. Full history
+            # remains in the recovered job, where active_groups still applies.
+            atomic_json(out / 'references.json', {**state, 'entries': entries})
         combined = manifest['combined']
         shutil.copyfile(inside(recovered / 'job', combined['file']), out / 'result.wav')
         with zipfile.ZipFile(out / 'segments.zip', 'w', zipfile.ZIP_DEFLATED) as archive:
