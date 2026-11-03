@@ -50,6 +50,21 @@ The integration owner owns `AGENTS.md` and `docs/INTEGRATION_STATUS.md` updates.
 
 ## Prototype limitations / verification boundaries
 
+Review follow-up: regeneration/adoption/discard now chain a detail/audio refresh.
+Full generation refuses to overwrite pending candidates among missing/stale units;
+adopt or discard those candidates first. A dedicated '作業状態を保存' action saves
+partial work without requiring a completed WAV. Edited role captions and manual
+reference WAV assignments are serialized with the audio state and restored.
+Completed output uses the same state-save path. Restoration refreshes plan and
+speaker controls. Partial regeneration prepares automatic references only for
+the selected speaker group. Seed is emphasized and the randomizer uses a 44px
+icon button in the generated Notebook launch CSS.
+
+18 CPU tests pass with added observations for pending-candidate preservation and
+partial save/restore including edited caption and copied manual reference WAV.
+This test count includes extended existing cases. Browser audio refresh and
+44px styling still require live Colab verification; no GPU run was performed.
+
 Startup/UI follow-up: the launch cell calls `load_runtime()` before creating or
 publishing the WebUI, with preparation messages in the Notebook output. GPU
 memory is held while the UI is open; startup loading failure prevents publication.

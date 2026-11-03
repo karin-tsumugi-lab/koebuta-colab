@@ -127,6 +127,7 @@ class CandidateStore:
         self.root.mkdir(parents=True, exist_ok=True)
         self.identity = dict(identity)
         self.accepted, self.candidates, self.cache, self.references = {}, {}, {}, {}
+        self.session_settings = {}
         self.lock = threading.RLock()
 
     def key(self, unit):
@@ -194,7 +195,8 @@ class CandidateStore:
         cache = {**self.cache, **{r['key']: r for group in (accepted, candidates) for r in group.values()}}
         atomic_bytes(self.root / 'state.json', json.dumps({
             'version': 2, 'identity': self.identity, 'accepted': accepted,
-            'candidates': candidates, 'cache': cache, 'references': self.references}, ensure_ascii=False, allow_nan=False).encode())
+            'candidates': candidates, 'cache': cache, 'references': self.references,
+            'session_settings': self.session_settings}, ensure_ascii=False, allow_nan=False).encode())
 
     def restore(self):
         with self.lock:
@@ -205,6 +207,7 @@ class CandidateStore:
             if any(not self._valid(r) for group in groups for r in group.values()):
                 raise ValueError('保存状態の音声が欠落または破損しています')
             self.accepted, self.candidates = groups
+            self.session_settings = state.get('session_settings', {})
             self.references = {k: r for k, r in state.get('references', {}).items() if self._valid(r)}
             self.cache = {k: r for k, r in state.get('cache', {}).items() if self._valid(r)}
             self.cache.update({r['key']: r for group in groups for r in group.values()})

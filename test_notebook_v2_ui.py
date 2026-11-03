@@ -47,6 +47,17 @@ class UiSmoke(unittest.TestCase):
             self.assertEqual([r[0] for r in inspected[0]], ['t010#1', 't010#2'])
             callbacks['regenerate'](state, 't010#1', True, *settings)
             self.assertFalse(state['store'].accepted)
+            before = dict(state['store'].candidates)
+            with self.assertRaises(Exception):
+                callbacks['generate'](state, *settings)
+            self.assertEqual(before, state['store'].candidates)
+            saved_folder = root / 'saved'
+            callbacks['save_state'](state, str(saved_folder))
+            restored = callbacks['load'](None, None, str(project))[-1]
+            callbacks['restore'](restored, str(saved_folder))
+            self.assertEqual(before, restored['store'].candidates)
+            self.assertEqual(callbacks['role_info'](restored, 'a')[0], '穏やかで低い声')
+            self.assertTrue(Path(restored['voices']['a']).is_file())
             callbacks['adopt'](state, 't010#1', True)
             exported = callbacks['output'](state, '', *settings)
             self.assertTrue(Path(exported[0]).is_file())
@@ -104,7 +115,7 @@ class UiSmoke(unittest.TestCase):
     def test_constructs_without_editor_or_server(self):
         demo = create_v2_ui({'_CTX': ContextVar('test'), 'new_session': dict})
         callbacks = {fn.fn.__name__: fn for fn in demo.fns.values()}
-        self.assertEqual(set(callbacks), {'role_info', 'edit_caption', 'random_seed', 'load', 'inspect', 'assign', 'sample', 'adopt_sample',
+        self.assertEqual(set(callbacks), {'save_state', 'role_info', 'edit_caption', 'random_seed', 'load', 'inspect', 'assign', 'sample', 'adopt_sample',
                                          'details', 'regenerate', 'adopt', 'discard', 'generate', 'output', 'restore'})
         for callback in callbacks.values():
             self.assertEqual(callback.concurrency_id, 'koebuta-v2')
