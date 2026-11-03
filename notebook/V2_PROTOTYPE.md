@@ -46,6 +46,20 @@ The integration owner owns `AGENTS.md` and `docs/INTEGRATION_STATUS.md` updates.
 
 ## Prototype limitations / verification boundaries
 
+User-reported Colab observation: generation completed with and without assigned
+speaker WAVs. This is user evidence, not an agent GPU reproduction.
+
+Cold-start/progress fix: load the runtime (which establishes the upstream import
+path) before importing SamplingRequest, including voice trials and no-ref speech.
+Normalize single callback results to one output rather than unpacking a path
+string. CPU regression simulates the module being unavailable until runtime
+initialization and verifies a playable trial file is returned. Gradio special_args
+recognizes Progress on trial, regeneration, full generation and output callbacks.
+18 CPU tests pass; generated Notebook cells compile. Progress reports preparation,
+unit counts, assembly and saving via Gradio's queue progress overlay. It is not
+per-step model progress and does not yet append a persistent streaming log.
+Real Colab cold-start and browser progress rendering after this fix remain unverified.
+
 Executed 2026-11-03: Python 3.14, Gradio 6.5.1, CPU only.
 `python -X utf8 -m unittest -v test_notebook_v2.py test_notebook_v2_ui.py test_inspector_p0.py`
 passed 17 tests. Gradio construction emitted unclosed event-loop ResourceWarnings;

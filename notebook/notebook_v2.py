@@ -136,10 +136,13 @@ class CandidateStore:
         payload['identity'] = self.identity
         return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False, allow_nan=False).encode()).hexdigest()
 
-    def regenerate(self, units, synthesize, force=True):
+    def regenerate(self, units, synthesize, force=True, progress=None):
         with self.lock:
+            units = list(units)
             staged = {}
-            for unit in units:
+            for index, unit in enumerate(units):
+                if progress:
+                    progress(index / max(1, len(units)), desc=f"音声準備 {index + 1}/{len(units)}: {unit['unit_id']}")
                 key = self.key(unit)
                 record = self.cache.get(key)
                 if force or not record or not self._valid(record):
@@ -156,6 +159,8 @@ class CandidateStore:
                         path.unlink(missing_ok=True)
                         raise
                 staged[unit['unit_id']] = record
+                if progress:
+                    progress((index + 1) / len(units), desc=f"完了 {index + 1}/{len(units)}: {unit['unit_id']}")
             updated = {**self.candidates, **staged}
             self._save(self.accepted, updated)
             self.candidates = updated

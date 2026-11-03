@@ -18,11 +18,13 @@ def create_v2_ui(api):
 
     def guarded(fn):
         @functools.wraps(fn)
-        def call(state, *args):
+        def call(state, *args, **kwargs):
             state = state or session()
             token = api['_CTX'].set(api['new_session']())
             try:
-                result = fn(state, *args)
+                result = fn(state, *args, **kwargs)
+                if not isinstance(result, tuple):
+                    result = (result,)
                 return (*result, state)
             except Exception as exc:
                 raise gr.Error(str(exc)) from exc
@@ -113,13 +115,14 @@ def create_v2_ui(api):
                 str(voices), [], gr.update(choices=[], value=None))
 
     def synthesis(unit, path):
+        runtime = api['load_runtime']()
         if unit.get('no_ref'):
             from irodori_tts.inference_runtime import SamplingRequest
-            result = api['load_runtime']().synthesize(SamplingRequest(text=unit['text'], caption=unit['caption'],
+            result = runtime.synthesize(SamplingRequest(text=unit['text'], caption=unit['caption'],
                     no_ref=True, num_steps=unit['num_steps'], seed=unit['seed']))
             audio, sr = result.audios[0].detach().cpu().float().view(-1).numpy(), int(result.sample_rate)
         else:
-            audio, sr = api['synthesize'](unit, api['load_runtime']())
+            audio, sr = api['synthesize'](unit, runtime)
         sf.write(str(path), audio, sr, subtype='PCM_16')
 
     @guarded
@@ -134,9 +137,11 @@ def create_v2_ui(api):
         return [u for u in state['plan'] if u['segment_id'] == unit['segment_id']] if group else [unit]
 
     @guarded
-    def regenerate(state, selected, group, *settings):
+    def regenerate(state, selected, group, seed, steps, acting, emotion, narrator, pause, progress=gr.Progress()):
+        settings = (seed, steps, acting, emotion, narrator, pause)
+        progress(0, desc='モデル準備・自動参照音声を確認中（初回は時間がかかります）')
         plan(state, *settings, prepare=True)
-        state['store'].regenerate(targets(state, selected, group), synthesis)
+        state['store'].regenerate(targets(state, selected, group), synthesis, progress=progress)
         return summary(state), '候補を更新しました。試聴後に採用してください'
 
     @guarded
@@ -167,17 +172,21 @@ def create_v2_ui(api):
         return str(state['voices']), str(target)
 
     @guarded
-    def sample(state, text, caption, seed, steps):
+    def sample(state, text, caption, seed, steps, progress=gr.Progress()):
         unit = dict(text=text, caption=caption or None, ref_wav=None, seed=int(seed), num_steps=int(steps))
         # Voice design is reference-free, matching the v1 runtime request.
+        progress(0, desc='モデル準備中（初回は取得・GPU読み込みに時間がかかります）')
+        runtime = api['load_runtime']()
         from irodori_tts.inference_runtime import SamplingRequest
-        result = api['load_runtime']().synthesize(SamplingRequest(text=text, caption=caption or None,
+        progress(0.5, desc='声の試作を生成中')
+        result = runtime.synthesize(SamplingRequest(text=text, caption=caption or None,
                     no_ref=True, num_steps=int(steps), seed=int(seed)))
         target = state['root'] / (uuid.uuid4().hex + '.wav')
         sf.write(str(target), result.audios[0].detach().cpu().float().view(-1).numpy(), int(result.sample_rate), subtype='PCM_16')
         if not valid_wav(target):
             raise ValueError('試作音声が不正です')
         state['sample'] = str(target)
+        progress(1, desc='声の試作が完了しました')
         return str(target)
 
     @guarded
@@ -188,18 +197,23 @@ def create_v2_ui(api):
         return str(state['voices'])
 
     @guarded
-    def generate(state, *settings):
+    def generate(state, seed, steps, acting, emotion, narrator, pause, progress=gr.Progress()):
+        settings = (seed, steps, acting, emotion, narrator, pause)
+        progress(0, desc='モデル準備・自動参照音声を確認中（初回は時間がかかります）')
         units = plan(state, *settings, prepare=True)
         missing = [u for u in units if u['unit_id'] not in state['store'].accepted
                    or not state['store']._valid(state['store'].accepted[u['unit_id']])
                    or state['store'].accepted[u['unit_id']]['key'] != state['store'].key(u)]
         if missing:
-            state['store'].regenerate(missing, synthesis, force=False)
+            state['store'].regenerate(missing, synthesis, force=False, progress=progress)
             state['store'].adopt([u['unit_id'] for u in missing])
+        progress(1, desc='全編の音声準備が完了しました')
         return summary(state), '全編の採用済み音声を準備しました。再結合してください'
 
     @guarded
-    def output(state, destination, *settings):
+    def output(state, destination, seed, steps, acting, emotion, narrator, pause, progress=gr.Progress()):
+        settings = (seed, steps, acting, emotion, narrator, pause)
+        progress(0, desc='採用音声の整合性を確認中')
         units = plan(state, *settings)
         store = state['store']
         chunks, rate = [], None
@@ -211,6 +225,7 @@ def create_v2_ui(api):
                 raise ValueError(unit['unit_id'] + ': 現在の条件に一致する採用音声が必要です')
         with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as archive:
             for index, unit in enumerate(units):
+                progress(index / len(units) * 0.8, desc=f"結合・ZIP作成 {index + 1}/{len(units)}")
                 path = store.root / store.accepted[unit['unit_id']]['file']
                 audio, sr = sf.read(str(path), dtype='float32')
                 if audio.ndim != 1 or (rate is not None and sr != rate):
@@ -224,6 +239,7 @@ def create_v2_ui(api):
         sf.write(str(target), np.concatenate(chunks), rate, subtype='PCM_16')
         message = '完成WAVと個別音声ZIPを作成しました'
         if destination.strip():
+            progress(0.9, desc='Driveへ保存中（一時領域にも保持します）')
             resolved = Path(destination).resolve()
             if resolved == state['source'] or resolved.is_relative_to(state['source']):
                 raise ValueError('元作品の保護のため、作品フォルダ外の保存先を指定してください。完成結果は一時領域に保持しています')
@@ -234,6 +250,7 @@ def create_v2_ui(api):
             except Exception as exc:
                 warning = 'Drive出力保存失敗。一時領域の結果は保持しています: ' + str(exc)
             message += '\n' + (warning or 'Driveへ保存しました')
+        progress(1, desc='完成WAV・ZIPの出力が完了しました')
         return str(target), str(target), str(zip_path), message
 
     @guarded

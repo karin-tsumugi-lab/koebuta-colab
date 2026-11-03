@@ -69,6 +69,20 @@ class UiSmoke(unittest.TestCase):
             self.assertNotIn('b', state['store'].references)
             self.assertTrue(Path(result[0]).is_file())
             self.assertEqual((project / 'scenario.json').read_bytes(), updated)
+            # Cold start: the module becomes importable only during runtime loading.
+            events = []
+            def cold_load():
+                events.append('runtime')
+                sys.modules['irodori_tts.inference_runtime'] = fake
+                return runtime
+            api['load_runtime'] = cold_load
+            with patch.dict(sys.modules):
+                sys.modules.pop('irodori_tts.inference_runtime', None)
+                trial = callbacks['sample'](None, '起動直後の試作です。', '明瞭な声', 314, 40,
+                    progress=lambda value, **kw: events.append(kw['desc']))
+            self.assertTrue(Path(trial[0]).is_file())
+            self.assertEqual(events[1], 'runtime')
+            self.assertIn('完了', events[-1])
 
     def test_constructs_without_editor_or_server(self):
         demo = create_v2_ui({'_CTX': ContextVar('test'), 'new_session': dict})
@@ -78,6 +92,9 @@ class UiSmoke(unittest.TestCase):
         for callback in callbacks.values():
             self.assertEqual(callback.concurrency_id, 'koebuta-v2')
             self.assertEqual(callback.concurrency_limit, 1)
+        from gradio.helpers import special_args
+        for name in ('sample', 'regenerate', 'generate', 'output'):
+            self.assertIsNotNone(special_args(callbacks[name].fn)[1], name)
         self.assertFalse(any(getattr(block, 'interactive', False) for block in demo.blocks.values()
                              if block.__class__.__name__ == 'Dataframe'))
 

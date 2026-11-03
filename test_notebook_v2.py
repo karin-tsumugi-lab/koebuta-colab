@@ -63,7 +63,12 @@ class Transactions(unittest.TestCase):
         self.assertEqual(old, restored.accepted)
 
     def test_cache_pause_and_forced_generation(self):
-        initial = self.store.regenerate(self.units, self.generate)
+        updates = []
+        initial = self.store.regenerate(self.units, self.generate,
+            progress=lambda value, **kw: updates.append((value, kw['desc'])))
+        self.assertEqual(updates[0][0], 0)
+        self.assertEqual(updates[-1][0], 1)
+        self.assertIn('2/2', updates[-1][1])
         self.units[0]['pause_after_ms'] = 1200
         hit = self.store.regenerate(self.units, lambda *_: self.fail('cache miss'), force=False)
         self.assertEqual(initial, hit)
