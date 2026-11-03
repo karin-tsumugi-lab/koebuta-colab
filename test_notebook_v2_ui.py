@@ -51,13 +51,19 @@ class UiSmoke(unittest.TestCase):
             with self.assertRaises(Exception):
                 callbacks['generate'](state, *settings)
             self.assertEqual(before, state['store'].candidates)
+            with self.assertRaises(Exception):
+                callbacks['adopt'](state, 't010#1', True, 999, 40, False, False, False, 280)
+            self.assertFalse(state['store'].accepted)
+            callbacks['inspect'](state, *settings)
             saved_folder = root / 'saved'
-            callbacks['save_state'](state, str(saved_folder))
+            callbacks['save_state'](state, str(saved_folder), 999, 50, True, False, True, 900)
             restored = callbacks['load'](None, None, str(project))[-1]
-            callbacks['restore'](restored, str(saved_folder))
+            restored_result = callbacks['restore'](restored, str(saved_folder))
+            self.assertEqual(list(restored_result[1:7]), [999, 50, True, False, True, 900])
             self.assertEqual(before, restored['store'].candidates)
             self.assertEqual(callbacks['role_info'](restored, 'a')[0], '穏やかで低い声')
             self.assertTrue(Path(restored['voices']['a']).is_file())
+            callbacks['inspect'](state, *settings)
             callbacks['adopt'](state, 't010#1', True)
             exported = callbacks['output'](state, '', *settings)
             self.assertTrue(Path(exported[0]).is_file())
@@ -111,6 +117,10 @@ class UiSmoke(unittest.TestCase):
             self.assertTrue(Path(trial[0]).is_file())
             self.assertEqual(events[1], 'runtime')
             self.assertIn('完了', events[-1])
+            trial_state = trial[-1]
+            trial_state['sample_role'] = 'a'
+            with self.assertRaises(Exception):
+                callbacks['adopt_sample'](trial_state, 'b')
 
     def test_constructs_without_editor_or_server(self):
         demo = create_v2_ui({'_CTX': ContextVar('test'), 'new_session': dict})

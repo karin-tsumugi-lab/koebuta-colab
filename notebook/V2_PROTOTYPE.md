@@ -50,6 +50,19 @@ The integration owner owns `AGENTS.md` and `docs/INTEGRATION_STATUS.md` updates.
 
 ## Prototype limitations / verification boundaries
 
+Second review fixes: save/restore includes seed, steps, acting, emotion, narrator
+emotion and pause; restored values populate controls before refreshing the plan.
+Adoption checks candidate fingerprints against current UI conditions. Voice
+trials remember their selected speaker and reject adoption into another speaker;
+switching speakers invalidates the prior trial. Shared automatic references use
+the editable shared caption rather than the selected character caption. Full
+generation refreshes detail/audio and restore refreshes reference assignments.
+Seed uses a standard Number label, with a 32px auxiliary button positioned next
+to that label by launch CSS. Browser layout of this change is not yet verified.
+CPU regression (18 tests, extended cases) observes changed generation-setting
+round-trip, stale-candidate rejection and cross-speaker trial rejection. No GPU
+or real browser run was performed for this revision.
+
 Review follow-up: regeneration/adoption/discard now chain a detail/audio refresh.
 Full generation refuses to overwrite pending candidates among missing/stale units;
 adopt or discard those candidates first. A dedicated '作業状態を保存' action saves

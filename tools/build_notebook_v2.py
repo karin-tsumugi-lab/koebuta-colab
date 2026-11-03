@@ -18,7 +18,7 @@ def build():
         content = (ROOT / 'notebook' / (module + '.py')).read_text(encoding='utf-8')
         source += f"_module = types.ModuleType({module!r})\nsys.modules[{module!r}] = _module\nexec({content!r}, _module.__dict__)\n"
     source += "from notebook_v2_ui import create_v2_ui\nimport secrets, os, gradio as gr\ndemo = create_v2_ui(globals())\nui_user = 'koebuta'\nui_password = secrets.token_urlsafe(16)\nprint('ユーザー:', ui_user, 'パスワード:', ui_password)\ndemo.queue(default_concurrency_limit=1)\ndemo.launch(share=True, auth=(ui_user, ui_password), theme=gr.themes.Soft(primary_hue='purple'), show_error=True)\n"
-    source = source.replace('show_error=True)', 'css="' + '#seed-random{flex:0 0 44px!important;width:44px!important;min-width:44px!important;max-width:44px!important}' + '", show_error=True)')
+    source = source.replace('show_error=True)', 'css="' + '#seed-field{position:relative}#seed-random{position:absolute!important;top:4px;left:54px;z-index:5;min-height:22px!important;height:22px!important;padding:0!important;width:32px!important;min-width:32px!important;max-width:32px!important}' + '", show_error=True)')
     cells.append(dict(cell_type='code', metadata={}, execution_count=None, outputs=[], source=source.splitlines(True)))
     cells.insert(2, dict(cell_type='code', metadata={}, execution_count=None, outputs=[], source=[
         '# Driveを利用する場合だけTrueにして実行\n',
