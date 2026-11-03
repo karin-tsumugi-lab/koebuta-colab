@@ -235,19 +235,21 @@ def create_v2_ui(api):
     with gr.Blocks() as demo:
         state = gr.State(None)
         gr.Markdown('# Koebuta Notebook v2 試作\nシナリオJSONは読み取り専用です。編集はHTML版で行ってください。')
-        with gr.Group():
+        with gr.Row():
+          with gr.Column(scale=1, min_width=400):
             gr.Markdown('## 1. 作品の読み込み')
             archive = gr.File(label='作品ZIP（ZIPがある場合はこちらを優先）', type='filepath')
             folder = gr.Textbox(label='マウント済みDrive作品フォルダ')
             load_button = gr.Button('作品を読み込む')
-            status = gr.Textbox(label='構造検証・進捗', interactive=False)
-        with gr.Group():
+            validation = gr.Textbox(label='構造検証', interactive=False, lines=2)
+          with gr.Column(scale=1, min_width=400):
             gr.Markdown('## 2. 声の設定')
             role = gr.Dropdown(label='話者ID')
             voices = gr.Textbox(label='参照WAV割り当て', interactive=False)
-            upload = gr.File(label='参照WAV', type='filepath')
-            assign_button = gr.Button('参照WAVを割り当て')
-            reference_audio = gr.Audio(label='参照音声')
+            with gr.Accordion('参照WAVの割り当て・試聴', open=False):
+                upload = gr.File(label='参照WAV', type='filepath')
+                assign_button = gr.Button('参照WAVを割り当て')
+                reference_audio = gr.Audio(label='参照音声')
             sample_text = gr.Textbox(label='試作の読み上げ文', value='こんにちは。今日はどのようなお話をいたしましょうか。')
             caption = gr.Textbox(label='試作する声の説明')
             sample_button = gr.Button('声を試作')
@@ -255,34 +257,49 @@ def create_v2_ui(api):
             adopt_sample_button = gr.Button('試作を話者の参照音声に採用')
         with gr.Group():
             gr.Markdown('## 3. 生成・試聴・採用')
-            seed = gr.Number(label='seed', value=314, precision=0)
-            steps = gr.Slider(1, 200, value=40, step=1, label='steps')
-            acting = gr.Checkbox(label='演技を反映')
-            emotion = gr.Checkbox(label='感情を反映', value=True)
-            narrator = gr.Checkbox(label='地の文にも感情を反映')
-            pause = gr.Slider(0, 60000, value=280, step=1, label='共通休止時間 ms')
+            with gr.Row():
+                seed = gr.Number(label='Seed', value=314, precision=0)
+                steps = gr.Slider(1, 200, value=40, step=1, label='Steps')
+                pause = gr.Slider(0, 60000, value=280, step=1, label='共通休止時間 ms')
+            with gr.Row():
+                acting = gr.Checkbox(label='演技を反映')
+                emotion = gr.Checkbox(label='感情を反映', value=True)
+                narrator = gr.Checkbox(label='地の文にも感情を反映')
             settings = [seed, steps, acting, emotion, narrator, pause]
             inspect_button = gr.Button('生成計画を更新')
-            table = gr.Dataframe(headers=['生成単位', '発話', '話者', '感情', '原文', '読み上げ文', '演技', '休止ms', '採用', '候補'], interactive=False)
-            selected = gr.Dropdown(label='対象TTS生成単位')
-            group = gr.Checkbox(label='同じ発話の全片をまとめて操作', value=False)
-            accepted_audio = gr.Audio(label='採用済み音声')
-            candidate_audio = gr.Audio(label='最新候補')
-            listen = gr.Button('対象の音声を表示')
-            regenerate_button = gr.Button('新しい候補を生成')
-            adopt_button = gr.Button('採用')
-            discard_button = gr.Button('候補を破棄')
+            with gr.Row():
+              with gr.Column(scale=1, min_width=400):
+                table = gr.Dataframe(headers=['生成単位', '発話', '話者', '感情', '原文', '読み上げ文', '演技', '休止ms', '採用', '候補'], interactive=False)
+              with gr.Column(scale=1, min_width=400):
+                selected = gr.Dropdown(label='選択中のTTS生成単位')
+                group = gr.Checkbox(label='同じ発話の全片をまとめて操作', value=False)
+                with gr.Row():
+                    accepted_audio = gr.Audio(label='採用済み音声')
+                    candidate_audio = gr.Audio(label='最新候補')
+                with gr.Row():
+                    listen = gr.Button('試聴音声を表示')
+                    regenerate_button = gr.Button('新しい候補を生成', variant='primary')
+                with gr.Row():
+                    adopt_button = gr.Button('候補を採用', variant='primary')
+                    discard_button = gr.Button('候補を破棄')
+                gr.Markdown('未採用候補は、各生成単位につき最新1件です。')
         with gr.Group():
             gr.Markdown('## 4. 出力')
-            generate_button = gr.Button('全編生成（未採用の単位を生成・採用）')
-            destination = gr.Textbox(label='Drive保存先（空欄なら一時領域のみ）')
-            restore_button = gr.Button('この保存先から採用・候補状態を復元')
-            output_button = gr.Button('完成WAV再結合・出力')
-            master = gr.Audio(label='完成WAV')
-            download = gr.File(label='完成WAV保存')
-            individual = gr.File(label='個別WAV ZIP')
+            with gr.Row():
+              with gr.Column(scale=3):
+                destination = gr.Textbox(label='Drive保存先（空欄なら一時領域のみ）')
+                with gr.Row():
+                    generate_button = gr.Button('全編生成', variant='primary')
+                    output_button = gr.Button('完成WAV再結合・出力')
+                    restore_button = gr.Button('保存状態を復元')
+                master = gr.Audio(label='完成WAV')
+                with gr.Row():
+                    download = gr.File(label='完成WAV保存')
+                    individual = gr.File(label='個別WAV ZIP')
+              with gr.Column(scale=2):
+                status = gr.Textbox(label='処理ログ・進捗', interactive=False, lines=8)
         queue = dict(concurrency_id='koebuta-v2', concurrency_limit=1)
-        load_button.click(load, [state, archive, folder], [status, role, *settings, voices, table, selected, state], **queue)
+        load_button.click(load, [state, archive, folder], [validation, role, *settings, voices, table, selected, state], **queue)
         inspect_button.click(inspect, [state, *settings], [table, selected, status, state], **queue)
         assign_button.click(assign, [state, role, upload], [voices, reference_audio, state], **queue)
         sample_button.click(sample, [state, sample_text, caption, seed, steps], [sample_audio, state], **queue)
