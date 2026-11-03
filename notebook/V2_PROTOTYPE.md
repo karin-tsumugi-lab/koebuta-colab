@@ -46,6 +46,18 @@ The integration owner owns `AGENTS.md` and `docs/INTEGRATION_STATUS.md` updates.
 
 ## Prototype limitations / verification boundaries
 
+Startup/UI follow-up: the launch cell calls `load_runtime()` before creating or
+publishing the WebUI, with preparation messages in the Notebook output. GPU
+memory is held while the UI is open; startup loading failure prevents publication.
+Project loading builds the read-only plan automatically without synthesis.
+Speaker selection displays ID/name, reference presence and the speaker's
+voice_caption; user edits update the in-memory normalized role only, not source
+JSON. Edited captions invalidate automatically created references for that voice
+group, but explicitly assigned references keep precedence. Seed has an explicit
+randomize button (0 through 2147483647); it does not randomize every generation.
+CPU tests verify immediate plan rows, caption editing/source-byte preservation,
+reference status and random seed bounds. Real GPU preload timing remains unverified.
+
 User-reported Colab observation: generation completed with and without assigned
 speaker WAVs. This is user evidence, not an agent GPU reproduction.
 

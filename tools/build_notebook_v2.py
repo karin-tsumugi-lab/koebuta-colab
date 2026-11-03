@@ -13,7 +13,7 @@ def build():
         'GPUランタイムで上から実行してください。シナリオ編集はHTML版で行います。\n',
         'Driveは任意です。利用する場合は下のセルでマウントしてください。\n',
         'Colabの利用条件・モデルと音声素材の利用条件はv1と同様に確認してください。\n'])
-    source = 'import sys, types\n'
+    source = "print('Irodori-TTSモデルをGPUへ読み込み中です。完了後にWebUIを公開します。')\nload_runtime()\nprint('モデルの準備が完了しました。WebUIを構築します。')\nimport sys, types\n"
     for module in ('notebook_v2', 'notebook_v2_ui'):
         content = (ROOT / 'notebook' / (module + '.py')).read_text(encoding='utf-8')
         source += f"_module = types.ModuleType({module!r})\nsys.modules[{module!r}] = _module\nexec({content!r}, _module.__dict__)\n"

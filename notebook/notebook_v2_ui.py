@@ -83,6 +83,33 @@ def create_v2_ui(api):
                  ('採用済み' if u['unit_id'] in state['store'].accepted else '未生成')] for u in state['plan']]
 
     @guarded
+    def role_info(state, role):
+        if not state.get('project') or not role:
+            return '', '作品を読み込んでください', None
+        person = next((r for r in state['project']['roles'] if r['id'] == role), None)
+        record = state['store'].references.get(role)
+        path = state['voices'].get(role)
+        if not path and record and state['store']._valid(record):
+            path = str(state['store'].root / record['file'])
+        label = (person['name'] if person else '共通の声') + ('：声の設定あり' if path else '：声の設定なし（自動生成）')
+        return (person.get('caption', '') if person else state['project'].get('baseCaption', ''), label, path)
+
+    @guarded
+    def edit_caption(state, role, value):
+        if state.get('project'):
+            if role == 'shared':
+                state['project']['baseCaption'] = value
+            else:
+                person = next(r for r in state['project']['roles'] if r['id'] == role)
+                person['caption'] = value
+            state['store'].references.pop(role, None)
+        return ()
+
+    def random_seed():
+        import secrets
+        return secrets.randbelow(2147483648)
+
+    @guarded
     def details(state, selected):
         unit = next((u for u in state['plan'] if u['unit_id'] == selected), None)
         if unit is None:
@@ -108,11 +135,14 @@ def create_v2_ui(api):
         identity['scenario_sha256'] = digest
         state['store'] = CandidateStore(state['root'] / uuid.uuid4().hex, identity)
         roles = ['shared'] if project.get('reading') == 'shared' else [r['id'] for r in project['roles']]
+        role_choices = [('共通の声', 'shared')] if roles == ['shared'] else [(f"{r['id']} · {r['name']}", r['id']) for r in project['roles']]
+        units = plan(state, config.get('seed', 314), config.get('steps', 40), config.get('use_acting', False),
+                     config.get('use_emotion', True), config.get('narrator_emotion', False), config.get('default_pause_ms', 280))
         return (f"発話数: {sum(s.get('segment_type') != 'separator' for s in project['segments'])} / 参照音声数: {len(voices)}\n" + '\n'.join(warnings),
-                gr.update(choices=roles, value=roles[0] if roles else None),
+                gr.update(choices=role_choices, value=roles[0] if roles else None),
                 config.get('seed', 314), config.get('steps', 40), config.get('use_acting', False),
                 config.get('use_emotion', True), config.get('narrator_emotion', False), config.get('default_pause_ms', 280),
-                str(voices), [], gr.update(choices=[], value=None))
+                str(voices), summary(state), gr.update(choices=[u['unit_id'] for u in units], value=units[0]['unit_id']))
 
     def synthesis(unit, path):
         runtime = api['load_runtime']()
@@ -275,7 +305,9 @@ def create_v2_ui(api):
             validation = gr.Textbox(label='構造検証', interactive=False, lines=2)
           with gr.Column(scale=1, min_width=400):
             gr.Markdown('## 2. 声の設定')
-            role = gr.Dropdown(label='話者ID')
+            with gr.Row():
+                role = gr.Dropdown(label='話者ID・名前')
+                role_status = gr.Textbox(label='声の設定状態', interactive=False)
             voices = gr.Textbox(label='参照WAV割り当て', interactive=False)
             with gr.Accordion('参照WAVの割り当て・試聴', open=False):
                 upload = gr.File(label='参照WAV', type='filepath')
@@ -292,6 +324,7 @@ def create_v2_ui(api):
             gr.Markdown('## 3. 生成・試聴・採用')
             with gr.Row():
                 seed = gr.Number(label='Seed', value=314, precision=0)
+                random_button = gr.Button('🎲 ランダムSeed', scale=0)
                 steps = gr.Slider(1, 200, value=40, step=1, label='Steps')
                 pause = gr.Slider(0, 60000, value=280, step=1, label='共通休止時間 ms')
             with gr.Row():
@@ -332,16 +365,22 @@ def create_v2_ui(api):
               with gr.Column(scale=2):
                 status = gr.Textbox(label='処理ログ・進捗', interactive=False, lines=8)
         queue = dict(concurrency_id='koebuta-v2', concurrency_limit=1)
+        random_button.click(random_seed, [], [seed], **queue)
+        role.change(role_info, [state, role], [caption, role_status, reference_audio, state], **queue)
+        caption.input(edit_caption, [state, role, caption], [state], **queue)
         load_button.click(load, [state, archive, folder], [validation, role, *settings, voices, table, selected, state], **queue)
         inspect_button.click(inspect, [state, *settings], [table, selected, status, state], **queue)
-        assign_button.click(assign, [state, role, upload], [voices, reference_audio, state], **queue)
+        assign_button.click(assign, [state, role, upload], [voices, reference_audio, state], **queue).then(
+            role_info, [state, role], [caption, role_status, reference_audio, state], **queue)
         sample_button.click(sample, [state, sample_text, caption, seed, steps], [sample_audio, state], **queue)
-        adopt_sample_button.click(adopt_sample, [state, role], [voices, state], **queue)
+        adopt_sample_button.click(adopt_sample, [state, role], [voices, state], **queue).then(
+            role_info, [state, role], [caption, role_status, reference_audio, state], **queue)
         selected.change(details, [state, selected], [detail, accepted_audio, candidate_audio, state], **queue)
         regenerate_button.click(regenerate, [state, selected, group, *settings], [table, status, state], **queue)
         adopt_button.click(adopt, [state, selected, group], [table, status, state], **queue)
         discard_button.click(discard, [state, selected, group], [table, status, state], **queue)
-        generate_button.click(generate, [state, *settings], [table, status, state], **queue)
+        generate_button.click(generate, [state, *settings], [table, status, state], **queue).then(
+            role_info, [state, role], [caption, role_status, reference_audio, state], **queue)
         output_button.click(output, [state, destination, *settings], [master, download, individual, status, state], **queue)
         restore_button.click(restore, [state, destination], [status, state], **queue)
     return demo

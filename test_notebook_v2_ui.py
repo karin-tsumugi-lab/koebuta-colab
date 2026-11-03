@@ -36,6 +36,12 @@ class UiSmoke(unittest.TestCase):
             callbacks = {fn.fn.__name__: fn.fn for fn in demo.fns.values()}
             loaded = callbacks['load'](None, None, str(project))
             state = loaded[-1]
+            self.assertEqual([row[0] for row in loaded[-3]], ['t010#1', 't010#2'])
+            self.assertIn('設定あり', callbacks['role_info'](state, 'a')[1])
+            callbacks['edit_caption'](state, 'a', '穏やかで低い声')
+            self.assertEqual(callbacks['role_info'](state, 'a')[0], '穏やかで低い声')
+            self.assertEqual((project / 'scenario.json').read_bytes(), raw)
+            self.assertTrue(0 <= callbacks['random_seed']() <= 2147483647)
             settings = [314, 40, False, False, False, 280]
             inspected = callbacks['inspect'](state, *settings)
             self.assertEqual([r[0] for r in inspected[0]], ['t010#1', 't010#2'])
@@ -87,7 +93,7 @@ class UiSmoke(unittest.TestCase):
     def test_constructs_without_editor_or_server(self):
         demo = create_v2_ui({'_CTX': ContextVar('test'), 'new_session': dict})
         callbacks = {fn.fn.__name__: fn for fn in demo.fns.values()}
-        self.assertEqual(set(callbacks), {'load', 'inspect', 'assign', 'sample', 'adopt_sample',
+        self.assertEqual(set(callbacks), {'role_info', 'edit_caption', 'random_seed', 'load', 'inspect', 'assign', 'sample', 'adopt_sample',
                                          'details', 'regenerate', 'adopt', 'discard', 'generate', 'output', 'restore'})
         for callback in callbacks.values():
             self.assertEqual(callback.concurrency_id, 'koebuta-v2')
