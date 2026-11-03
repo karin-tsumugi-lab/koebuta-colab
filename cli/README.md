@@ -1,6 +1,10 @@
-# Koebuta CLI v1.0.1
+# Koebuta CLI v1.1.0
 
 準備済みのシナリオJSONを Irodori-TTS で連続生成し、完成音声をローカルへ回収するCLIです。WebUIを使いません。
+
+v1.1.0では、未設定の参照音声を生成前に準備します。明示的な `voiceMode: design` と話者の `design` 指定は参照なしを維持します。生成前の確認は1回だけです。自動処理では計画を `--dry-run` で確認し、承認済みの実行に `--yes` を付けてください。設定の `confirm: false` でも省略できます。詳しくは [自動参照と確認の仕様](../docs/CLI_AUTO_REFERENCE.md) を参照してください。
+
+この変更版のGPU生成・試聴は未実施です。以前のT4実績を自動参照機能の検証結果として扱わないでください。
 
 > **Colabの利用規約を確認してください。** 公式CLIの利用にもColabの規約が適用されます。無料・CU残高なしの管理ランタイムには遠隔操作や外部WebUI中心の利用等の追加制限があり、CLIは制限を回避するための手段ではありません。有料でも一般の禁止事項・利用上限は残ります。認証・GPU生成の前に [Colab利用条件の注意](../docs/COLAB_USAGE.md) と公式資料を確認してください。
 
@@ -65,7 +69,7 @@ python3 irodori_generate.py --scenario irodori_cli_examples/generate_scenario.js
 
 Scenario Inspector v0.1.6の `koebuta_settings`、話者の `reference_wav`、`koebuta_tts_parts` は、この入口で設定・WAV指定・分割境界として利用しません。別設定JSONで声と生成条件を指定してください。HTMLでTTS分割した片の境界はCLIへ引き継がれません。`tts_text` 全体にCLI独自の分割検査が適用されるため、HTMLで分割済みでも長い読み上げ文が拒否される場合があります。dry-runで生成要求を確認してから実行してください。
 
-設定では `voiceMode`、`reading`、`baseCaption`、`seed`、`steps`、`pause`、`ttsModel`、`acting`、`emotion`、`narratorEmotion`、`textOptions`、`speakerVoices`、`voices` を使えます。未知のキーは拒否します。参照WAVの相対パスは設定JSONのあるフォルダーから解決されます。
+設定では `voiceMode`、`reading`、`baseCaption`、`seed`、`steps`、`pause`、`ttsModel`、`acting`、`emotion`、`narratorEmotion`、`textOptions`、`speakerVoices`、`voices`、`autoReference`、`autoReferenceSegments`、`confirm` を使えます。未知のキーは拒否します。参照WAVの相対パスは設定JSONのあるフォルダーから解決されます。
 
 未確認の感情・演技設定を自動で品質承認するものではありません。無人生成の入口では、渡されたシナリオをそのまま対象にするため内部的に未確認許可を明示します。実行前に、人がシナリオの話者、読み、感情、演技、参照音声の権利を確認してください。
 
@@ -97,6 +101,6 @@ Scenario Inspector v0.1.6の `koebuta_settings`、話者の `reference_wav`、`k
 
 ## 詳細資料
 
-配布ZIPに同梱された [v1.0.1の詳細仕様・出力・終了コード](DISTRIBUTED_README.md) と [AIエージェント用手順](AGENTS.md)、[トラブル対策](TROUBLESHOOTING.md) を参照してください。原配布物のコードは変更していません。
+以前の配布ZIPに同梱された [v1.0.1の詳細仕様・出力・終了コード](DISTRIBUTED_README.md) と [AIエージェント用手順](AGENTS.md)、[トラブル対策](TROUBLESHOOTING.md) を参照してください。参照未設定時の動作と実行確認については [v1.1.0の仕様](../docs/CLI_AUTO_REFERENCE.md) が優先します。
 
 `DISTRIBUTED_*` と第三者表示は元配布物の記録も兼ねています。第三者表示にある旧名Yomibuta・α版や調査用fixtureへの言及は配布当時の記述で、fixture本体はこの構成に含みません。現在の操作手順はこのREADMEを参照してください。

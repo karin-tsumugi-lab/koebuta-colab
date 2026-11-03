@@ -124,10 +124,7 @@ def synthesize(args, runtimes=None):
     if args.ids:args.ids=','.join(expand_ids(args.ids.split(','),mapping))
     atomic_json(args.project,project)
     voices = dict(item.split('=',1) for item in args.voice)
-    plan = sampling_plan(project, voices)
-    for row in plan:
-        row['fingerprint'] = digest({'request':row['fingerprint'], 'engine':engine})
-    if args.ids and not any(r['id'] in args.ids.split(',') for r in plan):raise ValueError('指定範囲に読み上げる本文がありません')
+    sampling_plan(project, voices, allow_pending=True)
     runtimes = runtimes if runtimes is not None else {}
     runtime_key = digest(engine)
     runtime = runtimes.get(runtime_key)
@@ -159,6 +156,10 @@ def synthesize(args, runtimes=None):
         if not audio.size or not np.isfinite(audio).all():
             raise RuntimeError('空または非有限値の音声が生成されました')
         sf.write(str(destination), audio, int(result.sample_rate), subtype='PCM_16')
+    from .auto_reference import prepare_references, final_speech_plan
+    effective, voices, reference_contexts = prepare_references(project, voices, args.job, infer, engine)
+    plan = final_speech_plan(effective, voices, reference_contexts, engine)
+    if args.ids and not any(r['id'] in args.ids.split(',') for r in plan):raise ValueError('指定範囲に読み上げる本文がありません')
     manifest = generate(args.job, plan, project['pause'], infer,
         selected=[r['id'] for r in plan if r['id'] in args.ids.split(',')] if args.ids else None, regenerate=args.regenerate, provenance=engine)
     if manifest['status'] == 'failed':

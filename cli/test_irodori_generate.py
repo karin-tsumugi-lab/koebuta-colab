@@ -29,6 +29,8 @@ class GenerateTests(unittest.TestCase):
         self.calls = []
         self.corrupt = False
         self.incomplete = False
+        self.reference_recovery = False
+        self.corrupt_reference = False
         self.runtime = patch('irodori_generate.read_runtime', return_value={
             'hardware': 'T4', 'shape': 'Standard', 'identity': 'test-endpoint'})
         self.runtime.start(); self.addCleanup(self.runtime.stop)
@@ -41,7 +43,7 @@ class GenerateTests(unittest.TestCase):
         self.tmp.cleanup()
     def args(self, *extra):
         return ['--scenario', str(self.scenario), '--settings', str(self.settings),
-                '--session', 'test-session', '--job', 'test-job', '--out', str(self.out), *extra]
+                '--session', 'test-session', '--job', 'test-job', '--out', str(self.out), '--yes', *extra]
     def fake_run(self, command, **kwargs):
         self.calls.append(command)
         if 'synthesize' in command:
@@ -51,6 +53,16 @@ class GenerateTests(unittest.TestCase):
                 stream.setparams((1, 2, 48000, 0, 'NONE', 'not compressed'))
                 stream.writeframes(b'\0\0' * 48)
             checksum = file_hash(job / 'take.wav')
+            if self.reference_recovery:
+                from irodori_cli.jobs import wav_info
+                reference = job / 'references' / 'reference.wav'
+                reference.parent.mkdir()
+                reference.write_bytes((job / 'take.wav').read_bytes())
+                atomic_json(job / 'references.json', {'version': 1, 'entries': {
+                    'shared': {'file': 'references/reference.wav',
+                               'sha256': file_hash(reference), 'audio': wav_info(reference)}}})
+                if self.corrupt_reference:
+                    reference.write_bytes(b'corrupted in transit')
             atomic_json(job / 'job.json', {'status': 'partial' if self.incomplete else 'complete',
                 'takes': [{'file': 'take.wav', 'sha256': checksum, 'frames': 48}],
                 'combined': {'file': 'take.wav', 'sha256': checksum, 'frames': 48,
@@ -90,6 +102,17 @@ class GenerateTests(unittest.TestCase):
         with zipfile.ZipFile(self.out / 'segments.zip') as archive:self.assertEqual(archive.namelist(), ['take.wav'])
         self.assertEqual(before, (self.scenario.read_bytes(), self.settings.read_bytes()))
         self.assertEqual(read_json(self.out / 'pipeline.json')['status'], 'complete')
+    def test_recovered_automatic_references_are_verified_and_exported(self):
+        self.reference_recovery = True
+        self.assertEqual(self.invoke(), 0)
+        self.assertTrue((self.out / 'references' / 'reference.wav').is_file())
+        self.assertTrue((self.out / 'references.json').is_file())
+        self.assertEqual(read_json(self.out / 'pipeline.json')['verification']['references_checked'], 1)
+    def test_corrupt_recovered_reference_blocks_success_and_runtime_stop(self):
+        self.reference_recovery = self.corrupt_reference = True
+        with self.assertRaises(ValueError): self.invoke('--stop-after-download')
+        self.assertFalse((self.out / 'result.wav').exists())
+        self.assertFalse(any('stop' in c for c in self.calls))
     def test_existing_output_is_not_overwritten(self):
         self.out.mkdir()
         with self.assertRaises(FileExistsError):self.invoke()
@@ -115,12 +138,16 @@ class GenerateTests(unittest.TestCase):
         self.assertEqual(run.call_count, 1)
         self.assertTrue((self.out / 'prepare.log').exists())
         self.assertEqual(read_json(self.out / 'pipeline.json')['status'], 'failed')
-    def test_missing_clone_voice_fails_before_launch(self):
+    def test_missing_clone_voice_uses_single_utterance_fallback(self):
         atomic_json(self.settings, {'voiceMode': 'clone'})
-        with self.assertRaises(ValueError):self.invoke()
+        self.assertEqual(self.invoke('--dry-run'), 0)
+        self.assertEqual(self.calls, [])
+        self.assertIn('fallback', self.stdout.getvalue())
         self.assertEqual(self.calls, []); self.assertFalse(self.out.exists())
     def test_settings_relative_voices_and_multiple_speaker_mapping(self):
-        (self.root / 'voice.wav').write_bytes(b'reference fixture')
+        with wave.open(str(self.root / 'voice.wav'), 'wb') as stream:
+            stream.setparams((1, 2, 48000, 0, 'NONE', 'not compressed'))
+            stream.writeframes(b'\0\0' * 48)
         atomic_json(self.settings, {'voiceMode': 'clone', 'reading': 'cast',
             'speakerVoices': {'assistant': 'voice_b'}, 'voices': {'voice_b': 'voice.wav'}})
         _, voices, plan = load_inputs(self.scenario, self.settings)
