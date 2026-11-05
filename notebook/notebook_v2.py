@@ -139,6 +139,7 @@ class CandidateStore:
         self.accepted, self.candidates, self.cache, self.references = {}, {}, {}, {}
         self.session_settings = {}
         self.history = []
+        self.warnings = []
         self.lock = threading.RLock()
 
     def key(self, unit):
@@ -248,7 +249,10 @@ class CandidateStore:
                 raise ValueError('保存状態の音声が欠落または破損しています')
             self.accepted, self.candidates = groups
             self.session_settings = state.get('session_settings', {})
-            self.history = state.get('history', [])
+            history = state.get('history', [])
+            self.history = [r for r in history if self._valid(r)]
+            self.warnings = (['過去の採用履歴WAVに欠損・破損があり、復元から除外しました']
+                             if len(self.history) != len(history) else [])
             self.references = {k: r for k, r in state.get('references', {}).items() if self._valid(r)}
             self.cache = {k: r for k, r in state.get('cache', {}).items() if self._valid(r)}
             self.cache.update({r['key']: r for group in groups for r in group.values()})
@@ -258,16 +262,32 @@ class CandidateStore:
         try:
             destination = Path(destination)
             manifest = destination / 'state.json'
-            if manifest.exists() and json.loads(manifest.read_bytes()).get('identity') != self.identity:
+            previous = json.loads(manifest.read_bytes()) if manifest.exists() else {}
+            if previous and previous.get('identity') != self.identity:
                 raise ValueError('別作品または非互換の保存先です。新しい作品専用フォルダを指定してください')
             if destination.resolve() == self.root.resolve():
                 return None
+            self.history = [r for r in self.history if self._valid(r)]
+            self.cache = {k: r for k, r in self.cache.items() if self._valid(r)}
+            self._save(self.accepted, self.candidates)
             for group in (self.accepted, self.candidates, self.cache, self.references, {str(i): r for i, r in enumerate(self.history)}):
                 for record in group.values():
                     if not self._valid(record):
                         raise ValueError('保存対象WAVが破損しています')
                     atomic_bytes(destination / record['file'], (self.root / record['file']).read_bytes())
             atomic_bytes(destination / 'state.json', (self.root / 'state.json').read_bytes())
+            # Only files owned by the prior manifest can be reclaimed, after commit.
+            def owned(state):
+                records = [r for key in ('accepted', 'candidates', 'cache', 'references')
+                           for r in state.get(key, {}).values()] + state.get('history', [])
+                return {r['file'] for r in records if isinstance(r.get('file'), str)
+                        and Path(r['file']).name == r['file']}
+            current = json.loads(manifest.read_bytes())
+            import re
+            for name in owned(previous) - owned(current):
+                path = destination / name
+                if re.fullmatch(r'[0-9a-f]{32}\.wav', name) and not path.is_symlink():
+                    path.unlink(missing_ok=True)
             return None
         except Exception as exc:
             return 'Drive保存に失敗しました。一時領域の結果は保持しています: ' + str(exc)

@@ -92,8 +92,10 @@ def create_v2_ui(api):
         segments = {s['id']: s for s in state['project']['segments']}
         return [[u['unit_id'], segments[u['segment_id']].get('role'),
                  segments[u['segment_id']]['text'][:45], u['segment_id'],
-                 '候補あり' if u['unit_id'] in state['store'].candidates else
-                 ('採用済み' if u['unit_id'] in state['store'].accepted else '未生成')] for u in state['plan']]
+                 ('候補あり' if state['store'].compatible(state['store'].candidates[u['unit_id']], u) else '候補の条件不一致・要再生成')
+                 if u['unit_id'] in state['store'].candidates else
+                 (('採用済み' if state['store'].compatible(state['store'].accepted[u['unit_id']], u) else '条件不一致・要再生成')
+                  if u['unit_id'] in state['store'].accepted else '未生成')] for u in state['plan']]
 
     def speaker_choices(state):
         project = state['project']
@@ -405,7 +407,7 @@ def create_v2_ui(api):
                            if Path(name).name == name and valid_wav(state['store'].root / name)}
         restored_settings = saved.get('generation', [314, 40, False, True, False, 280])
         plan(state, *restored_settings)
-        return ('保存状態と生成条件を復元しました', *restored_settings, str(state['voices']))
+        return ('保存状態と生成条件を復元しました\n' + '\n'.join(source.warnings), *restored_settings, str(state['voices']))
 
     with gr.Blocks() as demo:
         state = gr.State(None)

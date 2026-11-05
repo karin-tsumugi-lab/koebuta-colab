@@ -16,6 +16,30 @@ def wav(path):
 
 
 class Transactions(unittest.TestCase):
+    def test_persist_prunes_previous_managed_cache_only(self):
+        destination = self.root / 'saved'
+        destination.mkdir()
+        (destination / 'user.wav').write_bytes(b'user data')
+        for seed in range(45):
+            self.store.regenerate([dict(self.units[0], seed=seed)], self.generate)
+            self.store.discard(['t010#1'])
+            self.assertIsNone(self.store.persist(destination))
+        self.assertEqual(len(list(destination.glob('*.wav'))), 33)
+        self.assertEqual((destination / 'user.wav').read_bytes(), b'user data')
+
+    def test_missing_history_does_not_block_restore_and_copy(self):
+        self.store.regenerate(self.units[:1], self.generate)
+        self.store.adopt(['t010#1'])
+        old = self.store.accepted['t010#1']['file']
+        self.store.regenerate(self.units[:1], self.generate)
+        self.store.adopt(['t010#1'])
+        (self.store.root / old).unlink()
+        restored = CandidateStore(self.store.root, self.store.identity)
+        restored.restore()
+        self.assertTrue(restored.warnings)
+        self.assertTrue(restored._valid(restored.accepted['t010#1']))
+        self.assertIsNone(restored.persist(self.root / 'recovered'))
+
     def test_persistence_rejects_other_work(self):
         self.store.regenerate(self.units, self.generate)
         self.store._save(self.store.accepted, self.store.candidates)
