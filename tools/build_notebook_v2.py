@@ -8,11 +8,8 @@ ROOT = Path(__file__).resolve().parents[1]
 def build():
     original = json.loads((ROOT / 'notebook/Koebuta_Colabv1.00.ipynb').read_text(encoding='utf-8'))
     cells = original['cells'][:8]
-    cells[0] = dict(cell_type='markdown', metadata={}, source=[
-        '# Koebuta Notebook v2 — 生成専用試作\n',
-        'GPUランタイムで上から実行してください。シナリオ編集はHTML版で行います。\n',
-        'Driveは任意です。利用する場合は下のセルでマウントしてください。\n',
-        'Colabの利用条件・モデルと音声素材の利用条件はv1と同様に確認してください。\n'])
+    cells[0] = dict(cell_type='markdown', metadata={}, source=(ROOT / 'notebook/NOTEBOOK_V2_GUIDE.md').read_text(encoding='utf-8').splitlines(True))
+    cells[7]['source'] = ['## 4. 画面（WebUI）\n', '\n', 'モデルをGPUへ読み込んでから、認証付きのGradio共有リンクを表示します。準備中はセルの出力をご確認ください。\n']
     source = "print('Irodori-TTSモデルをGPUへ読み込み中です。完了後にWebUIを公開します。')\nload_runtime()\nprint('モデルの準備が完了しました。WebUIを構築します。')\nimport sys, types\n"
     for module in ('notebook_v2', 'notebook_v2_ui'):
         content = (ROOT / 'notebook' / (module + '.py')).read_text(encoding='utf-8')
@@ -36,4 +33,6 @@ def build():
 
 
 if __name__ == '__main__':
-    (ROOT / 'notebook/Koebuta_Colabv2.prototype.ipynb').write_text(build(), encoding='utf-8')
+    content = build()
+    for name in ('Koebuta_Notebook_v2.ipynb', 'Koebuta_Colabv2.prototype.ipynb'):
+        (ROOT / 'notebook' / name).write_text(content, encoding='utf-8')

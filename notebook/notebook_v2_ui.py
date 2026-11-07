@@ -411,7 +411,7 @@ def create_v2_ui(api):
 
     with gr.Blocks() as demo:
         state = gr.State(None)
-        gr.Markdown('# Koebuta Notebook v2 試作\nシナリオJSONは読み取り専用です。編集はHTML版で行ってください。')
+        gr.Markdown('# Koebuta Notebook v2\nシナリオJSONは読み取り専用です。編集はHTML版で行ってください。')
         with gr.Row():
           with gr.Column(scale=1, min_width=400):
             gr.Markdown('## 1. 作品の読み込み')
