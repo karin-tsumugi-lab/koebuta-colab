@@ -32,7 +32,9 @@
 - ルビ形式：入力元のサイト・記法が分かる場合は、発話に text_format（aozora / narou / kakuyomu / pixiv / none）を指定します。出典が不明で解釈に影響する場合だけ確認してください。text と source のルビ記法は変換せず保持し、親文字・ルビの途中では発話を分けません。
 - 括弧の判断：特になろう由来の丸括弧は、ルビか補足・台詞等かを文脈で判断します。かなだけの括弧を一律にルビと決めず、意図が不確かなものは対象箇所と候補を示して確認してください。narou の機械変換では補足もルビ扱いされることがあるため、そのような発話には確認した方針に従う発話全体の tts_text を指定します。ルビは指定の読みに置き換え、補足は読む／読まないを確認した方針に従います。判断が未確定なら完成扱いにしません。
 - 読み上げ文：tts_text は再びルビ変換されず、そのまま音声合成へ渡されます。指定する発話内のルビはすべて読みへ展開し、残りの本文・句読点も含む全文を入れます。青空文庫形式への一律変換や、作者指定の読みの一般化はしません。
-- 感情：neutral / joy / anger / sad / kind / tease / anxiety / tension / surprise / tired / whisper / giggle / fear / sleepy / resolve のいずれか。迷う場合は neutral。地の文は通常 neutral。
+- 感情：neutral / joy / anger / sad / kind / tease / anxiety / tension / surprise / whisper / fear / sleepy / resolve / panting / calling / sleep_talking / fast / telephone / slow / pained / worried / shy / exasperated / cheerful / confident / pleading / drunken / humming / relieved / questioning / strong / narration のいずれか。迷う場合は neutral。地の文は通常 neutral。
+- 位置指定：ため息😮‍💨、間⏸️、笑い🤭、呼吸🌬️、息をのむ😮、リップノイズ💋、飲み込み🥤、咳🤧、相槌👌、嗅ぐ音👃を求める場合は、確定した発話全体の読みをtts_textに保存し、その位置だけに絵文字を挿入します。textは原文のままです。自動挿入は通常1個とし、離れた2個目の😮‍💨による追加効果は期待しません。
+- 自動選択から👅（異音）、🤐（台詞に合わない声）、🥱（あくびの再現性不足と異音）、😒（反復時の異音）を除外します。発話全体の演技にはCaptionも活用し、👂・📞はCaption優先、🤭は併用できます。
 - 演技：人物の普段の話し方は speakers の acting_description、発話固有の演技は segments の acting_description に分け、必要なときだけ書きます。
 - 読み上げない行：区切りは segment_type: "separator" とします。空行数を表す場合は blank_lines_after、明示したい間がある場合は pause_after_ms を使用できます。無理に数値を作らなくても構いません。
 - 原稿全文：source は任意です。大きな原稿を重複して出力する必要はありません。

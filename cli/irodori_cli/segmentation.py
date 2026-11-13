@@ -78,9 +78,9 @@ def split_segments(segments,limit=MAX_CHARS,*,with_mapping=False,default_format=
         if len(pieces)>1 and 'tts_text' in row and row['tts_text'] != row['text']:
             from .text_conversion import reading
             readings=[reading(piece,fmt) for piece in pieces]
-            if not any(issues for _,issues in readings) and ''.join(body for body,_ in readings)==row['tts_text']:
-                spoken_pieces=[body for body,_ in readings]
-            else:
+            from .emoji_tags import align_readings
+            spoken_pieces = align_readings(readings, row['tts_text'])
+            if spoken_pieces is None:
                 raise ValueError(f"{row['id']}: 読み補正と原文の分割位置を安全に対応付けられません。演技・感情の該当行の「分割」で原文と読み上げ用テキストを分けてください。内容は保持しています")
         mapping[row['id']]=[]
         for index,body in enumerate(pieces):

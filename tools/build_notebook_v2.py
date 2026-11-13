@@ -1,5 +1,6 @@
 """Build a standalone v2 Notebook while retaining P0 parsing and synthesis."""
 import json
+import runpy
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -8,6 +9,11 @@ ROOT = Path(__file__).resolve().parents[1]
 def build():
     original = json.loads((ROOT / 'notebook/Koebuta_Colabv1.00.ipynb').read_text(encoding='utf-8'))
     cells = original['cells'][:8]
+    # Extend the runtime before validation or request planning can use it.
+    additions = runpy.run_path(str(ROOT / 'cli/irodori_cli/emoji_tags.py'))['ADDITIONAL']
+    for cell in cells:
+        if cell['cell_type'] == 'code' and 'EMOTIONS = dict(zip(' in ''.join(cell['source']):
+            cell['source'] = (''.join(cell['source']) + f'\nEMOTIONS.update({additions!r})\n').splitlines(True)
     cells[0] = dict(cell_type='markdown', metadata={}, source=(ROOT / 'notebook/NOTEBOOK_V2_GUIDE.md').read_text(encoding='utf-8').splitlines(True))
     cells[7]['source'] = ['## 4. 画面（WebUI）\n', '\n', 'モデルをGPUへ読み込んでから、認証付きのGradio共有リンクを表示します。準備中はセルの出力をご確認ください。\n']
     source = "print('Irodori-TTSモデルをGPUへ読み込み中です。完了後にWebUIを公開します。')\nload_runtime()\nprint('モデルの準備が完了しました。WebUIを構築します。')\nimport sys, types\n"

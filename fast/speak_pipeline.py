@@ -41,10 +41,14 @@ EMOTION_JA = dict(zip(EMOTIONS, (
     '平静', '喜び', '怒り', '悲しみ', '優しさ', 'からかい', '不安', '緊張',
     '驚き', '疲れ', '囁き', '忍び笑い', '恐怖', '眠気', '強調')))
 
-MIN_CHARS = 10                 # 絶対的な品質保証ではなく運用上の目安
+from emoji_tags import EMOTIONS, TAG_PATTERN, spoken_length
+for emotion_id in EMOTIONS:
+    EMOTION_JA.setdefault(emotion_id, emotion_id)
+
+MIN_CHARS = 15                 # 短文の異音を抑える運用上の目安
 MAX_CHARS = 80                 # 合成単位の目安
 PAUSE_MS = 280                 # 発話間の既定無音
-HEADER = re.compile(r'^\[\s*([a-z]+)\s*(?:/\s*(.*?))?\]\s*$')
+HEADER = re.compile(r'^\[\s*([a-z_]+)\s*(?:/\s*(.*?))?\]\s*$')
 DELIMITER = re.compile(r'[。！？!?、，,；;：:\n\s]')
 RUBY_LIKE = re.compile(r'｜[^《\n]+《[^》\n]+》|[一-龥々]+《[^》\n]+》|\[\[rb:')
 
@@ -174,6 +178,9 @@ def _safe_cut(text: str, pos: int) -> int:
         or text[pos - 1] == '\u200d'
     ):
         pos -= 1
+    for run in re.finditer('(?:' + TAG_PATTERN.pattern + ')+', text):
+        if run.start() < pos < run.end():
+            return run.start() if run.start() else run.end()
     return pos
 
 
@@ -187,7 +194,7 @@ def split_text(text: str, limit: int = MAX_CHARS) -> list[str]:
         choices = []
         for m in DELIMITER.finditer(remaining[:limit]):
             pos = _safe_cut(remaining, m.end())
-            if pos >= MIN_CHARS and (len(remaining) - pos >= MIN_CHARS):
+            if spoken_length(remaining[:pos]) >= MIN_CHARS and spoken_length(remaining[pos:]) >= MIN_CHARS:
                 # 文末優先。末尾が句点+閉じ括弧なら括弧も残す
                 if remaining[pos - 1] in '。！？!?':
                     while pos < len(remaining) and remaining[pos] in '」』”"）)]':
@@ -200,11 +207,13 @@ def split_text(text: str, limit: int = MAX_CHARS) -> list[str]:
                 if pos <= limit:
                     choices.append((priority, abs(pos - min(60, limit)), -pos, pos))
         pos = min(choices)[-1] if choices else _safe_cut(remaining, limit)
-        # 末尾が1～9文字だけ取り残されるケースを先に回避。
+        # 読みが15文字未満の末尾だけ取り残されるケースを先に回避。
         # 自然な区切りを優先できないときは少し前で切る。
-        if len(remaining) - pos < MIN_CHARS:
+        if spoken_length(remaining[pos:]) < MIN_CHARS:
             reserve = _safe_cut(remaining, len(remaining) - MIN_CHARS)
-            if MIN_CHARS <= reserve <= limit:
+            while reserve > 1 and spoken_length(remaining[reserve:]) < MIN_CHARS:
+                reserve = _safe_cut(remaining, reserve - 1)
+            if spoken_length(remaining[:reserve]) >= MIN_CHARS and reserve <= limit:
                 pos = reserve
         if pos < 1:
             pos = limit
@@ -274,7 +283,7 @@ def plan_units(scenario: dict, min_chars: int = MIN_CHARS, max_chars: int = MAX_
     # 隣接要素の短文を、感情一致・長さ・語順を考慮して吸収。前後どちらも評価する。
     i = 0
     while i < len(units):
-        if len(units[i]['text'].strip()) >= min_chars:
+        if spoken_length(units[i]['text']) >= min_chars:
             i += 1
             continue
         options = []
@@ -285,7 +294,7 @@ def plan_units(scenario: dict, min_chars: int = MIN_CHARS, max_chars: int = MAX_
             left, right = units[left_i], units[left_i + 1]
             if left['barrier_after'] or len(left['text'] + right['text']) > max_chars:
                 continue
-            total = len(left['text'] + right['text'])
+            total = spoken_length(left['text'] + right['text'])
             mismatch = int(left['emotion'] != right['emotion']) + int(left['acting'] != right['acting'])
             score = (total < min_chars, mismatch, abs(total - 40), j != i + 1)
             options.append((score, left_i))
@@ -297,7 +306,7 @@ def plan_units(scenario: dict, min_chars: int = MIN_CHARS, max_chars: int = MAX_
         i = max(0, left_i - 1)
     # どうしても吸収できない短文は水増しせず警告する。
     for u in units:
-        if len(u['text'].strip()) < min_chars:
+        if spoken_length(u['text']) < min_chars:
             print(f'警告: {u["origin"]} は{min_chars}文字未満ですが、結合可能な隣接発話がありません', file=sys.stderr)
     # 下流に内部spanを公開しない
     return [{k: v for k, v in u.items() if k != 'spans'} for u in units]
