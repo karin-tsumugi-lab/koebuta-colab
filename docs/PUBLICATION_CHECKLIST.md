@@ -14,7 +14,7 @@
 
 ## 文書の役割
 
-総合READMEは4構成の入口、各構成のREADMEは使い方です。CLIの `AGENTS.md` は導入・生成運用、Notebookの `03B_AGENT_ADDON.md` はシナリオ作成用の追加依頼文です。両者は目的が異なります。
+総合READMEは利用順序と各構成への入口、各構成のREADMEは個別の使い方です。エージェントによるシナリオ作成から生成・回収までの手順は [AGENT_WORKFLOW.md](AGENT_WORKFLOW.md) に統合しています。CLIの `AGENTS.md` とNotebookの `03B_AGENT_ADDON.md` は統一手順への案内です。
 
 NotebookのJSON仕様は交換形式の説明として維持し、CLIの開発保留という古い記載を更新しました。各構成の読み込み許容と任意拡張の実行対応は、既存の互換表を参照してください。
 
