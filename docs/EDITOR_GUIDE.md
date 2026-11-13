@@ -20,17 +20,17 @@ TTS分割は原文 `text` や原稿全文 `source` を切り刻まず、`koebuta
 
 ## 生成側への受け渡し
 
-| HTMLの保存情報 | Notebook main（照合した公開版） | CLI v1.0.1 |
+| HTMLの保存情報 | 正式Notebook v2 | CLI v1.0.1 |
 | --- | --- | --- |
-| `koebuta_settings` | 生成への反映は未対応。互換PR #1で対応中 | 自動取り込みなし。別設定JSONを指定 |
-| 話者 `reference_wav` / 共用WAV | 自動解決は互換PR #1で対応中 | 別設定JSONの `voices` と `speakerVoices` 等で指定 |
-| `koebuta_tts_parts` | 生成単位への反映は互換PR #1で対応中 | 指定された片の境界を利用しない |
+| `koebuta_settings` | 読み込み時と生成計画へ反映 | 自動取り込みなし。別設定JSONを指定 |
+| 話者 `reference_wav` / 共用WAV | 作品内の参照WAVを解決 | 別設定JSONの `voices` と `speakerVoices` 等で指定 |
+| `koebuta_tts_parts` | 発話ごとの生成片として使用 | 指定された片の境界を利用しない |
 | `tts_text` | 読み上げに使用 | 読み上げに使用。ただしCLIの分割検査・規則に従う |
 | 発話 `pause_after_ms` | 個別の間として使用 | 個別の間として使用。CLI許容範囲は0～10000ms |
 
 HTMLの生成設定画面にある「将来のCLI用拡張」という文言は、CLI v1.0.1で対応済みという意味ではありません。`reading_mode` → `reading`、`use_emotion` → `emotion`、`use_acting` → `acting`、`narrator_emotion` → `narratorEmotion`、`default_pause_ms` → 秒単位の `pause` のように設定体系が異なります。設定の丸ごとコピーはできません。自動変換や無損失互換は未提供です。
 
-Notebook互換PR #1は、2026-11-02確認時点でdraft・未マージです。mainと作業ブランチの手順・検証結果を混ぜないでください。
+正式Notebookの操作は [v2操作ガイド](../notebook/NOTEBOOK_V2_GUIDE.md) を参照してください。v1の内蔵編集画面を前提にした過去の操作説明は旧版資料として扱います。
 
 [Fast版](../fast/README.md) も `koebuta_settings`・参照WAVパス・TTS分割境界の自動取り込みに対応しません。単一話者だけを対象とし、参照音声は `--ref`、分割と短文結合はFast版独自の規則を使います。空行情報は結合を防ぐために使いますが、Notebookと同じ空行休止時間を自動適用するわけではありません。
 
