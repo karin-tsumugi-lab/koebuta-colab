@@ -4,7 +4,7 @@
 
 ## 対象と前提
 
-- CLI v1.0.1は、準備済みのシナリオJSONからIrodori-TTS音声を生成・回収する入口です。配役整理、読み補正、感情判定は行いません。
+- CLI v1.1.0は、準備済みのシナリオJSONからIrodori-TTS音声を生成・回収する入口です。配役整理、読み補正、感情判定は行いません。参照未設定時の準備と確認は [自動参照の仕様](../docs/CLI_AUTO_REFERENCE.md) に従います。短文3条件のT4生成・回収は確認済み、試聴による品質評価は未確認です。
 - 確認済み環境はWSL2 Ubuntu 26.04、Python 3.10以上、Colab CLI 0.7.5です。別環境は未確認として扱います。
 - `irodori_generate.py` はホスト側の標準Pythonで動作します。TTS依存関係はColab側の準備工程で扱います。
 
@@ -47,12 +47,12 @@ Windowsから実行する場合は `python3` を `python` に読み替える。W
 └── settings.json        # CLI用。以下の規則で作成
 ```
 
-話者ごとの `reference_wav` は `voices/<話者ID>.wav` とし、提供されたWAVだけを配置する。欠落・競合・作品外参照は報告し、別の声で代用しない。既存ファイルは上書きしない。
+話者ごとの `reference_wav` は `voices/<話者ID>.wav` とし、提供されたWAVだけを配置する。指定済みファイルの欠落・破損・競合・作品外参照は報告し、別の声で代用しない。WAV自体を提供されていない話者は、存在しないパスを記入せず未指定のままにする。未指定なら自動参照または参照なしの計画をdry-runで確認する。既存ファイルは上書きしない。
 
 `settings.json` はscenarioと同じフォルダーへ作成する。この参照WAV運用では `voiceMode: clone`、モデルは `Aratako/Irodori-TTS-v4.1-Small` とする。scenarioの `koebuta_settings` から次を対応付ける（括弧内は未指定時の運用上の既定値）。
 
 - `reading_mode` → `reading`（cast）。castでは `speakerVoices` を話者ID→同じID、`voices` を同じID→`voices/<話者ID>.wav` とする。
-- sharedでは明示された `shared_reference_wav` を `voices.voice_a` へ設定し、`speakerVoices` は省略。共通WAVの指定がなければ止める。
+- sharedでは明示された `shared_reference_wav` を `voices.voice_a` へ設定し、`speakerVoices` は省略。WAV指定が全くなければ共通の自動参照を使用できる。一部の話者だけWAVがあり共通WAVがなければ、声を勝手に選ばず止める。
 - `use_emotion` → `emotion`（true）、`use_acting` → `acting`（false）、`narrator_emotion` → `narratorEmotion`（false）。
 - `seed`（314）、`steps`（40）を転記し、`default_pause_ms`（280）を1000で割って秒単位の `pause` とする。不正値を既定値で隠さない。
 
@@ -61,6 +61,8 @@ Windowsから実行する場合は `python3` を `python` に読み替える。W
 ## 実行
 
 利用者の明示承認後にだけ、次の形で実行する。
+
+生成前に1回確認が入る。AIによる承認済みの非対話実行では、先に `--dry-run` の計画を確認したうえで `--yes` を付ける。利用者の承認の代わりに `--yes` を使わない。声候補をシード違いで比較する場合は `voiceMode: design` を明示し、自動参照を作らない。
 
 ```bash
 python3 irodori_generate.py --scenario <scenario.json> --settings <settings.json> --session <unique-session> --job <unique-job> --out <new-output-dir> --new --gpu T4 --stop-after-download
