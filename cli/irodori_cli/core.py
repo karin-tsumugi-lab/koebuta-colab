@@ -11,9 +11,8 @@ import uuid
 import time
 from pathlib import Path
 
-EMOTIONS = dict(zip(
-    ['neutral','joy','anger','sad','kind','tease','anxiety','tension','surprise','tired','whisper','giggle','fear','sleepy','resolve'],
-    ['','😆','😠','😭','🫶','😏','🥺','😰','😲','😮‍💨','👂','🤭','😱','😪','💥']))
+from .emoji_tags import EMOTIONS
+
 ATTRS = {'age':['young_adult','adult','elderly'], 'gender':['feminine','masculine'],
          'pitch':['high','mid','low'], 'timbre':['clear','warm','soft','husky','bright','resonant'],
          'habitual_style':['gentle','measured','brisk','formal','casual','calm']}
