@@ -1,5 +1,7 @@
 # Koebuta v1.00 — 編集の安定化と分割・結合の確認
 
+> 旧v1の履歴資料です。正式版の起動と操作は [Notebook v2操作ガイド](NOTEBOOK_V2_GUIDE.md) を参照してください。
+
 v1.4通しレビューの再現不具合R1–R9を修正し、自動分割・結合を利用者が確認して仕上げる方式へ更新したリリース候補です。2026-11-01作成。Colab GPUとブラウザー実操作は未検証です。
 
 ## 変更
@@ -81,4 +83,3 @@ python test_batch_fix.py で既存回帰試験と追加3条件が通過。実作
 非GPU回帰試験の全体は `python test_merge_reading.py` で実行する。この入口から `test_review_fixes.py` → `test_force_length.py` → `test_batch_fix.py` → `test_koebuta_stability_v1.00.py` → `test_koebuta_without_gpu_v1.00.py` を順に呼び出す。実作品fixtureがない試験はSKIP。実GPU・ブラウザー操作・音質の確認は別途必要。
 
 入力元と `text_format` を指定し、曖昧な括弧の意図はLLMと利用者が確認する。原文の記法を統一せず、必要な発話の完成した `tts_text` に読みを指定する。なろうの丸括弧を意味に従って判別する機能をKoebutaへ追加したものではない。具体的な依頼方法は `02_CHAT_PROMPT.md`・`03C_READING_ADDON.md`、対応範囲は `USER_GUIDE_FAQ.md` を参照。
-
