@@ -39,7 +39,7 @@ python -m pip install -r notebook/requirements-dev.txt
 python -m unittest -v test_notebook_v2.py test_notebook_v2_ui.py test_inspector_p0.py
 ```
 
-v2の保存・復元、候補の生成・採用、画面構築とコールバックを確認します。音声モデル・GPU・公開サーバーはモックで置き換えます。旧版の読み変換に関する回帰試験は `notebook/test_merge_reading.py` に保持しています。Colab実GPU、ブラウザー実操作、朗読品質の確認は別途必要です。
+v2の保存・復元、候補の生成・採用、画面構築とコールバックを確認します。音声モデル・GPU・公開サーバーはモックで置き換えます。旧版の読み変換に関する回帰試験は `notebook/test_merge_reading.py` に保持しています。2026-11-13に利用者からNotebook v2の生成試験完了の報告を受領しました。対象条件と今回の回帰試験は [絵文字対応の検証記録](../docs/EMOJI_RELEASE_VALIDATION.md) を参照してください。
 
 ## 管理するファイル
 
