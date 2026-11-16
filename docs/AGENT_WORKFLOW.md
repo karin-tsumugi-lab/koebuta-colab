@@ -50,7 +50,7 @@ Colabへの転送とGPU利用は、利用者の承認範囲で行います。原
 
 空白行などの情報は仕様に従って保持し、必要な間は場面演出に応じて`pause_after_ms`や区切り情報へ表します。1200msを全場面転換に固定適用しません。CLI設定JSONに未対応の空白行設定キーを追加しません。HTMLの`koebuta_settings`・TTS分割情報とCLIの対応範囲は [互換性の表](EDITOR_GUIDE.md) を確認してください。
 
-シナリオの区切りを生成先へ渡す条件と原文照合の運用は [エディタ案内](EDITOR_GUIDE.md) を参照してください。CLIの区切りには登録済み `speaker_id` と空白だけでない `text` が必要で、空行へ記号を創作して埋めません。空行だけの休止には直前の発話の `pause_after_ms` を使えます。
+シナリオの区切りを生成先へ渡す条件と原文照合の運用は [エディタ案内](EDITOR_GUIDE.md) を参照してください。旧CLI経路の区切りには登録済み `speaker_id` と空白だけでない `text` が必要ですが、新入口では省略できます。空行へ記号を創作して埋めず、必要な休止を `pause_after_ms` へ明示します。
 
 ### 感情・演技・効果音
 
@@ -117,12 +117,14 @@ CLIはホスト側で標準Pythonを使い、音声モデルをColabのGPUで実
 以下のコマンドはリポジトリの`cli/`フォルダーで実行します。WindowsのPythonでは`python3`を`python`へ読み替え、WSL内では入力ファイルをWSL形式のパスで指定してください。
 
 ```bash
-colab --version
+colab --help
 colab sessions
 python3 irodori_generate.py --version
 python3 irodori_generate.py --help
 python3 irodori_generate.py --scenario irodori_cli_examples/generate_scenario.json --settings irodori_cli_examples/generate_settings.json --session sample-check --job sample --out outputs/sample-check --dry-run
 ```
+
+Colab CLI 0.7.5では `--version` が未対応との実機報告があります。版番号は導入に使ったパッケージ管理ツールの表示や更新通知で確認し、usageエラーを認証・接続エラーと混同しません。
 
 続いて作品のdry-runを行います。下の`/path/to/work/`は実際の作品フォルダーへ置き換えてください。
 
@@ -162,7 +164,7 @@ Ctrl+C、通信切断、ホスト側timeoutが起きても遠隔生成が続い�
 
 誤読、話者、声の一貫性、演技、効果音、欠落、雑音、つなぎ目は試聴で確認します。試聴を行っていない場合は、その旨を明記して利用者へ音声を提示します。
 
-Notebook v2では発話ごとの候補生成・比較・採用ができます。現在の`irodori_generate.py`入口には発話IDを選ぶ引数がないため、CLIで修正分だけを生成する場合は、元シナリオを保管し、対象発話だけの別シナリオと新しい出力先を作ります。完成音声への差し替え・再結合も必要になるため、差分生成だけで全編修正済みと報告しません。
+Notebook v2では発話ごとの候補生成・比較・採用ができます。CLI開発版2.0.0-devの `irodori_generate.py` では、元シナリオに `--ids 親ID,親ID#片番号` を指定し、新規ジョブ・出力先へ修正分だけを生成します。対象だけの別シナリオを作る必要はありません。完成音声への自動差し替え・再結合は行わないため、差分生成だけで全編修正済みと報告しません。
 
 ## 9. 納品と制作記録
 
@@ -170,7 +172,7 @@ Notebook v2では発話ごとの候補生成・比較・採用ができます。
 
 `NOTES.md`に次を記録してください。
 
-- 入力と参照音声の場所・SHA256、使用したモデルと取得できたrevision、CLIの版、実GPU、seed、steps、Captionなどの生成条件
+- 入力と参照音声の場所・SHA256、使用したモデルと取得できたrevision、CLIの版、実GPU、seed、steps、Captionなどの生成条件。モデルrevisionは `pipeline.json.recovered` が示す回収先の `job/job.json` → `provenance.model_revision` を確認する（codec・watermark・tokenizerのrevisionも同じprovenanceに保存）
 - 朗読形式・声・全体と場面の演出方針、連続性、演出修正履歴、未確定事項、読み方針・確認リストと採用結果
 - 見出し類の改変許可範囲・変更前後・対象発話ID、原文照合の指摘と確認結果（読み方針Cの許可とは区別）
 - 使用した絵文字、反復数、対象発話ID、自動選択の除外理由、読み上げ表記の調整

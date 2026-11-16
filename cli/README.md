@@ -8,7 +8,7 @@
 
 開発版の `irodori_generate.py` は、作成済みの発話・明示TTS片をそのまま生成する入口です。CLI 1.0.1の自動分割はこの入口では使いません。交換形式は引き続き `schema_version: 1` です。CLIの版とJSON形式の版を混同しないでください。
 
-新経路はCPUの模擬推論と既存回帰試験で確認しています。今回の実GPU・Colab生成・音声試聴は未実施です。過去のT4生成・試聴は旧経路の記録であり、新経路の実機検証には代えません。検査結果と未確認範囲は [実装検証記録](../docs/CLI_FAITHFUL_VALIDATION.md)、確定した判断は [仕様v0.2](../docs/CLI_FAITHFUL_SPEC.md) を参照してください。
+新経路はCPUの模擬推論と既存回帰試験で確認しています。2026-11-16にMuseのLinux環境で新経路の実Colab・T4生成を試し、全体4単位（27.74秒）と一片指定1単位（5.36秒）の生成・回収・機械検査・停止が成功しました。利用者の試聴でも問題なしとの報告を受領しています。長編性能や長時間セッションでのresident継続性は今回の確認範囲外です。検査結果と未確認範囲は [実装検証記録](../docs/CLI_FAITHFUL_VALIDATION.md)、確定した判断は [仕様v0.2](../docs/CLI_FAITHFUL_SPEC.md) を参照してください。
 
 ## 必要なもの
 
@@ -27,9 +27,11 @@ Colab CLIのインストール方法と認証画面は、CLI本体の公式手�
 次でCLIが呼び出せることを先に確認します。
 
 ```bash
-colab --version
+colab --help
 colab sessions
 ```
+
+Colab CLI 0.7.5では `--version` が未対応との実機報告があります。版番号は導入に使用したパッケージ管理ツールの表示やCLIの更新通知で確認し、`--version` のusageエラーを接続・生成の失敗と混同しないでください。
 
 このプロジェクト側では、Colab CLIの認証を自動化・代行しません。新規GPU作成、原稿・参照音声のGoogle Colabへの転送、GPU利用枠の消費は、実行前に利用者が理解して承認してください。
 
@@ -104,6 +106,8 @@ dry-runを確認後、実行時には `--dry-run` を外します。毎回新し
 | `events.jsonl` / `*.log` | 進捗と工程ログ |
 
 終了コード0は、生成・回収・機械検証・保存の成功を示します。音質や演技品質の合格ではありません。必ず完成WAVと発話別WAVを試聴し、誤読、話者、声の一貫性、感情、つなぎ目、音量、雑音を確認してください。
+
+モデル等の固定revisionは、`pipeline.json` の `recovered` が示す回収先の `job/job.json` にある `provenance.model_revision`、`codec_revision`、`watermark_model_revision`、`tokenizer_revisions` へ記録されます。`telemetry.json` はCU・GPU・時間の記録で、モデルrevisionの保存先ではありません。試験報告ではこの回収記録から転記してください。
 
 ## トラブル時
 
