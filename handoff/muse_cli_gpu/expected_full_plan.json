@@ -1,0 +1,131 @@
+{
+  "session": "faithful-smoke-20261116",
+  "new_runtime": false,
+  "prepare": true,
+  "engine": "tts",
+  "model": "Aratako/Irodori-TTS-v4.1-Small",
+  "requests": [
+    {
+      "id": "heading",
+      "unit_id": "heading",
+      "segment_id": "heading",
+      "part_index": 1,
+      "part_count": 1,
+      "role": "n",
+      "request": {
+        "text": "春の便り\n声舞田花子\n第一章　雨上がりの庭",
+        "caption": "柔らかく落ち着いた成人女性の声。自然で聞き取りやすい日本語。\n穏やかで明瞭に。場面の空気を大切に読む。",
+        "no_ref": true,
+        "seed": 314,
+        "num_steps": 40
+      },
+      "reference": null,
+      "fingerprint": "16b55a4b9373acde1af1a88b78746e9a264b3f404d6a1e48c0418e3ad878bfca",
+      "pause_after_ms": 500
+    },
+    {
+      "id": "garden#1",
+      "unit_id": "garden#1",
+      "segment_id": "garden",
+      "part_index": 1,
+      "part_count": 2,
+      "role": "n",
+      "request": {
+        "text": "雨が上がると、庭の草花には小さな雫が光っていました。",
+        "caption": "柔らかく落ち着いた成人女性の声。自然で聞き取りやすい日本語。\n穏やかで明瞭に。場面の空気を大切に読む。",
+        "no_ref": true,
+        "seed": 314,
+        "num_steps": 40
+      },
+      "reference": null,
+      "fingerprint": "4c55c917f3c15c12521b946a5e0ed72ff5133398cd94fd22016238ba485a4ff8",
+      "pause_after_ms": 0
+    },
+    {
+      "id": "garden#2",
+      "unit_id": "garden#2",
+      "segment_id": "garden",
+      "part_index": 2,
+      "part_count": 2,
+      "role": "n",
+      "request": {
+        "text": "窓を開けた少女は、春の匂いを胸いっぱいに吸い込みました。",
+        "caption": "柔らかく落ち着いた成人女性の声。自然で聞き取りやすい日本語。\n穏やかで明瞭に。場面の空気を大切に読む。",
+        "no_ref": true,
+        "seed": 314,
+        "num_steps": 40
+      },
+      "reference": null,
+      "fingerprint": "b112c9d9dc801e58fee1c3bc0990d0496105816b35b920fc77263a234aab091e",
+      "pause_after_ms": 700
+    },
+    {
+      "id": "girl",
+      "unit_id": "girl",
+      "segment_id": "girl",
+      "part_index": 1,
+      "part_count": 1,
+      "role": "n",
+      "request": {
+        "text": "😆「今日はきっと、よい日になるわ。」少女は笑顔で、庭へと歩き出しました。",
+        "caption": "柔らかく落ち着いた成人女性の声。自然で聞き取りやすい日本語。\n穏やかで明瞭に。場面の空気を大切に読む。\n明るい期待を込め、台詞から地の文へ自然に戻る。",
+        "no_ref": true,
+        "seed": 314,
+        "num_steps": 40
+      },
+      "reference": null,
+      "fingerprint": "a3720f011579f0c17568a95cbc6f90d3f64c503f1e65b0a75642fedb0d051446",
+      "pause_after_ms": 200
+    }
+  ],
+  "execution": {
+    "contract": "koebuta-faithful-v1",
+    "scope": "full",
+    "selection": null,
+    "total_unit_count": 4,
+    "selected_unit_count": 4,
+    "selected_unit_ids": [
+      "heading",
+      "garden#1",
+      "garden#2",
+      "girl"
+    ],
+    "complete_segment_ids": [
+      "heading",
+      "garden",
+      "girl"
+    ],
+    "leading_pause_ms": 100,
+    "trailing_pause_ms": 200
+  },
+  "settings": {
+    "title": "CLI忠実生成・実機試験",
+    "reading": "shared",
+    "voiceMode": "design",
+    "baseCaption": "柔らかく落ち着いた成人女性の声。自然で聞き取りやすい日本語。",
+    "seed": 314,
+    "steps": 40,
+    "pause": 0.28,
+    "ttsModel": "Aratako/Irodori-TTS-v4.1-Small",
+    "acting": true,
+    "emotion": true,
+    "narratorEmotion": true
+  },
+  "diagnostics": [
+    {
+      "level": "info",
+      "code": "I_SOURCE_UNCHECKED",
+      "segment_id": null,
+      "field": "source",
+      "message": "元原稿がないため原文照合は未実施です"
+    },
+    {
+      "level": "info",
+      "code": "W_LENGTH",
+      "segment_id": "heading",
+      "field": "tts_text",
+      "message": "推奨範囲外の通知: 18文字（20〜80は推奨範囲）。自動分割・結合はしません",
+      "part_index": 1
+    }
+  ]
+}

@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "speakers": {
+    "n": {
+      "name": "朗読者",
+      "kind": "narrator",
+      "acting_description": "穏やかで明瞭に。場面の空気を大切に読む。"
+    }
+  },
+  "segments": [
+    {
+      "id": "opening_gap",
+      "segment_type": "separator",
+      "emotion": "neutral",
+      "pause_after_ms": 100
+    },
+    {
+      "id": "heading",
+      "speaker_id": "n",
+      "text": "春の便り\n声舞田花子\n第一章　雨上がりの庭",
+      "emotion": "neutral",
+      "pause_after_ms": 500
+    },
+    {
+      "id": "garden",
+      "speaker_id": "n",
+      "text": "雨が上がると、庭の草花には小さな雫が光っていました。窓を開けた少女は、春の匂いを胸いっぱいに吸い込みました。",
+      "tts_text": "雨が上がると、庭の草花には小さな雫が光っていました。窓を開けた少女は、春の匂いを胸いっぱいに吸い込みました。",
+      "koebuta_tts_parts": [
+        "雨が上がると、庭の草花には小さな雫が光っていました。",
+        "窓を開けた少女は、春の匂いを胸いっぱいに吸い込みました。"
+      ],
+      "emotion": "neutral",
+      "pause_after_ms": 700
+    },
+    {
+      "id": "girl",
+      "speaker_id": "n",
+      "text": "「今日はきっと、よい日になるわ。」少女は笑顔で、庭へと歩き出しました。",
+      "emotion": "joy",
+      "acting_description": "明るい期待を込め、台詞から地の文へ自然に戻る。"
+    },
+    {
+      "id": "closing_gap",
+      "segment_type": "separator",
+      "emotion": "neutral",
+      "pause_after_ms": 200
+    }
+  ]
+}

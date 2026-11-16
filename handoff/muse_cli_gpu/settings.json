@@ -1,0 +1,10 @@
+{
+  "title": "CLI忠実生成・実機試験",
+  "voiceMode": "design",
+  "reading": "shared",
+  "baseCaption": "柔らかく落ち着いた成人女性の声。自然で聞き取りやすい日本語。",
+  "ttsModel": "Aratako/Irodori-TTS-v4.1-Small",
+  "seed": 314,
+  "steps": 40,
+  "pause": 0.28
+}

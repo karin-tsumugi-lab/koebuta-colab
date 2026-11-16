@@ -1,0 +1,62 @@
+{
+  "session": "faithful-smoke-20261116",
+  "new_runtime": false,
+  "prepare": true,
+  "engine": "tts",
+  "model": "Aratako/Irodori-TTS-v4.1-Small",
+  "requests": [
+    {
+      "id": "garden#2",
+      "unit_id": "garden#2",
+      "segment_id": "garden",
+      "part_index": 2,
+      "part_count": 2,
+      "role": "n",
+      "request": {
+        "text": "窓を開けた少女は、春の匂いを胸いっぱいに吸い込みました。",
+        "caption": "柔らかく落ち着いた成人女性の声。自然で聞き取りやすい日本語。\n穏やかで明瞭に。場面の空気を大切に読む。",
+        "no_ref": true,
+        "seed": 314,
+        "num_steps": 40
+      },
+      "reference": null,
+      "fingerprint": "b112c9d9dc801e58fee1c3bc0990d0496105816b35b920fc77263a234aab091e",
+      "pause_after_ms": 700
+    }
+  ],
+  "execution": {
+    "contract": "koebuta-faithful-v1",
+    "scope": "selection",
+    "selection": "garden#2",
+    "total_unit_count": 4,
+    "selected_unit_count": 1,
+    "selected_unit_ids": [
+      "garden#2"
+    ],
+    "complete_segment_ids": [],
+    "leading_pause_ms": 0,
+    "trailing_pause_ms": 0
+  },
+  "settings": {
+    "title": "CLI忠実生成・実機試験",
+    "reading": "shared",
+    "voiceMode": "design",
+    "baseCaption": "柔らかく落ち着いた成人女性の声。自然で聞き取りやすい日本語。",
+    "seed": 314,
+    "steps": 40,
+    "pause": 0.28,
+    "ttsModel": "Aratako/Irodori-TTS-v4.1-Small",
+    "acting": true,
+    "emotion": true,
+    "narratorEmotion": true
+  },
+  "diagnostics": [
+    {
+      "level": "info",
+      "code": "I_SOURCE_UNCHECKED",
+      "segment_id": null,
+      "field": "source",
+      "message": "元原稿がないため原文照合は未実施です"
+    }
+  ]
+}
