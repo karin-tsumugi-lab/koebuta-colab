@@ -47,19 +47,22 @@ class GenerateTests(unittest.TestCase):
         if 'synthesize' in command:
             folder = Path(command[command.index('--out') + 1]); recovered = folder / 'run' / 'recovered'
             job = recovered / 'job'; job.mkdir(parents=True)
-            with wave.open(str(job / 'take.wav'), 'wb') as stream:
-                stream.setparams((1, 2, 48000, 0, 'NONE', 'not compressed'))
-                stream.writeframes(b'\0\0' * 48)
-            checksum = file_hash(job / 'take.wav')
-            atomic_json(job / 'job.json', {'status': 'partial' if self.incomplete else 'complete',
-                'takes': [{'file': 'take.wav', 'sha256': checksum, 'frames': 48}],
-                'combined': {'file': 'take.wav', 'sha256': checksum, 'frames': 48,
-                             'seconds': .001, 'take_files': ['take.wav']}})
-            atomic_json(recovered / 'project.json', read_json(self.out / 'project.json'))
+            from irodori_cli.faithful_worker import execute
+            document = read_json(self.out / 'project.json')
+            def infer(request, destination):
+                with wave.open(str(destination), 'wb') as stream:
+                    stream.setparams((1, 2, 48000, 0, 'NONE', 'not compressed'))
+                    stream.writeframes(b'\0\0' * 48)
+            manifest = execute(document, {}, job, infer)
+            if self.incomplete:
+                manifest['status'] = 'partial'
+                atomic_json(job / 'job.json', manifest)
+            atomic_json(recovered / 'project.json', document)
             atomic_json(folder / 'latest.json', {'recovered': str(recovered),
                 'receipt': {'job_id': 'test-job', 'action': 'synthesize', 'exit_code': 0, 'ok': True}})
             if self.corrupt:
-                with (job / 'take.wav').open('ab') as stream:stream.write(b'changed')
+                with (job / manifest['combined']['take_files'][0]).open('ab') as stream:
+                    stream.write(b'changed')
         if 'stop' in command:
             self.assertTrue((self.out / 'result.wav').is_file())
             self.assertEqual(read_json(self.out / 'pipeline.json')['status'], 'complete')
@@ -76,10 +79,10 @@ class GenerateTests(unittest.TestCase):
             discover.assert_not_called()
         self.assertFalse(self.out.exists()); self.assertEqual(self.calls, [])
         project, _, plan = load_inputs(self.scenario, self.settings)
-        self.assertEqual(project['segments'][0]['emotion'], 'joy')
-        self.assertEqual(project['segments'][0]['acting'], '柔らかく')
+        self.assertEqual(project['scenario']['segments'][0]['emotion'], 'joy')
+        self.assertEqual(project['scenario']['segments'][0]['acting_description'], '柔らかく')
         self.assertEqual(plan[0]['pause_after_ms'], 500)
-        self.assertFalse(project['segments'][0]['reviewed'])
+        self.assertNotIn('reviewed', project['scenario']['segments'][0])
     def test_complete_pipeline_exports_verified_audio_and_only_prepares_tts(self):
         before = self.scenario.read_bytes(), self.settings.read_bytes()
         self.assertEqual(self.invoke('--new'), 0)
@@ -87,7 +90,9 @@ class GenerateTests(unittest.TestCase):
         self.assertIn('--new', self.calls[0]); self.assertIn('tts', self.calls[0])
         self.assertIn('--allow-unreviewed', self.calls[1])
         self.assertTrue((self.out / 'result.wav').is_file())
-        with zipfile.ZipFile(self.out / 'segments.zip') as archive:self.assertEqual(archive.namelist(), ['take.wav'])
+        with zipfile.ZipFile(self.out / 'segments.zip') as archive:
+            self.assertEqual(len(archive.namelist()), 1)
+            self.assertTrue(archive.namelist()[0].endswith('.wav'))
         self.assertEqual(before, (self.scenario.read_bytes(), self.settings.read_bytes()))
         self.assertEqual(read_json(self.out / 'pipeline.json')['status'], 'complete')
     def test_existing_output_is_not_overwritten(self):

@@ -22,6 +22,14 @@ NotebookのJSON仕様は交換形式の説明として維持し、CLIの開発�
 
 ## シナリオ化プロンプトv0.3（2026-11-16）
 
-- 文書・仕様の確認結果は [v0.3検証記録](SCENARIO_PROMPT_V03_VALIDATION.md) を参照。main統合は別途レビュー対象。
+- 文書・仕様の確認結果は [v0.3検証記録](SCENARIO_PROMPT_V03_VALIDATION.md)、mainの統合状態は [統合状況](INTEGRATION_STATUS.md) を参照。
 - [ ] 同じ作品・声・条件で旧版／新版の独立したシナリオ出力を比較し、実際の音声と試聴による演出品質を評価する。
 - [x] 正式Notebook v2の原文不一致を生成を妨げない警告へ変更。原稿と見出しの許可範囲は人が確認し、ほかの停止条件は維持する。旧v1・プロトタイプ・JSON構造は変更しない。[修正・レビュー記録](NOTEBOOK_V2_SOURCE_WARNING_REVIEW.md)を参照。
+
+## CLI忠実生成（2.0.0-dev、2026-11-16）
+
+- [x] 発話・明示TTS片を保持する新経路と、親／片IDでの対象指定を実装。交換形式v1と旧入口を維持。
+- [x] CPU回帰（CLI49件・Notebook等30件・Node）とCIを確認。
+- [x] MuseのLinux＋T4で全体4単位・一片1単位の生成・回収・休止・親完成範囲・停止を確認したとの報告を受領。利用者の試聴でも問題なしとの報告。[検証記録](CLI_FAITHFUL_VALIDATION.md)を参照。
+- [ ] 長編性能、長時間セッションのresident継続性、透かしの独立デコードを確認する。今回の短いVoiceDesign試験の成功とは区別する。
+- GitHub mainへの統合と、版番号を確定してRelease ZIPを発行する作業は別です。現時点のCLI表記は2.0.0-devを維持します。

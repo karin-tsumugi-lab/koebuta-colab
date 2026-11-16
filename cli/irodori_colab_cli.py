@@ -14,6 +14,7 @@ from irodori_cli.core import atomic_json, identifier, normalize_project, read_js
 from irodori_cli.core import file_hash
 from irodori_cli.jobs import inside, wav_info
 from irodori_cli.gemini_models import DEFAULT_MODEL, MODELS
+from irodori_cli.faithful import project_document
 
 ROOT = Path(__file__).resolve().parent
 
@@ -217,7 +218,7 @@ def main():
         extra = []
         if args.project:
             local_project = invocation/'project_upload.json'
-            atomic_json(local_project, normalize_project(read_json(args.project)))
+            atomic_json(local_project, project_document(read_json(args.project)))
             call(['upload','-s',args.session,remote_path(local_project),f'/content/irodori_cli_{args.job}_project_upload.json'])
         for item in args.voice:
             key, separator, path = item.partition('=')

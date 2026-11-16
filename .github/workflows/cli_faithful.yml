@@ -1,0 +1,22 @@
+name: CLI faithful generation (CPU)
+on:
+  pull_request:
+    paths:
+      - 'cli/**'
+      - '.github/workflows/cli_faithful.yml'
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m unittest -v test_faithful test_irodori_generate test_cli_terminal
+        working-directory: cli
+      - run: python -m unittest -v test_inspector_p0 test_notebook_v2 test_v2_emoji test_v2_source_validation
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: node test_inspector_emoji.cjs

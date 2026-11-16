@@ -25,6 +25,7 @@ if not background:
         archive.extractall(code_root)
 sys.path.insert(0, str(code_root))
 from irodori_cli.core import atomic_json, normalize_project, read_json
+from irodori_cli.faithful import CONTRACT, project_document
 action = os.environ['IRODORI_ACTION']
 args = json.loads(os.environ.get('IRODORI_ARGS', '[]'))
 nonce = os.environ['IRODORI_NONCE']
@@ -87,7 +88,13 @@ elif not background and action in ('prepare','scenario','analyze','readings','em
             raise RuntimeError('このColabランタイムには実行中の工程があります。重複起動しません')
         upload = Path('/content')/f'irodori_cli_{job_id}_project_upload.json'
         if os.environ.get('IRODORI_IMPORT_PROJECT') == '1':
-            atomic_json(root/'project.json', normalize_project(read_json(upload)))
+            incoming = project_document(read_json(upload))
+            if incoming.get('contract') == CONTRACT and (root/'job/job.json').exists():
+                receipt.update(status='failed', error='新しいジョブIDを指定してください', exit_code=1, ok=False)
+                recovery(receipt)
+                atomic_json(receipt_path, receipt)
+                raise SystemExit(1)
+            atomic_json(root/'project.json', incoming)
         receipt.update(exit_code=None, status='running')
         atomic_json(receipt_path, receipt)
         env = {**os.environ, 'IRODORI_BACKGROUND':'1', 'IRODORI_IMPORT_PROJECT':'0', 'IRODORI_CODE_ROOT':str(code_root)}
@@ -101,6 +108,8 @@ else:
         global receipt
         try:
             command = [sys.executable,'-u','-m','irodori_cli.prepare',*args] if action=='prepare' else [sys.executable,'-u','-m','irodori_cli',action]
+            if action == 'synthesize' and read_json(root/'project.json').get('contract') == CONTRACT:
+                command = [sys.executable, '-u', '-m', 'irodori_cli.faithful_worker']
             if action in ('scenario','analyze','readings','emotions','synthesize','run','status'):
                 command += ['--job',str(root/'job')]
                 if action!='status':

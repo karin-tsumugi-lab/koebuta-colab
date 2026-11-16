@@ -1,9 +1,9 @@
 # Koebuta 朗読シナリオJSON仕様書
 
 - 文書状態：JSON交換形式v1／シナリオ化プロンプトv0.3対応
-- アプリの版：正式Notebook v2、CLI v1.0.1、Inspector v0.1.6。`schema_version`とは別の版番号
+- アプリの版：正式Notebook v2、CLI配布版v1.0.1／開発版2.0.0-dev（新入口）、Inspector v0.1.6。`schema_version`とは別の版番号
 - 形式バージョン：`schema_version: 1`
-- 対象：Koebutaのシナリオ交換形式。各構成の読み込み許容・任意拡張への対応は [互換性表](../docs/EDITOR_GUIDE.md) を参照。CLI v1.0.1の生成設定は別JSONです。
+- 対象：Koebutaのシナリオ交換形式。各構成の読み込み許容・任意拡張への対応は [互換性表](../docs/EDITOR_GUIDE.md) を参照。CLIの生成設定は別JSONです。開発版の新入口は明示TTS片を使い、自動分割しません。旧入口との違いは互換性表とCLI READMEを参照してください。
 - 役割：シナリオJSONの**意味と基本構造**を定める。LLMへの依頼方法、画面操作、GPU実行条件は定めない。
 
 ## 1. 基本方針
