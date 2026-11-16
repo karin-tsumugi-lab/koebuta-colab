@@ -2,7 +2,9 @@
 
 ## シナリオ運用文書の整理
 
-発話長の注意は総合README、作品フォルダーとsettings作成の規約は `cli/AGENTS.md` に集約しました。一時追加した `SCENARIO_WORKSPACE.md` と `SCENARIO_EXTENSIONS.md` は統合して削除しました。`voices/<話者ID>.wav` は推奨する配置規約であり、HTMLが強制する命名ではありません。settingsの運用既定値はCLI実装の既定値とは区別します。
+現行のシナリオ化は [02 v0.3](../notebook/02_CHAT_PROMPT.md)、JSON交換形式は [01](../notebook/01_SPEC_SHEET.md)、作品フォルダー・検証・settings作成は [AGENT_WORKFLOW.md](AGENT_WORKFLOW.md) が正本です。CLIのAGENTSは統一手順への入口です。
+
+以下の収録元・ハッシュ・変更範囲は各収録時点の履歴です。2026-11-13以降の絵文字拡張と今回の文書改訂を含め、現在の全ファイルが原配布物と同一という意味ではありません。一時追加した `SCENARIO_WORKSPACE.md` と `SCENARIO_EXTENSIONS.md` は統合して削除しました。`voices/<話者ID>.wav` は推奨する配置規約であり、HTMLが強制する命名ではありません。settingsの運用既定値はCLI実装の既定値とは区別します。
 
 ### HTML v0.1.6が保存する任意拡張
 

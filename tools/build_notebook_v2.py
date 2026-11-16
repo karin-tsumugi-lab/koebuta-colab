@@ -6,12 +6,40 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def v2_validation_source(source):
+    """Keep source alignment advisory in v2 without editing the v1 artifact."""
+    replacements = (
+        ("add('要確認',f'項目 {s.get(\"id\")}', '原稿全文中に同じ原文を順序どおり見つけられません（部分照合）')",
+         "add('警告',f'項目 {s.get(\"id\")}', '原稿全文中に同じ原文を順序どおり見つけられません（部分照合）。許可済みの見出し改変か、意図しない本文の差分かを確認してください。生成は継続できます')"),
+        ("lines = [f'要確認・エラー: {len(issues)}件 / 読込時の注意: {len(warns)}件']",
+         "blocking = [issue for issue in issues if issue[0] != '警告']\n"
+         "    lines = [f'要確認・エラー: {len(blocking)}件 / 警告: {len(issues) - len(blocking)}件 / 読込時の注意: {len(warns)}件']"),
+        ("def require_ready(project):\n    issues = validate_project(project)",
+         "def require_ready(project):\n    issues = [issue for issue in validate_project(project) if issue[0] != '警告']"),
+    )
+    for before, after in replacements:
+        if source.count(before) != 1:
+            raise ValueError('v2 validation adapter no longer matches the v1 source: ' + before)
+        source = source.replace(before, after, 1)
+    return source
+
+
 def build():
     original = json.loads((ROOT / 'notebook/Koebuta_Colabv1.00.ipynb').read_text(encoding='utf-8'))
     cells = original['cells'][:8]
     # Extend the runtime before validation or request planning can use it.
     additions = runpy.run_path(str(ROOT / 'cli/irodori_cli/emoji_tags.py'))['ADDITIONAL']
     for cell in cells:
+        if cell['cell_type'] == 'code' and 'def validate_project(' in ''.join(cell['source']):
+            cell['source'] = v2_validation_source(''.join(cell['source'])).splitlines(True)
+        if cell['cell_type'] == 'code' and 'def build_plan(' in ''.join(cell['source']):
+            source = ''.join(cell['source'])
+            before = "STATE['plan_warnings'] = []"
+            if source.count(before) != 1:
+                raise ValueError('v2 plan warning adapter no longer matches the v1 source')
+            cell['source'] = source.replace(before,
+                "STATE['plan_warnings'] = [f'{level} | {item}: {message}'\n"
+                "        for level, item, message in validate_project(project) if level == '警告']", 1).splitlines(True)
         if cell['cell_type'] == 'code' and 'EMOTIONS = dict(zip(' in ''.join(cell['source']):
             cell['source'] = (''.join(cell['source']) + f'\nEMOTIONS.update({additions!r})\n').splitlines(True)
     cells[0] = dict(cell_type='markdown', metadata={}, source=(ROOT / 'notebook/NOTEBOOK_V2_GUIDE.md').read_text(encoding='utf-8').splitlines(True))
@@ -40,5 +68,5 @@ def build():
 
 if __name__ == '__main__':
     content = build()
-    for name in ('Koebuta_Notebook_v2.ipynb', 'Koebuta_Colabv2.prototype.ipynb'):
-        (ROOT / 'notebook' / name).write_text(content, encoding='utf-8')
+    # The prototype is a historical artifact, not a second current release.
+    (ROOT / 'notebook/Koebuta_Notebook_v2.ipynb').write_text(content, encoding='utf-8', newline='\n')

@@ -65,6 +65,8 @@ python3 irodori_generate.py --scenario irodori_cli_examples/generate_scenario.js
 
 Scenario Inspector v0.1.6の `koebuta_settings`、話者の `reference_wav`、`koebuta_tts_parts` は、この入口で設定・WAV指定・分割境界として利用しません。別設定JSONで声と生成条件を指定してください。HTMLでTTS分割した片の境界はCLIへ引き継がれません。`tts_text` 全体にCLI独自の分割検査が適用されるため、HTMLで分割済みでも長い読み上げ文が拒否される場合があります。dry-runで生成要求を確認してから実行してください。
 
+区切り（`segment_type: "separator"`）も、この入口では登録済み `speaker_id` と空白だけでない `text` が必要です。原稿の区切り記号は保持し、空行しかない位置へ記号を創作しません。空行だけの休止は区切り項目を作らず、必要な間を直前の発話の `pause_after_ms`（0〜10000ms）へ指定できます。交換形式v1で区切りの話者が任意であることとは区別してください。改行を含む短い見出しを一発話へまとめても、現行CLIは改行位置で生成片へ分け直します。JSONの発話を結合しただけでは短文の単独生成を回避できないため、dry-runで生成片を確認してください。
+
 設定では `voiceMode`、`reading`、`baseCaption`、`seed`、`steps`、`pause`、`ttsModel`、`acting`、`emotion`、`narratorEmotion`、`textOptions`、`speakerVoices`、`voices` を使えます。未知のキーは拒否します。参照WAVの相対パスは設定JSONのあるフォルダーから解決されます。
 
 未確認の感情・演技設定を自動で品質承認するものではありません。無人生成の入口では、渡されたシナリオをそのまま対象にするため内部的に未確認許可を明示します。実行前に、人がシナリオの話者、読み、感情、演技、参照音声の権利を確認してください。
