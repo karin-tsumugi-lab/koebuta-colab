@@ -1,4 +1,4 @@
-# Koebuta CLI v1.0.1
+# Koebuta CLI 2.0.0-dev（忠実生成）
 
 準備済みのシナリオJSONを Irodori-TTS で連続生成し、完成音声をローカルへ回収するCLIです。WebUIを使いません。
 
@@ -6,9 +6,9 @@
 
 ## 動作確認の範囲
 
-WSL2上の Ubuntu 26.04、Colab CLI 0.7.5、Python 3.10以上で確認しました。配布ZIPを展開した状態でCLI関連30テストとサンプルのdry-runが成功しています。T4で28発話の生成・回収・検証は、生成ロジックの最終仕上げ前に確認済みです。
+開発版の `irodori_generate.py` は、作成済みの発話・明示TTS片をそのまま生成する入口です。CLI 1.0.1の自動分割はこの入口では使いません。交換形式は引き続き `schema_version: 1` です。CLIの版とJSON形式の版を混同しないでください。
 
-2026-11-13に絵文字拡張を含む8発話をT4で生成・回収し、WAV整合性と停止を確認しました。利用者の試聴でも問題なしとの報告を受領しています。公開対象へ移植したCLIでは同じ8件の生成要求が完全一致しています。詳しい範囲は [絵文字対応の検証記録](../docs/EMOJI_RELEASE_VALIDATION.md) を参照してください。長編、切断からの完全自動復旧、別ランタイムへのジョブ復元はv1の動作保証外です。
+新経路はCPUの模擬推論と既存回帰試験で確認しています。今回の実GPU・Colab生成・音声試聴は未実施です。過去のT4生成・試聴は旧経路の記録であり、新経路の実機検証には代えません。検査結果と未確認範囲は [実装検証記録](../docs/CLI_FAITHFUL_VALIDATION.md)、確定した判断は [仕様v0.2](../docs/CLI_FAITHFUL_SPEC.md) を参照してください。
 
 ## 必要なもの
 
@@ -61,13 +61,31 @@ python3 irodori_generate.py --scenario irodori_cli_examples/generate_scenario.js
 
 ## シナリオと設定
 
-入力は本文付き `schema_version: 1`、`speakers`、`segments` を持つシナリオJSONと、別の設定JSONです。CLI v1は配役整理、読み補正、感情判定、設定の統合を行いません。指定済みの `tts_text`、感情、演技指示、発話後の間を生成に取り込みます。
+入力は本文付き `schema_version: 1`、`speakers`、`segments` を持つシナリオJSONと、別の生成設定JSONです。配役整理、読み補正、感情判定、本文修復、自動分割・結合は行いません。改行を含む見出しも、一発話なら一つの生成要求のままです。80文字超や短文は通知し、勝手に補正しません。
 
-Scenario Inspector v0.1.6の `koebuta_settings`、話者の `reference_wav`、`koebuta_tts_parts` は、この入口で設定・WAV指定・分割境界として利用しません。別設定JSONで声と生成条件を指定してください。HTMLでTTS分割した片の境界はCLIへ引き継がれません。`tts_text` 全体にCLI独自の分割検査が適用されるため、HTMLで分割済みでも長い読み上げ文が拒否される場合があります。dry-runで生成要求を確認してから実行してください。
+`tts_text` が非空ならそれを使い、未指定・空なら `text` の明示ルビだけを指定形式で展開します。位置指定絵文字は保持し、発話全体の感情タグと演技Captionは生成時に適用します。`source` は任意で、未提供時に作りません。提供時の順序付き部分照合は最初の不一致を警告し、許可済み改変か本文の不備かは利用者が判断します。入力ファイルは上書きしません。
 
-区切り（`segment_type: "separator"`）も、この入口では登録済み `speaker_id` と空白だけでない `text` が必要です。原稿の区切り記号は保持し、空行しかない位置へ記号を創作しません。空行だけの休止は区切り項目を作らず、必要な間を直前の発話の `pause_after_ms`（0〜10000ms）へ指定できます。交換形式v1で区切りの話者が任意であることとは区別してください。改行を含む短い見出しを一発話へまとめても、現行CLIは改行位置で生成片へ分け直します。JSONの発話を結合しただけでは短文の単独生成を回避できないため、dry-runで生成片を確認してください。
+`koebuta_tts_parts` がある場合は、2個以上の非空文字列、非空の `tts_text`、片の連結と `tts_text` の完全一致が必要です。結合文字・絵文字の途中の切断は拒否します。各片へ親の話者・感情・演技・声・生成条件を継承し、片の間に休止を追加しません。HTMLの `koebuta_settings` と話者の `reference_wav` は自動採用しません。別設定JSONと必要な `--voice` を使ってください。
 
-設定では `voiceMode`、`reading`、`baseCaption`、`seed`、`steps`、`pause`、`ttsModel`、`acting`、`emotion`、`narratorEmotion`、`textOptions`、`speakerVoices`、`voices` を使えます。未知のキーは拒否します。参照WAVの相対パスは設定JSONのあるフォルダーから解決されます。
+区切り（`segment_type: "separator"`）は読み上げません。`text` と `speaker_id` は省略でき、指定する話者は登録済みである必要があります。`emotion` は区切りも `neutral` を指定してください。
+
+設定には `title`、`voiceMode`、`reading`、`baseCaption`、`seed`、`steps`、`pause`、`ttsModel`、`acting`、`emotion`、`narratorEmotion`、`textOptions`、`speakerVoices`、`voices` を使えます。未知のキーは拒否します。参照WAVの相対パスは設定JSONのあるフォルダーから解決し、選択範囲で必要な参照音声だけを検査・転送します。
+
+**移行時の変更：** 未指定の `acting`・`emotion`・`narratorEmotion` はすべて `true` です。明示した `false` は尊重し、演出を抑制する場合に警告します。既存設定を使う場合は値を確認してください。自動空行休止（`textOptions.blankMode: group/count`）、記号からの区切り生成（`symbolSeparators: true`）、追加の読み変換（`readingMode: selective/all`）は拒否します。必要な休止・読みをシナリオへ明示してください。
+
+### 休止
+
+`pause_after_ms` は0〜10000の整数です。発話の指定値（0を含む）を優先し、未指定なら直後の区切りに明示された値の最大値、それもなければ発話間だけ共通 `pause`（秒、既定0.28、0〜10）を使います。休止を合算しません。冒頭・末尾に共通値を足さず、明示された端の休止は保持します。生の改行や `blank_lines_after` から休止を推定しません。
+
+### 対象を指定した再生成
+
+同じシナリオへ `--ids a,b#2` のように指定します。親IDはその全片、`親ID#番号` は1始まりの明示片を指定します。入力順で生成し、重複は一度だけ、存在しないID・区切りID・空指定は生成前に拒否します。下位CLIの旧 `--regenerate` と混用しません。
+
+```bash
+python3 irodori_generate.py --scenario scenario.json --settings settings.json --session narration-v1 --job retry01 --out outputs/retry01 --ids a,b#2 --dry-run
+```
+
+dry-runを確認後、実行時には `--dry-run` を外します。毎回新しいジョブIDと出力先を使います。結果は選択範囲のWAVです。既存全編への自動差し替えや候補採用は行いません。飛ばした発話の長さ・休止を補間せず、選択した左側単位の休止を使います。親の全片が揃った場合だけ親発話WAVを追加し、一片だけを親全体の完成扱いにしません。
 
 未確認の感情・演技設定を自動で品質承認するものではありません。無人生成の入口では、渡されたシナリオをそのまま対象にするため内部的に未確認許可を明示します。実行前に、人がシナリオの話者、読み、感情、演技、参照音声の権利を確認してください。
 
@@ -77,11 +95,11 @@ Scenario Inspector v0.1.6の `koebuta_settings`、話者の `reference_wav`、`k
 
 | ファイル | 内容 |
 | --- | --- |
-| `result.wav` | 原稿順に結合した完成音声 |
-| `segments.zip` | 採用された発話別WAV |
-| `generated_project.json` | 回収したプロジェクト・発話情報 |
+| `result.wav` | 入力順に結合した全体／選択範囲の音声 |
+| `segments.zip` | 生成単位のWAVと、全片が揃った親の `utterances/ID.wav` |
+| `generated_project.json` | 元シナリオ・設定と実行契約を含む回収記録（シナリオ単体ではない） |
 | `pipeline.json` | 完了状態、検証結果、保存先、停止結果 |
-| `plan.json` | 入力から検査した生成要求 |
+| `plan.json` | 生成要求・親ID／片番号・範囲・実効設定・診断 |
 | `telemetry.json` | CU照会、GPU詳細、経過時間。取得不可も記録 |
 | `events.jsonl` / `*.log` | 進捗と工程ログ |
 
@@ -93,12 +111,12 @@ Scenario Inspector v0.1.6の `koebuta_settings`、話者の `reference_wav`、`k
 - **Colab CLIのtimeout**: 確認したCLIでは `colab exec --timeout` が処理を厳密に停止しない観測があります。タイムアウトだけを失敗判定にせず、受付記録と遠隔状態を照合してください。
 - **失敗したが成果物がある**: 出力フォルダーとセッションは保持されます。入口が表示・保存した回収コマンドを使い、再生成せずに回収を試みてください。回収だけで `result.wav` の書き出しを自動再開するわけではありません。
 - **停止だけ失敗した**: 回収済みの完成音声は有効な場合があります。`pipeline.json` の `session_stopped` と `shutdown_error`、さらにColabの状態を確認してください。
-- **既存セッションの再利用に失敗した**: 実機で初期接続エラーを観測しています。v1は自動再試行しません。ログと回収案内を確認し、状態照合後に判断してください。
+- **既存セッションの再利用に失敗した**: 実機で初期接続エラーを観測しています。自動再試行しません。ログと回収案内を確認し、状態照合後に判断してください。
 
 参照音声、原稿、認証情報を添えて障害報告を公開しないでください。
 
 ## 詳細資料
 
-配布ZIPに同梱された [v1.0.1の詳細仕様・出力・終了コード](DISTRIBUTED_README.md) と [AIエージェント用手順](AGENTS.md)、[トラブル対策](TROUBLESHOOTING.md) を参照してください。原配布物のコードは変更していません。
+配布ZIPに同梱された [v1.0.1の詳細仕様・出力・終了コード](DISTRIBUTED_README.md) と [AIエージェント用手順](AGENTS.md)、[トラブル対策](TROUBLESHOOTING.md) を参照してください。旧 `python -m irodori_cli` の分析・自動分割・キャッシュ経路は維持しています。新入口との挙動の違いに注意してください。
 
 `DISTRIBUTED_*` と第三者表示は元配布物の記録も兼ねています。第三者表示にある旧名Yomibuta・α版や調査用fixtureへの言及は配布当時の記述で、fixture本体はこの構成に含みません。現在の操作手順はこのREADMEを参照してください。

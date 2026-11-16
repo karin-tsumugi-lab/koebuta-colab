@@ -90,7 +90,7 @@ speakersは話者IDをキーとするオブジェクト、segmentsは朗読順�
 任意でsource、話者のbio・voice_caption・acting_description、発話のtts_text・acting_description・pause_after_msなどを使用できます。使わない任意項目は省略します。
 発話のtext_formatはnone / aozora / narou / kakuyomu / pixiv。元のルビ記法をtextやsourceに保持し、分かる形式を指定します。
 読み上げない区切りはsegment_type: "separator"とし、idとemotion: "neutral"を付けます。speaker_idは省略可、textには原稿の区切り行を保持できます。必要なら区切りにもpause_after_msを付けられます。直後の空行数はblank_lines_after（0以上の整数）で表せます。
-ただし現行CLI v1.0.1へ渡す区切りは、登録済みspeaker_idと空白だけでないtextも必要です。原稿に区切り記号があればそれをtextに保持し、何もない空行へ記号を創作しません。空行だけの休止は区切り項目を作らず、必要な間を直前の発話のpause_after_msへ指定できます。CLIのpause_after_msは0〜10000msです。
+ただし配布版CLI v1.0.1／旧CLI経路へ渡す区切りは、登録済みspeaker_idと空白だけでないtextも必要です。原稿に区切り記号があればそれをtextに保持し、何もない空行へ記号を創作しません。空行だけの休止は区切り項目を作らず、必要な間を直前の発話のpause_after_msへ指定できます。CLIのpause_after_msは0〜10000msです。開発版2.0.0-devの新入口（irodori_generate.py）は区切りのspeaker_id・textを省略でき、明示TTS片を保持して自動分割しません。生成に使う入口を区別してください。
 読み上げる項目はsegment_type省略または"speech"です。textは空でない文字列、tts_textは指定するなら空白だけではない発話全文にします。読み込み側の救済処理を前提に、必須項目を省略しません。
 
 【9. 確認と出力】

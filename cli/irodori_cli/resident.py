@@ -106,8 +106,14 @@ def unload():
 def identity(python, project):
     from .environments import signature
     package = Path(__file__).parent
+    document = read_json(project)
+    contract = document.get('contract')
+    from .faithful import CONTRACT
+    if contract is not None and contract != CONTRACT:
+        raise ValueError('未対応の音声生成契約です')
+    model = document.get('settings', {}).get('ttsModel', 'Aratako/Irodori-TTS-v4.1-Small') if contract else document['ttsModel']
     return digest({'python':python, 'environment':signature('tts'),
-                   'model':read_json(project)['ttsModel'],
+                   'model':model, **({'contract':contract} if contract else {}),
                    'code':{p.name:file_hash(p) for p in sorted(package.glob('*.py'))}})
 
 
@@ -195,10 +201,14 @@ def serve(token):
                         sys.stdout.flush(); sys.stderr.flush()
                         os.dup2(log.fileno(), 1); os.dup2(log.fileno(), 2)
                         with contextlib.redirect_stdout(log), contextlib.redirect_stderr(log):
-                            from .worker import main
-                            if request['argv'][0] != 'synthesize':
+                            if request['argv'][0] == 'faithful':
+                                from .faithful_worker import main
+                                main(request['argv'][1:], runtimes)
+                            elif request['argv'][0] == 'synthesize':
+                                from .worker import main
+                                main(request['argv'], runtimes)
+                            else:
                                 raise ValueError('Only synthesis is allowed in the resident process')
-                            main(request['argv'], runtimes)
                     except BaseException:
                         import traceback
                         traceback.print_exc(file=log); failed = True

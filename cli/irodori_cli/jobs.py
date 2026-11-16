@@ -131,7 +131,7 @@ def control(job, action):
         raise ValueError('pause / stop / resume を指定してください')
 
 
-def assembly(job, plan, pause, manifest):
+def assembly(job, plan, pause, manifest, *, leading_pause_ms=0, trailing_pause_ms=0):
     takes = [find_take(job, manifest, row) for row in plan]
     if any(take is None for take in takes):
         manifest['combined'] = None
@@ -146,6 +146,7 @@ def assembly(job, plan, pause, manifest):
     # Stream individual files; do not hold a novel's combined waveform in memory.
     with wave.open(str(destination), 'wb') as output:
         output.setparams((1,2,rate,0,'NONE','not compressed'))
+        output.writeframesraw(b'\x00\x00' * int(rate * leading_pause_ms / 1000))
         for index, take in enumerate(takes):
             if index:
                 gap = plan[index-1].get('pause_after_ms')
@@ -153,22 +154,28 @@ def assembly(job, plan, pause, manifest):
             with wave.open(str(inside(job, take['file'])), 'rb') as stream:
                 while chunk := stream.readframes(65536):
                     output.writeframesraw(chunk)
+        output.writeframesraw(b'\x00\x00' * int(rate * trailing_pause_ms / 1000))
     info = wav_info(destination)
     manifest['combined'] = {'file':relative, **info, 'sha256':file_hash(destination),
                             'take_files':[take['file'] for take in takes], 'pause':pause}
     return manifest['combined']
 
 
-def generate(job, plan, pause, synthesize, *, selected=None, regenerate=False, provenance=None):
+def generate(job, plan, pause, synthesize, *, selected=None, regenerate=False, provenance=None,
+             execution=None):
     """synthesize(request, destination) must create real PCM16 audio or raise."""
     job = Path(job)
     selected = set(selected or [r['id'] for r in plan])
     if not selected <= {r['id'] for r in plan}:
         raise ValueError('選択した発話IDが存在しません')
     with job_lock(job):
+        if execution is not None and (job/'job.json').exists():
+            raise ValueError('忠実生成には新しいジョブIDが必要です')
         manifest = load_manifest(job)
         manifest.update(status='running', combined=None, errors=[], plan_sha256=digest(plan),
                         provenance=provenance or {})
+        if execution is not None:
+            manifest['execution'] = execution
         atomic_json(job/'plan.json', plan)
         atomic_json(job/'job.json', manifest)
         pending=[r for r in plan if r['id'] in selected and (regenerate or not find_take(job,manifest,r))]
@@ -205,7 +212,10 @@ def generate(job, plan, pause, synthesize, *, selected=None, regenerate=False, p
             print('PROGRESS 音声生成: 結合・整合性確認中',flush=True)
             manifest['duration_warnings']=[{'id':row['id'],'seconds':take['seconds'],'reason':'30秒上限付近のため、末尾の欠落を試聴してください。必要ならさらに分割して再生成してください。'}
                 for row in plan if (take:=find_take(job,manifest,row)) and take['seconds']>=29]
-            combined = assembly(job, plan, pause, manifest)
+            combined = (assembly(job, plan, pause, manifest,
+                        leading_pause_ms=execution['leading_pause_ms'],
+                        trailing_pause_ms=execution['trailing_pause_ms']) if execution is not None
+                        else assembly(job, plan, pause, manifest))
             manifest['status'] = 'failed' if manifest['errors'] else ('complete' if combined else 'partial')
         except Exception as exc:
             manifest['errors'].append({'id':'assembly', 'error':str(exc)})

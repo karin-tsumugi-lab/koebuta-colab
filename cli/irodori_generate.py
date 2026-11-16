@@ -10,70 +10,78 @@ import sys
 import time
 import zipfile
 
-from irodori_cli.core import (atomic_json, identifier, new_project, normalize_project,
-                              read_json, sampling_plan)
+from irodori_cli.core import atomic_json, identifier, read_json
 from irodori_cli.jobs import inside
-from irodori_cli.segmentation import prepare_project
+from irodori_cli.faithful import PlanError
 from irodori_colab_cli import verify_recovery
 from irodori_cli.terminal import (Console, command_text, duration, read_runtime,
                                  read_usage, run_logged, runtime_stopped)
 
 ROOT = Path(__file__).resolve().parent
-SETTINGS = {'title', 'reading', 'voiceMode', 'baseCaption', 'seed', 'steps', 'pause',
-            'ttsModel', 'acting', 'emotion', 'narratorEmotion', 'textOptions',
-            'speakerVoices', 'voices'}
 
 
-def load_inputs(scenario_path, settings_path, voice_items=()):
-    scenario = read_json(scenario_path)
-    if not isinstance(scenario, dict) or not isinstance(scenario.get('segments'), list):
-        raise ValueError('本文付きschema_version=1のシナリオJSONが必要です')
-    if any(not isinstance(row, dict) or 'text' not in row for row in scenario['segments']):
-        raise ValueError('すべての発話にtextが必要です。本文なし分析には対応しません')
-    settings = read_json(settings_path)
-    if not isinstance(settings, dict) or set(settings) - SETTINGS:
-        unknown = ', '.join(sorted(set(settings) - SETTINGS)) if isinstance(settings, dict) else 'オブジェクト以外'
-        raise ValueError('生成設定に未対応の項目があります: ' + unknown)
-    project = new_project('', scenario)
-    project.update({k: v for k, v in settings.items() if k not in ('speakerVoices', 'voices')})
-    assignments = settings.get('speakerVoices', {})
-    if not isinstance(assignments, dict) or set(assignments) - {r['id'] for r in project['roles']}:
-        raise ValueError('speakerVoicesに未登録の話者があります')
-    for role in project['roles']:
-        if role['id'] in assignments:
-            role['voice'] = identifier(assignments[role['id']], 'voice profile')
-    if assignments and project.get('reading') != 'cast':
-        raise ValueError('speakerVoicesを使う場合はreadingをcastにしてください')
-    project = prepare_project(normalize_project(project))
-    declared = settings.get('voices', {})
-    if not isinstance(declared, dict):
-        raise ValueError('voicesはプロファイルIDと音声パスのオブジェクトです')
-    voices = {}
-    for key, value in declared.items():
-        identifier(key, 'voice profile')
-        if not isinstance(value, str) or not value.strip():
-            raise ValueError('参照音声は空でないパスを指定してください')
-        path = Path(value).expanduser()
-        voices[key] = str((Path(settings_path).resolve().parent / path).resolve())
-    overrides = set()
+
+def load_inputs(scenario_path, settings_path, voice_items=(), selected=None):
+    from irodori_cli.faithful import build_plan, load_json, plan_signature, CONTRACT, PlanError
+    try:
+        scenario, settings = load_json(scenario_path), load_json(settings_path)
+    except (ValueError, OSError) as exc:
+        raise PlanError([dict(level='error', code='E_STRUCTURE', segment_id=None,
+                              field='input', message=str(exc))]) from exc
+    overrides = {}
     for item in voice_items:
         key, separator, value = item.partition('=')
         identifier(key, 'voice profile')
         if not separator or not value or key in overrides:
             raise ValueError('--voiceは重複のないprofile=ファイル形式です')
-        overrides.add(key)
-        voices[key] = str(Path(value).expanduser().resolve())
-    requests = sampling_plan(project, voices)
-    used = {row['reference']['profile'] for row in requests if row['reference']}
-    if set(voices) - used:
-        raise ValueError('未使用の参照音声があります。voicesと声の割当を確認してください')
-    return project, voices, requests
+        overrides[key] = str(Path(value).expanduser().resolve())
+    plan = build_plan(scenario, settings, base=Path(settings_path).resolve().parent,
+                      voices=overrides, selected=selected)
+    if set(overrides) - set(plan['voices']):
+        raise ValueError('--voiceに選択範囲で使用しない参照音声があります')
+    document = dict(contract=CONTRACT, scenario=scenario, settings=settings, selection=selected,
+                    expected_plan=plan_signature(plan), execution=plan['execution'],
+                    diagnostics=plan['diagnostics'], effective_settings=plan['settings'])
+    # The existing transport reads a 2MiB project, including its execution envelope.
+    # Check the actual serialized size before allocating a remote runtime.
+    serialized = json.dumps(document, ensure_ascii=False, indent=2, allow_nan=False) + '\n'
+    if sys.platform == 'win32':
+        serialized = serialized.replace('\n', '\r\n')
+    if len(serialized.encode('utf-8')) > 2 * 1024 * 1024:
+        raise PlanError([dict(level='error', code='E_STRUCTURE', segment_id=None,
+                              field='input', message='実行記録を含む転送JSONが2MiBを超えます。章単位に分けてください')])
+    return document, plan['voices'], plan['requests']
+
+
+def verify_authored_recovery(recovered, document, requests):
+    manifest = read_json(Path(recovered) / 'job/job.json')
+    if (manifest.get('authored_plan_signature') != document['expected_plan']
+            or manifest.get('execution') != document['execution']
+            or read_json(Path(recovered) / 'project.json') != document):
+        raise ValueError('回収した実行契約・生成計画・入力がホストと一致しません')
+    combined = manifest.get('combined') or {}
+    used = [next((t for t in reversed(manifest.get('takes', [])) if t['file'] == name), {})
+            for name in combined.get('take_files', [])]
+    if [t.get('id') for t in used] != [r['id'] for r in requests]:
+        raise ValueError('回収した音声の対象ID・順序・個数が生成計画と一致しません')
+    expected_parents = {r['segment_id'] for r in requests if r['part_count'] > 1
+                        and r['segment_id'] in document['execution']['complete_segment_ids']}
+    if set(manifest.get('parent_audio', {})) != expected_parents:
+        raise ValueError('親発話WAVの完成範囲が生成計画と一致しません')
+    for record in manifest.get('parent_audio', {}).values():
+        from irodori_cli.jobs import wav_info
+        from irodori_cli.core import file_hash
+        path = inside(Path(recovered) / 'job', record['file'])
+        if file_hash(path) != record['sha256'] or wav_info(path)['frames'] != record['frames']:
+            raise ValueError('親発話WAVの回収検証に失敗しました')
+    return manifest
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description='本文付きシナリオJSONからColabで音声生成・回収（再分析なし）')
     parser.add_argument('--scenario', required=True, type=Path, help='本文付きschema_version=1のシナリオJSON')
     parser.add_argument('--settings', required=True, type=Path, help='独立した生成設定JSON')
+    parser.add_argument('--ids', help='対象発話IDまたは明示片（例 t001,t003#2）。新しい出力先へ選択生成')
     parser.add_argument('--voice', action='append', default=[], help='profile=WAV。設定内の同名プロファイルを上書き')
     parser.add_argument('--session', required=True, help='Colabセッション名。新規作成は--newを指定')
     parser.add_argument('--job', required=True, help='遠隔ジョブの識別名（英数字・_・-、60文字以内）')
@@ -85,17 +93,23 @@ def main(argv=None):
     parser.add_argument('--timeout', type=int, default=7200, help='工程ごとの待機上限秒（既定7200）。切断時は遠隔状態を確認')
     parser.add_argument('--dry-run', action='store_true', help='ローカル検査と生成計画のみ。Colabに接続しない')
     parser.add_argument('--no-usage', action='store_true', help='CU残量の照会を省略する')
-    parser.add_argument('--version', action='version', version='Irodori Colab CLI 1.0.1')
+    parser.add_argument('--version', action='version', version='Koebuta CLI 2.0.0-dev (faithful-v1)')
     args = parser.parse_args(argv)
     identifier(args.session, 'session', 60)
     identifier(args.job, 'job', 60)
     if args.timeout <= 0 or (args.new and args.skip_prepare):
         raise ValueError('timeoutは正の秒数です。--newと--skip-prepareは併用できません')
-    project, voices, requests = load_inputs(args.scenario, args.settings, args.voice)
+    project, voices, requests = load_inputs(args.scenario, args.settings, args.voice, args.ids)
+    cfg = project['effective_settings']
+    for item in project['diagnostics']:
+        if item['level'] == 'warning':
+            print(f"WARNING {item['code']} {item.get('segment_id') or '全体'}: {item['message']}", file=sys.stderr)
     if args.dry_run:
         print(json.dumps({'session': args.session, 'new_runtime': args.new,
                           'prepare': not args.skip_prepare, 'engine': 'tts',
-                          'model': project['ttsModel'], 'requests': requests}, ensure_ascii=False, indent=2))
+                          'model': cfg['ttsModel'], 'requests': requests,
+                          'execution': project['execution'], 'settings': cfg,
+                          'diagnostics': project['diagnostics']}, ensure_ascii=False, indent=2))
         return 0
     # Claim a fresh directory before invoking Colab; never overwrite previous results.
     out = args.out.resolve()
@@ -148,7 +162,8 @@ def main(argv=None):
         save_telemetry()
 
     atomic_json(out / 'project.json', project)
-    atomic_json(out / 'plan.json', {'requests': requests})
+    atomic_json(out / 'plan.json', {'requests': requests, 'execution': project['execution'],
+                                    'diagnostics': project['diagnostics'], 'settings': cfg})
     atomic_json(out / 'pipeline.json', {'status': 'running', 'session': args.session, 'job': args.job})
     driver = [sys.executable, str(ROOT / 'irodori_colab_cli.py')]
     common = ['--session', args.session, '--job', args.job, '--timeout', str(args.timeout)]
@@ -168,10 +183,10 @@ def main(argv=None):
 
     try:
         counts = sum(row['request']['no_ref'] for row in requests)
-        console.say(f'開始: {project["title"]} / セッション {args.session} / ジョブ {args.job}')
-        console.say(f'モデル: {project["ttsModel"]} / {project["steps"]}ステップ / seed {project["seed"]}')
-        console.say(f'朗読: {"一人朗読" if project["reading"] == "shared" else "人物別"} / '
-                    f'{len(requests)}発話 / クローン {len(requests)-counts}・参照なし {counts}')
+        console.say(f'開始: {cfg["title"]} / セッション {args.session} / ジョブ {args.job}')
+        console.say(f'モデル: {cfg["ttsModel"]} / {cfg["steps"]}ステップ / seed {cfg["seed"]}')
+        console.say(f'朗読: {"一人朗読" if cfg["reading"] == "shared" else "人物別"} / '
+                    f'{len(requests)}生成単位 / クローン {len(requests)-counts}・参照なし {counts}')
         console.say('GPU: ' + (args.gpu + '（新規作成の指定）' if args.new else '既存セッションを照会します'))
         console.say('終了後のランタイム: ' + ('回収成功後に停止' if args.stop_after_download else '保持（明示停止が必要）'))
         usage('start')
@@ -204,17 +219,20 @@ def main(argv=None):
             raise ValueError('回収先が今回の出力フォルダーに含まれていません')
         verified = verify_recovery(recovered)
         if not verified.get('audio_checked') or verified.get('job_status') != 'complete':
-            raise ValueError('全体の音声生成が完了していません。回収結果を確認してください')
-        manifest = read_json(recovered / 'job' / 'job.json')
+            raise ValueError('対象範囲の音声生成が完了していません。回収結果を確認してください')
+        manifest = verify_authored_recovery(recovered, project, requests)
         combined = manifest['combined']
         shutil.copyfile(inside(recovered / 'job', combined['file']), out / 'result.wav')
         with zipfile.ZipFile(out / 'segments.zip', 'w', zipfile.ZIP_DEFLATED) as archive:
             for relative in dict.fromkeys(combined['take_files']):
                 archive.write(inside(recovered / 'job', relative), relative)
+            for sid, record in manifest.get('parent_audio', {}).items():
+                archive.write(inside(recovered / 'job', record['file']), 'utterances/' + sid + '.wav')
         shutil.copyfile(recovered / 'project.json', out / 'generated_project.json')
         summary = {'status': 'complete', 'session': args.session, 'job': args.job,
                    'audio': str(out / 'result.wav'), 'segments': str(out / 'segments.zip'),
-                   'recovered': str(recovered), 'verification': verified, 'session_stopped': False}
+                   'recovered': str(recovered), 'verification': verified, 'session_stopped': False,
+                   'execution': project['execution']}
         atomic_json(out / 'pipeline.json', summary)
     except (Exception, KeyboardInterrupt) as exc:
         interrupted = isinstance(exc, KeyboardInterrupt)
@@ -258,9 +276,9 @@ def main(argv=None):
     finish_telemetry()
     summary['telemetry'] = telemetry
     atomic_json(out / 'pipeline.json', summary)
-    console.say(f'完了: {len(requests)}発話 / 音声 {verified["combined_seconds"]:.2f}秒 / 経過 {duration(time.monotonic()-started)}')
+    console.say(f'{"選択範囲の生成完了" if project["execution"]["scope"] == "selection" else "全体の生成完了"}: {len(requests)}生成単位 / 音声 {verified["combined_seconds"]:.2f}秒 / 経過 {duration(time.monotonic()-started)}')
     console.say('検証: WAVのハッシュ・フレーム数が一致')
-    console.say('完成WAV: ' + str(out / 'result.wav'))
+    console.say(('選択範囲WAV: ' if project['execution']['scope'] == 'selection' else '完成WAV: ') + str(out / 'result.wav'))
     console.say('発話別ZIP: ' + str(out / 'segments.zip'))
     console.say('ランタイム: ' + ('停止確認済み' if summary['session_stopped'] else
                 '停止未確認（状態を確認してください）' if summary.get('shutdown_error') else '保持中（明示停止が必要）'))
@@ -277,6 +295,10 @@ if __name__ == '__main__':
     except KeyboardInterrupt:
         print('中断しました。回収済みファイルは保持しています。ランタイムの状態を確認してください。', file=sys.stderr)
         raise SystemExit(130)
+    except PlanError as exc:
+        print(json.dumps({'status': 'invalid', 'diagnostics': exc.diagnostics}, ensure_ascii=False))
+        print('ERROR:', exc, file=sys.stderr)
+        raise SystemExit(1)
     except (ValueError, RuntimeError, OSError, KeyError, TypeError) as exc:
         print('ERROR:', exc, file=sys.stderr)
         raise SystemExit(1)
