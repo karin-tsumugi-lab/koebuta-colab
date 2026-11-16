@@ -43,6 +43,12 @@ CLI原配布物のマニフェスト `cli/DISTRIBUTED_BUILD.json` のパスは�
 
 NotebookのHTML互換対応 [PR #1](https://github.com/karin-tsumugi-lab/koebuta-colab/pull/1) は照会時点でopen・draft・未マージです。headは `7658c8ac21c9d1bb5a468bc1ccfb7fcd18183ceb`。この一式には含めません。
 
+## 2026-11-16の改訂
+
+シナリオ化プロンプトv0.3、一人／複数人朗読の共通化、Notebook v2の原文照合警告化と、CLI 2.0.0-devの忠実生成を追加しました。CLIは明示TTS片・対象指定・休止・ホスト／遠隔の計画照合に対応しています。原配布物そのものの版は1.0.1のままで、現在の実装と混同しません。
+
+変更内容・CPU回帰・MuseによるT4実生成と利用者の試聴確認は [CLI実装検証記録](CLI_FAITHFUL_VALIDATION.md)、Notebookの変更は [v2原文照合のレビュー](NOTEBOOK_V2_SOURCE_WARNING_REVIEW.md)、統合状態は [INTEGRATION_STATUS.md](INTEGRATION_STATUS.md) を参照してください。以下の過去記録の『コード変更なし』『未実施』は、その記録時点の範囲を示します。
+
 ## 過去の検証と今回の確認
 
 2026-11-13追記。Notebook v2はPR #3でmainへ統合済み。利用者からNotebook v2生成試験完了と、CLIの絵文字8発話の試聴で問題なしとの報告を受領した。絵文字対応の公開対象CLIで、実生成時と同一の8件の生成要求を確認した。以下は収録当時の履歴であり、今回の試験範囲と結果は [絵文字対応の検証記録](EMOJI_RELEASE_VALIDATION.md) に記す。

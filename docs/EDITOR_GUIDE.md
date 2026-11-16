@@ -14,7 +14,7 @@
 
 ## CLI開発版の新入口
 
-以下の互換性表のCLI欄は配布版1.0.1の履歴です。開発版2.0.0-devの `irodori_generate.py` は `koebuta_tts_parts` を使い、改行でも分割し直しません。区切りの `speaker_id`・`text` は省略できます。`source` は任意で、照合不一致は警告です。HTMLの `koebuta_settings`・`reference_wav` の自動取込は引き続きありません。休止・選択生成と移行条件は [CLI README](../cli/README.md) を参照してください。Notebook・HTML本体の処理は今回変更していません。
+以下の互換性表はCLI開発版2.0.0-devの新入口を対象とします。配布版1.0.1・旧CLI経路との差は後段で説明します。開発版2.0.0-devの `irodori_generate.py` は `koebuta_tts_parts` を使い、改行でも分割し直しません。区切りの `speaker_id`・`text` は省略できます。`source` は任意で、照合不一致は警告です。HTMLの `koebuta_settings`・`reference_wav` の自動取込は引き続きありません。休止・選択生成と移行条件は [CLI README](../cli/README.md) を参照してください。Notebook・HTML本体の処理は今回変更していません。
 
 ## TTS分割と原文
 
@@ -26,18 +26,20 @@ TTS分割は原文 `text` や原稿全文 `source` を切り刻まず、`koebuta
 
 ## 生成側への受け渡し
 
-| HTMLの保存情報 | 正式Notebook v2 | CLI v1.0.1 |
+| HTMLの保存情報 | 正式Notebook v2 | CLI 2.0.0-devの新入口 |
 | --- | --- | --- |
 | `koebuta_settings` | 読み込み時と生成計画へ反映 | 自動取り込みなし。別設定JSONを指定 |
 | 話者 `reference_wav` / 共用WAV | 作品内の参照WAVを解決 | 別設定JSONの `voices` と `speakerVoices` 等で指定 |
-| `koebuta_tts_parts` | 発話ごとの生成片として使用 | 指定された片の境界を利用しない |
-| `tts_text` | 読み上げに使用 | 読み上げに使用。ただしCLIの分割検査・規則に従う |
+| `koebuta_tts_parts` | 発話ごとの生成片として使用 | 明示された片を使用。連結がtts_textと完全一致することを検査 |
+| `tts_text` | 読み上げに使用 | 読み上げに使用。自動分割・結合しない |
 | 発話 `pause_after_ms` | 個別の間として使用 | 個別の間として使用。CLI許容範囲は0～10000ms |
-| `segment_type: "separator"` | 話者なし・空の区切りも扱う | 区切りでも登録済み `speaker_id` と空白だけでない `text` が必要 |
+| `segment_type: "separator"` | 話者なし・空の区切りも扱う | `speaker_id`・`text`は省略可能。読み上げず、明示の休止に使用 |
 
-HTMLの生成設定画面にある「将来のCLI用拡張」という文言は、CLI v1.0.1で対応済みという意味ではありません。`reading_mode` → `reading`、`use_emotion` → `emotion`、`use_acting` → `acting`、`narrator_emotion` → `narratorEmotion`、`default_pause_ms` → 秒単位の `pause` のように設定体系が異なります。設定の丸ごとコピーはできません。自動変換や無損失互換は未提供です。
+HTMLの生成設定画面にある「将来のCLI用拡張」という文言は、CLIが設定を自動取り込みすることを意味しません。新入口でも設定は別JSONへ指定します。`reading_mode` → `reading`、`use_emotion` → `emotion`、`use_acting` → `acting`、`narrator_emotion` → `narratorEmotion`、`default_pause_ms` → 秒単位の `pause` のように設定体系が異なります。設定の丸ごとコピーはできません。自動変換や無損失互換は未提供です。
 
-区切りは交換形式v1では `speaker_id` を省略できますが、CLI v1.0.1の入力検査は全項目に登録済み話者と空白だけでない `text` を要求します。原稿に区切り記号があればその文字を保持し、区切りにも `pause_after_ms`（CLIは0〜10000ms）を指定できます。原稿が空行だけなら、記号を追加して埋めず、区切り項目を作らずに直前の発話の `pause_after_ms` へ必要な間を指定できます。原稿全文を含める場合は空行も `source` に保持します。これはCLIへの受け渡し条件であり、交換形式全体の必須項目を増やすものではありません。また、CLIは短い発話でも改行位置で内部分割します。見出しを改行付きで結合したJSONが受け付けられても、TTSの短文生成を避けられるとは限りません。
+### 配布版1.0.1・旧CLI経路との差
+
+区切りは交換形式v1では `speaker_id` を省略できますが、CLI v1.0.1の入力検査は全項目に登録済み話者と空白だけでない `text` を要求します。原稿に区切り記号があればその文字を保持し、区切りにも `pause_after_ms`（CLIは0〜10000ms）を指定できます。原稿が空行だけなら、記号を追加して埋めず、区切り項目を作らずに直前の発話の `pause_after_ms` へ必要な間を指定できます。原稿全文を含める場合は空行も `source` に保持します。これはCLIへの受け渡し条件であり、交換形式全体の必須項目を増やすものではありません。また、旧CLI経路は短い発話でも改行位置で内部分割します。見出しを改行付きで結合したJSONが受け付けられても、TTSの短文生成を避けられるとは限りません。
 
 正式Notebookの操作は [v2操作ガイド](../notebook/NOTEBOOK_V2_GUIDE.md) を参照してください。v1の内蔵編集画面を前提にした過去の操作説明は旧版資料として扱います。
 
