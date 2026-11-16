@@ -1,5 +1,16 @@
 # 統合状況
 
+## 現在のmain（2026-11-16）
+
+- [PR #7](https://github.com/karin-tsumugi-lab/koebuta-colab/pull/7) を bbb253e6、続いて [PR #8](https://github.com/karin-tsumugi-lab/koebuta-colab/pull/8) を d761dc9c でmainへマージ済み。履歴を保持し、強制的な置き換えは行っていない。
+- シナリオ化プロンプトv0.3、Notebook v2の原文照合警告化、CLI 2.0.0-devの忠実生成・親／片の対象指定を反映。CLI配布版1.0.1の記録とJSON交換形式v1は区別する。
+- mainのマージ直後のtreeは、レビュー・CI成功済みの先頭4d063d6fのtree 838f08e2と完全一致した。アプリのコードはMuseの実生成対象4a94b5bから変更していない。以下の実装時点・統合前の記録は履歴として保持する。
+- 最終文書点検は20文書・ローカルリンク113件・JSON例・34感情IDの一致で成功。追加コミット4d063d6fのCLI/Notebook/Inspector CIも成功。
+- MuseのT4で全体4単位と一片1単位の生成・回収・検査・停止が成功したとの報告、利用者から試聴して問題なしとの報告を受領。長編・長時間resident・独立した透かしデコードは確認範囲外。詳細は [検証記録](CLI_FAITHFUL_VALIDATION.md) を参照。
+- 試験引き継ぎ用ブランチcodex/muse-cli-gpu-test-20261116はmainへ混ぜない。CLIの版は2.0.0-devのまま。Release ZIPの新規発行は別作業。
+
+以下の『main未統合』『実GPU未実施』は各節の作業時点を示す。現在の状態と検証範囲は上記と検証記録の追記を参照。
+
 ## 2026-11-16 CLI実生成・試聴確認
 
 - Museが実装4a94b5b／試験用ZIP bb53337をLinux＋T4で試験し、全体4単位（27.74秒）と一片指定1単位（5.36秒）の生成・回収・機械検査・停止が成功したと報告。利用者の試聴でも問題なしとの報告を受領。
