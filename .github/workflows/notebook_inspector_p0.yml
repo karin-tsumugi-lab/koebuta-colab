@@ -1,10 +1,18 @@
-name: Notebook Inspector P0 (CPU)
+name: Notebook compatibility (CPU)
 on:
   push:
     branches: [feature/notebook-inspector-p0]
   pull_request:
     paths:
       - notebook/Koebuta_Colabv1.00.ipynb
+      - notebook/Koebuta_Notebook_v2.ipynb
+      - notebook/NOTEBOOK_V2_GUIDE.md
+      - notebook/notebook_v2.py
+      - notebook/notebook_v2_ui.py
+      - tools/build_notebook_v2.py
+      - cli/irodori_cli/emoji_tags.py
+      - test_notebook_v2.py
+      - test_v2_source_validation.py
       - test_inspector_p0.py
       - .github/workflows/notebook_inspector_p0.yml
 jobs:
@@ -15,4 +23,4 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: python -m unittest -v test_inspector_p0.py
+      - run: python -m unittest -v test_inspector_p0 test_notebook_v2 test_v2_source_validation

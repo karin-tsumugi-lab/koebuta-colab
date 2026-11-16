@@ -179,7 +179,7 @@ def create_v2_ui(api):
         previous.clear()
         previous.update(state)
         state = previous
-        return (f"発話数: {sum(s.get('segment_type') != 'separator' for s in project['segments'])} / 参照音声数: {len(voices)}\n" + '\n'.join(warnings),
+        return (f"発話数: {sum(s.get('segment_type') != 'separator' for s in project['segments'])} / 参照音声数: {len(voices)}\n" + '\n'.join(warnings + api['STATE']['plan_warnings']),
                 gr.update(choices=role_choices, value=roles[0] if roles else None),
                 config.get('seed', 314), config.get('steps', 40), config.get('use_acting', False),
                 config.get('use_emotion', True), config.get('narrator_emotion', False), config.get('default_pause_ms', 280),
