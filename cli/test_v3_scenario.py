@@ -1,5 +1,7 @@
 """Regression coverage for managed rubies, production notes and legacy export."""
 import copy
+import contextlib
+import io
 import json
 from pathlib import Path
 import tempfile
@@ -122,3 +124,34 @@ class V3ScenarioTests(unittest.TestCase):
         with zipfile.ZipFile(path) as archive:
             self.assertEqual(archive.namelist(), [
                 'utterances/T1.wav','utterances/t1__2.wav','utterances/t1__1.wav','utterances/CON__1.wav'])
+
+    def test_aozora_layout_does_not_enter_tts_or_shift_ruby(self):
+        row = self.scenario['segments'][0]
+        original = '［＃改ページ］井戸から［＃ここから２字下げ］冷い水をくみました。'
+        offset = original.index('冷い')
+        row.update(text=original, text_format='aozora',
+                   tts_text='井戸から冷い水をくみました。［＃ここで字下げ終わり］',
+                   koebuta_added_ruby=[dict(start=offset, end=offset+2, surface='冷い',
+                                           reading='つめたい', selection='kana')])
+        self.save()
+        document, _, requests = load_inputs(self.source, self.settings)
+        self.assertEqual(document['scenario']['segments'][0]['text'], original)
+        self.assertEqual(requests[0]['request']['text'], '井戸からつめたい水をくみました。')
+
+    def test_remote_dry_run_displays_confirmed_readings_and_marks_pending(self):
+        self.save()
+        captured = io.StringIO()
+        with contextlib.redirect_stdout(captured):
+            self.assertEqual(main(['--scenario', str(self.source), '--settings', str(self.settings),
+                                  '--dry-run']), 0)
+        preview = json.loads(captured.getvalue())
+        self.assertEqual(preview['requests'][0]['request']['text'],
+                         'とびらの前でつめたい水を飲み、冷い水を置きました。')
+        self.assertEqual(preview['ruby_filter']['mode'], 'auto_select')
+        pending, = preview['ruby_pending']
+        self.assertEqual((pending['segment_id'], pending['surface'], pending['reading']),
+                         ('t0001', '冷い', 'つめたい'))
+        self.assertIsNone(pending['selected'])
+        resolved, unresolved = preview['ruby_decisions'][0]['decisions']
+        self.assertEqual(resolved['selected'], 'kana')
+        self.assertIsNone(unresolved['selected'])

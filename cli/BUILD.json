@@ -37,7 +37,7 @@
     "irodori_cli/speaker_prompts.py": "3e5a8a061a9225b190fbb06e8dbe09d224b18017d486054fd8625ce79efa47d8",
     "irodori_cli/taxonomy.py": "8ba682427e803c04cb480704e1ca31b2382ca70c01aac9cd8ae703763370241e",
     "irodori_cli/terminal.py": "8dfddc614d1b19c3529b108e1c047e295596391f7daf6a195ee9fc6bd19de52f",
-    "irodori_cli/text_conversion.py": "2b905a4709d81407fca31d885654cd4f0b8052c34095fc3050db0f209ae4b742",
+    "irodori_cli/text_conversion.py": "2f6675535720ee08b9afaefce6b22235be2e266c8cf9de3d885d040f1c23a171",
     "irodori_cli/text_map.py": "be0954f07b0f6285469c11ef39da4d30819c007fa26ef91e8e42cb16655a5b45",
     "irodori_cli/tts_dependencies.py": "b3f871e4d949a72f30d72a1c98d261e6bbb3e1012b4a65fca223c9798706d829",
     "irodori_cli/worker.py": "88bac07afccfba63d576eba55231a37eaa2856f11a7427df04af0ddd60d069bb",
@@ -45,11 +45,11 @@
     "irodori_cli_examples/generate_settings.json": "c17ccaeb402e07831fea4b2144d72c8a538b29ec3233f80e37bb11e7d978b529",
     "irodori_colab_cli.py": "d4d227f4c8254e7af99e80277d96b80946364d2a2d590af967ff2cc7ac7b4c5f",
     "irodori_colab_entry.py": "2ec5c1b697a650c65f387dc570ac70c15e94282ba9b7baf5333dc2dc1a218e9f",
-    "irodori_generate.py": "ab4a643eddec01c73d4b93b59e6c6f8233ee65ffb70d5eaaadd1b87d5a927b25",
+    "irodori_generate.py": "4fd9a584564a40ce4e3cf762148cb2c672e7112f9f91ce71e8814923d4d76499",
     "irodori_local.py": "32fa51ba087e9136befdd0654664f9041d6366434b42e9b91b4679a022b2889f",
     "irodori_session_probe.py": "bda058266f2b4474b2f0a7569ea89799e702c102b67f5b5faa1245ff77e60b4e",
     "irodori_tts_release.py": "211709e462ad16f073367f5a5a67e15e3db49535ccb7fb31ce76a7a4d26db047",
-    "README.md": "8e9855f4e8bbf520df93e73e489859c2d5b74b025d267f0227cd413dba7e7050",
+    "README.md": "dbeca995dcf7c30dcec72e6c24fd2683237400060fff97723f99c4a511267824",
     "test_cli_terminal.py": "6c76225266baa55b3f2b11a760b03d60b78f9869ca7dea7800098c2f78ad61b3",
     "test_irodori_generate.py": "520f0102f06edf486645b8a02423170bbbe083dee8d5a4bb20a757f060e22756",
     "third_party/Irodori-TTS-MIT.txt": "dfd47cc99fd79cced8e0cab04ed81f70b3d4f2f475a75746b341671bd3991c00",
@@ -61,9 +61,9 @@
     "irodori_cli/faithful_worker.py": "ed1360e9e7c3e292f638136c8eb2ee931c37386b077ac1310da9717f5fdfb8df",
     "irodori_cli/emoji_tags.py": "d9e161ee2c9bcdbefc73bf3fc0b4208b4695898f8d12bff700047d4afb224857",
     "test_faithful.py": "b89e7fe5c215b2ae9f69ec0c8601e88e6ba8d47c9a31d13890da3dd1fb960774",
-    "irodori_cli/ruby_bridge.py": "427a49fc78b2cc7b635f0ae7094e53423f780931ee8417c01fa3da5ef173023c",
+    "irodori_cli/ruby_bridge.py": "24f7a72690d9678ce28a5aee157b52b5c037c8882f34a20e988786a3295d99cd",
     "irodori_cli/ruby_core.py": "14f2f5521d0c1f3d2c60f05c76468a558c45f5d09a9dd0439b430858a5fb5d7e",
-    "test_v3_scenario.py": "91dcaa046b058423bfa973f4d60c1fc4a3f5ad6829ea9f812dab00056d5ba3ea"
+    "test_v3_scenario.py": "9f610d21e5cd522beebc091e4960958d77e7e8af408726c6112201040feeaabd"
   },
   "execution_contract": "koebuta-faithful-v1"
 }

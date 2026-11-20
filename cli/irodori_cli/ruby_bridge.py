@@ -6,6 +6,8 @@ from dataclasses import replace
 from difflib import SequenceMatcher
 from typing import Any
 
+from .text_conversion import strip_aozora_layout
+
 from .ruby_core import (
     RubySyntaxError,
     RubyParseResult,
@@ -76,7 +78,7 @@ def _managed_ruby(row, mode, threshold, single_threshold, scorer):
     def parse(text):
         if normalize_safe_ruby_formats(text) != text or '《《' in text:
             raise RubySyntaxError('読み上げ文のルビは青空文庫形式（｜親文字《読み》）に変換してください')
-        return parse_aozora_ruby(text, strict=True)
+        return parse_aozora_ruby(strip_aozora_layout(text), strict=True)
 
     original = row['text']
     source_format = row.get('text_format', 'aozora')
@@ -169,7 +171,8 @@ def _managed_ruby(row, mode, threshold, single_threshold, scorer):
             if start is None or end is None:
                 raise RubySyntaxError(f'追加ルビの対象位置を確認してください: {surface}')
         else:
-            start = len(parse_aozora_ruby(original[:a], strict=False).plain_text)
+            prefix = strip_aozora_layout(original[:a])
+            start = len(parse_aozora_ruby(prefix, strict=False).plain_text)
             end = start + len(surface)
         if authored.plain_text[start:end] != surface:
             raise RubySyntaxError(f'追加ルビの対象位置を確認してください: {surface}')
@@ -192,7 +195,8 @@ def _managed_ruby(row, mode, threshold, single_threshold, scorer):
         if use_kana:
             replacements.append((start, end, reading))
         decisions.append(dict(surface=surface, reading=reading, plain_start=start,
-                              plain_end=end, score=score, selected='kana' if use_kana else 'kanji'))
+                              plain_end=end, score=score, selection=selection,
+                              selected='kana' if use_kana else 'kanji'))
     replacements.sort()
     if any(left[1] > right[0] for left, right in zip(replacements, replacements[1:])):
         raise RubySyntaxError('必須ルビの範囲が重なっています。要確認')

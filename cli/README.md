@@ -127,4 +127,4 @@ dry-runを確認後、実行時には `--dry-run` を外します。毎回新し
 
 ### v3のシナリオ項目
 
-v3のルビは青空文庫形式に揃え、生成単位は発話です。発話の `notes` は自由記述の編集指示です。追加ルビと個別WAVの命名は [v3詳細仕様](../docs/V3_SCENARIO_SPEC.md) を参照してください。旧版へ確定済みの読みを渡すには、通常の `--scenario` と `--settings` に `--export-compatible legacy.json` を指定します。
+v3のルビは青空文庫形式に揃え、生成単位は発話です。遠隔自動判定を使う場合も `--dry-run` には作者指定と手動確定の読みが反映されます。未判定の候補は `ruby_pending` で確認できます。発話の `notes` は自由記述の編集指示です。追加ルビと個別WAVの命名は [v3詳細仕様](../docs/V3_SCENARIO_SPEC.md) を参照してください。旧版へ確定済みの読みを渡すには、通常の `--scenario` と `--settings` に `--export-compatible legacy.json` を指定します。

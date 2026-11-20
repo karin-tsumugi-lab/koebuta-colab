@@ -11,6 +11,21 @@ SEGMENT_FIELDS = ('text_format', 'segment_type', 'blank_lines_after')
 KANJI = r'\u3400-\u9fff\U00020000-\U0002ffff々〆〇ヶ'
 
 
+_AOZORA_NOTE = r'［＃([^［］\n]*)］'
+
+
+def _aozora_layout(match):
+    note=match[1]
+    known=(r'(?:改ページ|改丁|改見開き|ここから[０-９0-9]+字下げ|ここで字下げ終わり|[０-９0-9]+字下げ|'
+           r'「[^「」［］\n]+」に傍点|「[^「」［］\n]+」は[大中小]見出し|[大中小]見出し(?:終わり)?)')
+    return '' if re.fullmatch(known,note) else match[0]
+
+
+def strip_aozora_layout(text):
+    """Omit known layout annotations while keeping rubies and other source text."""
+    return re.sub(_AOZORA_NOTE, _aozora_layout, text)
+
+
 def options(raw):
     if not isinstance(raw, dict):raise ValueError('textOptionsはオブジェクトです')
     result={'format':raw.get('format','none'), 'blankMode':raw.get('blankMode','off'),
@@ -61,12 +76,7 @@ def convert_with_map(body, fmt):
             # A known kana reading is usable even when the small glyph is not.
             # Keep the original gaiji notation in text; never guess unknown gaiji.
             mapped.sub(r'※［＃小書き平仮名([ぁ-ゖ])、[0-9０-９]+[-－][0-9０-９]+］',lambda m:m[1],'ruby')
-            def layout(match):
-                note=match[1]
-                known=(r'(?:改ページ|改丁|改見開き|ここから[０-９0-9]+字下げ|ここで字下げ終わり|[０-９0-9]+字下げ|'
-                       r'「[^「」［］\n]+」に傍点|「[^「」［］\n]+」は[大中小]見出し|[大中小]見出し(?:終わり)?)')
-                return '' if re.fullmatch(known,note) else match[0]
-            mapped.sub(r'［＃([^［］\n]*)］',layout,'layout')
+            mapped.sub(_AOZORA_NOTE, _aozora_layout, 'layout')
         # Protect escaped opening marks before ruby processing.
         if fmt=='kakuyomu':mapped.sub('｜《',lambda m:marker+'a','escape')
         if fmt=='narou':mapped.sub(r'[｜|]([（(])',lambda m:marker+('b' if m[1]=='(' else 'c'),'escape')

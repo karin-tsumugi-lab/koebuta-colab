@@ -216,13 +216,37 @@ def main(argv=None):
         if item['level'] == 'warning':
             print(f"WARNING {item['code']} {item.get('segment_id') or '全体'}: {item['message']}", file=sys.stderr)
     if args.dry_run:
+        from irodori_cli.faithful import build_plan
+        from irodori_cli.ruby_bridge import apply_ruby_to_scenario, uses_added_ruby
+
+        ruby_decisions = project.get('ruby_decisions')
+        diagnostics = project['diagnostics']
+        pending = []
+        ruby_filter = project.get('ruby_filter', {})
+        if ruby_filter and uses_added_ruby(project['scenario']):
+            preview, ruby_decisions = apply_ruby_to_scenario(
+                project['scenario'], mode='none',
+                selected_segment_ids={row['segment_id'] for row in requests})
+            preview_plan = build_plan(preview, project['settings'], voices=voices,
+                                      selected=project['selection'],
+                                      base=args.settings.resolve().parent)
+            requests = preview_plan['requests']
+            diagnostics = preview_plan['diagnostics']
+            if ruby_filter['mode'] == 'auto_select':
+                for result in ruby_decisions:
+                    for item in result['decisions']:
+                        if item['selection'] == 'auto':
+                            item['selected'] = None
+                            pending.append(dict(segment_id=result['segment_id'], **item))
         payload = {'session': args.session, 'new_runtime': args.new,
                    'prepare': not args.skip_prepare, 'engine': 'tts',
                    'model': cfg['ttsModel'], 'requests': requests,
                    'execution': project['execution'], 'settings': cfg,
-                   'diagnostics': project['diagnostics']}
-        if 'ruby_decisions' in project:
-            payload['ruby_decisions'] = project['ruby_decisions']
+                   'diagnostics': diagnostics}
+        if ruby_decisions is not None:
+            payload['ruby_decisions'] = ruby_decisions
+        if pending:
+            payload['ruby_pending'] = pending
         if 'ruby_filter' in project:
             payload['ruby_filter'] = project['ruby_filter']
         print(json.dumps(payload, ensure_ascii=False, indent=2))
