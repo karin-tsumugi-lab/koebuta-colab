@@ -1,8 +1,8 @@
 {
-  "version": "2.0.0-dev",
+  "version": "v3",
   "documentation_revision": "2026-11-16",
   "files": {
-    "AGENTS.md": "056a787c6cd91139aca13923afea3607aa5a576ead16c805ae7b3639d6201391",
+    "AGENTS.md": "fb8578b1e7e6ff2de6832a023556161cec794326c30c4cc88ea588f0f89be293",
     "dependency_snapshot/irodori/pyproject.toml": "a67e3494530cd9c29817507c67a496bb299a9a81e2edd4df6ffb80cf330dae71",
     "dependency_snapshot/irodori/uv.lock": "8175adbb9ad7ae77d1f048344343a63876e57c333b659314bcc054230b5b3e6c",
     "DISTRIBUTED_BUILD.json": "ca7ad46e7fbf77407f8e3774d5ae6f993132ccf19a99357c1062d07a9d0ed1a7",
@@ -37,7 +37,7 @@
     "irodori_cli/speaker_prompts.py": "3e5a8a061a9225b190fbb06e8dbe09d224b18017d486054fd8625ce79efa47d8",
     "irodori_cli/taxonomy.py": "8ba682427e803c04cb480704e1ca31b2382ca70c01aac9cd8ae703763370241e",
     "irodori_cli/terminal.py": "8dfddc614d1b19c3529b108e1c047e295596391f7daf6a195ee9fc6bd19de52f",
-    "irodori_cli/text_conversion.py": "2b905a4709d81407fca31d885654cd4f0b8052c34095fc3050db0f209ae4b742",
+    "irodori_cli/text_conversion.py": "2f6675535720ee08b9afaefce6b22235be2e266c8cf9de3d885d040f1c23a171",
     "irodori_cli/text_map.py": "be0954f07b0f6285469c11ef39da4d30819c007fa26ef91e8e42cb16655a5b45",
     "irodori_cli/tts_dependencies.py": "b3f871e4d949a72f30d72a1c98d261e6bbb3e1012b4a65fca223c9798706d829",
     "irodori_cli/worker.py": "88bac07afccfba63d576eba55231a37eaa2856f11a7427df04af0ddd60d069bb",
@@ -45,11 +45,11 @@
     "irodori_cli_examples/generate_settings.json": "c17ccaeb402e07831fea4b2144d72c8a538b29ec3233f80e37bb11e7d978b529",
     "irodori_colab_cli.py": "d4d227f4c8254e7af99e80277d96b80946364d2a2d590af967ff2cc7ac7b4c5f",
     "irodori_colab_entry.py": "2ec5c1b697a650c65f387dc570ac70c15e94282ba9b7baf5333dc2dc1a218e9f",
-    "irodori_generate.py": "18a1c7b0a1b6a8b72cc02e55832aa3f0663659ddf536a212a3ef871382ed2228",
+    "irodori_generate.py": "8242216ab2f14d57ba1770d29650327ec666bd801f118e568e58b65d0f9e2e9c",
     "irodori_local.py": "32fa51ba087e9136befdd0654664f9041d6366434b42e9b91b4679a022b2889f",
     "irodori_session_probe.py": "bda058266f2b4474b2f0a7569ea89799e702c102b67f5b5faa1245ff77e60b4e",
     "irodori_tts_release.py": "211709e462ad16f073367f5a5a67e15e3db49535ccb7fb31ce76a7a4d26db047",
-    "README.md": "6bde18478626e3689c7eefb8a591fd0ef1459ad733a3ac7ba60717ebb8979c59",
+    "README.md": "5e96b6bbad930a63c1d94ee09d440e0028342d2ddf6a164ace1600c99a2cc78a",
     "test_cli_terminal.py": "6c76225266baa55b3f2b11a760b03d60b78f9869ca7dea7800098c2f78ad61b3",
     "test_irodori_generate.py": "520f0102f06edf486645b8a02423170bbbe083dee8d5a4bb20a757f060e22756",
     "third_party/Irodori-TTS-MIT.txt": "dfd47cc99fd79cced8e0cab04ed81f70b3d4f2f475a75746b341671bd3991c00",
@@ -57,10 +57,13 @@
     "third_party/provenance.json": "0715e9ad35f12ca9fa8c266c877252b229bf54f8f7c20e069de57eb473bfd5de",
     "THIRD_PARTY_NOTICES.md": "d4c44dd59e2e9e00f7985ccb5efc9bfb9cf0da5bcfdd3a3fb142e4d25430c9f5",
     "TROUBLESHOOTING.md": "1c90eb4509dab295c833da9a83f598bcc153a19528dda29ff26c07fc3f0da892",
-    "irodori_cli/faithful.py": "75454f8830bf61ac74a646f985495392abe1c1addbd1b31ea7493f39d9eebee1",
-    "irodori_cli/faithful_worker.py": "23df996b81a9141042e2f5f196b0291b0571a431af7fac437c4fe9be1930f370",
+    "irodori_cli/faithful.py": "ea41b05d6e234a71e35dfd71ee6c894420bcaf2b04d47b2166e9d2528e9ea04d",
+    "irodori_cli/faithful_worker.py": "ccb86aa6bfbcf0c75735327f51267858e730b61a81090388d566db208d531d55",
     "irodori_cli/emoji_tags.py": "d9e161ee2c9bcdbefc73bf3fc0b4208b4695898f8d12bff700047d4afb224857",
-    "test_faithful.py": "b89e7fe5c215b2ae9f69ec0c8601e88e6ba8d47c9a31d13890da3dd1fb960774"
+    "test_faithful.py": "b89e7fe5c215b2ae9f69ec0c8601e88e6ba8d47c9a31d13890da3dd1fb960774",
+    "irodori_cli/ruby_bridge.py": "ec896bc6b85f781f6b80a090f2399f0d189c980820fa22866e285b9919e04c12",
+    "irodori_cli/ruby_core.py": "fc55776141a85d7eef8f55f6066877452dd4f4ff34d4fae3f6429d6788cae1f9",
+    "test_v3_scenario.py": "fe682ea17f98af26f5f77970100519d7458bd836f9d8d07283235ad4fed382f9"
   },
   "execution_contract": "koebuta-faithful-v1"
 }

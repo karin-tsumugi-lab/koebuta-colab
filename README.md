@@ -1,131 +1,135 @@
-# Koebuta v2
+# Koebuta v3
 
-Koebutaは、原稿を話者・読み・感情・演技指示付きのシナリオに整理し、Irodori-TTSで生成し一つの朗読音声にするためのツールです。
+Koebutaは、原稿を話者・読み・感情・演技指示付きのシナリオJSONに整理し、Irodori-TTSで朗読音声を生成するためのツール群です。
 
-基本の流れは、**AIでシナリオを作る → エディタで確認する → Irodori-TTSで音声を作る → 試聴して保存する**、の4段階です。
-面倒な人のためにAIエージェントへ委託し自動で処理を行う手順書も用意しています。
+制作の本線は次の4ステップです。
 
-エージェントへまとめて依頼する方は、[AIエージェント向け制作手順](docs/AGENT_WORKFLOW.md)の依頼欄を埋め、Koebutaツール群と原稿と一緒に渡してください。シナリオ作成からCLIでの音声生成・回収までを案内しています。
+1. **AIで原稿をシナリオJSONにする**（`works/my_book/scenario.json`）
+2. **HTMLエディタで内容を確認・調整する(任意)**
+4. **CLIで朗読音声を検査・生成する**（`works/my_book/settings.json` → `result.wav`）
+5. **試聴して保存・必要なら部分再生成する**
+
+> **AIエージェントへ制作をまとめて委託する場合**  
+> [AIエージェント向け制作手順](docs/AGENT_WORKFLOW.md) の依頼欄を埋め、原稿と一緒にエージェント（Claude Code / Codex 等）へ渡してください。声の試作からシナリオ作成、CLIでの音声生成・回収までを一貫して案内しています。
+
+---
 
 ## 用意するもの
 
 - 読ませたい原稿
-- ChatGPTやGeminiなど、ファイルや文章を扱えるチャット型AI
-- Google Colabを利用できるGoogleアカウントとGPU利用枠、あるいはIrodori-TTSを実行可能なローカル環境
-- 声をクローンする場合は、利用する権限のある参照音声WAV
+- ChatGPTやGeminiなど、ファイルや長文を扱えるチャット型AI（またはAIエージェント）
+- Google Colabを利用できるGoogleアカウントとGPU利用枠（ホスト側は標準Python 3.10以上と認証済みColab CLI）
 
-参照音声を用意せず、声の説明文から試作して使うこともできます。
+Colabを利用する場合は、原稿や参照音声をアップロードし、GPU利用枠を消費します。開始前に [Colabの利用条件](docs/COLAB_USAGE.md)、[ライセンス](LICENSE)、[第三者の権利表示](THIRD_PARTY_NOTICES.md) を確認してください。
 
-Colabを利用する場合は、原稿や参照音声をアップロードし、GPU利用枠を消費します。開始前に、[Colabの利用条件](docs/COLAB_USAGE.md)、[ライセンス](LICENSE)、[第三者の権利表示](THIRD_PARTY_NOTICES.md)を確認してください。
+---
 
-## 1. 原稿をシナリオJSONにする
+## 事前分岐：声の用意（3つの方法から選ぶ）
 
-チャット型AIに、次の3点を渡してください。
+朗読に使う声は、次の3通りのいずれかで用意します。ここでは作品フォルダーを `works/my_book/` とする例で統一します。
 
-1. [シナリオ化の依頼文](notebook/02_CHAT_PROMPT.md)
-2. [シナリオJSONの仕様書](notebook/01_SPEC_SHEET.md)
-3. 読ませたい原稿
+- **方法A：手持ちの参照音声WAVを使う**  
+  利用権限のあるWAVファイルを `works/my_book/voices/narrator.wav`（複数人朗読なら話者ごと）に配置し、**「1. 原稿をシナリオJSONにする」** へ進みます。
+- **方法B：参照音声作成キット（`voice_kit/`）で新しく声を作る**  
+  参照音声がない場合や登場人物に合う声を作りたい場合は、**[参照音声作成キット](voice_kit/README.md)** を使います。
+  1. [声づくり対話プロンプト](voice_kit/VOICE_PROMPT.md) でAIと対話して声の説明文と試聴セリフを決めます（または12種の定番プリセットから選びます）。
+  2. `voice_kit/irodori_voice_kit.py` でシード違いのサンプル音声を生成して聴き比べます。
+  3. 気に入ったシードを `--adopt` で選び、`--save-to` と `--write-settings` で参照WAVと本番設定の保存先を指定します。
+- **方法C：参照音声WAVを使わず、声の説明文（VoiceDesign）で直接生成する**  
+  [VoiceDesign用の設定例](cli/irodori_cli_examples/generate_settings.json)を `works/my_book/settings.json` にコピーし、`baseCaption` に声の説明を記入します。
 
-一人朗読／複数人朗読を指定してください。共通プロンプトv0.3は、作品全体の理解→全体方針→場面演出→発話分割の順に制作します。読み補助は既定Bです。タイトル・著者名・章題などの `text` 改変は、明示許可がある範囲だけ認め、本文・台詞は保持します。
+---
 
-AIが作成したシナリオJSONを、手元のPCへ保存します。JSON交換形式は `schema_version: 1` のままで、Notebook v2等のアプリの版とは別です。
+## 1. AIで原稿をシナリオJSONにする
 
-正式Notebook v2は原文不一致を警告として表示し、生成は継続できます。許可済み見出し改変か意図しない本文差分かを確認してください。`source` は元原稿のまま保持します。CLIの新入口も `source` 提供時には原文不一致を警告します。`source` 未提供時は照合未実施です。いずれも原稿全体の確認は別途必要です。詳しくは[エディタ案内](docs/EDITOR_GUIDE.md)を参照してください。
+チャット型AIに、次の2点を渡してください（依頼プロンプト単体で必要なJSON構造・感情ID・ルビ規則をすべて含んでいます）。
 
-長い作品や読みの難しい作品には、追加の依頼文も用意しています。
+1. [シナリオ化の依頼プロンプト](prompts/02_CHAT_PROMPT.md)
+2. 読ませたい原稿
 
-- [notebookフォルダー](notebook/)の`03A`・`03B`・`03C`を、用途に合わせて利用してください。
+（詳細なデータ仕様リファレンスは [シナリオJSON仕様書](prompts/01_SPEC_SHEET.md) を参照してください）
 
-## 2. エディタで内容を確認する
+依頼時に **一人朗読／複数人朗読** を指定してください（その他の項目は「おまかせ」でも進められます）。  
+AIが出力したJSONを **`works/my_book/scenario.json`** として保存します（JSONのフォーマット識別子は `"schema_version": 1` です）。
 
-[Scenario Inspector](Koebuta_Scenario_Inspector_v0.1.6.html)をダウンロードし、手元のブラウザーで開きます。手順の詳細は[エディタの利用案内](docs/EDITOR_GUIDE.md)にあります。
+- 長い作品や難読語が多い作品には、追加指示も併用できます：
+  - [03A 長編シナリオ化追加指示](prompts/03A_LONG_FORM_ADDON.md)
+  - [03B エージェント向け追加指示](prompts/03B_AGENT_ADDON.md)
+  - [03C 読み上げ文・追加ルビの追加調整](prompts/03C_READING_ADDON.md)
 
-シナリオJSONを読み込み、次を確認・修正してください。
+---
 
-- 話者の割り当て
-- 本文と読み
-- 感情・演技指示
-- 音声生成する文章の区切り
+## 2. HTMLエディタで内容を確認・調整する
 
-発話長は**20〜80文字程度**が基本目安です。15文字未満は生成不安定性に注意し、10文字未満の単独生成は可能な限り避け、80文字超は分割を検討します。原文・話者・意味・演出の境界を優先し、自然に続く場合だけ短文を統合してください。シナリオの発話とTTS内部の生成片は別です。許可済みの見出し改変でも原文照合の指摘は自動免除されないため、変更箇所と残る原稿を確認します。
+[Scenario Inspector v3](Koebuta_Scenario_Inspector_v3.html) を手元のブラウザー（Chrome / Edge推奨）で開き、`works/my_book/scenario.json` を読み込みます。画面でできる操作とJSON側で修正する項目の詳細は [エディタ利用案内](docs/EDITOR_GUIDE.md) を参照してください。
 
-絵文字タグによる感情や効果音も、声・文脈・挿入位置で結果が変わります。生成後の試聴で調整してください。
+主に次の点を確認・修正します。
 
-確認が済んだら、JSONを保存します。参照WAVもまとめる場合は、エディタの作品ZIP出力を使うと、次の読み込みへ進めます。
+- **話者の割り当て**（誰の台詞・地の文か）
+- **本文と読み上げ文**（作者ルビの保持、AIが補った追加ルビ `🔖` の採用状態 `自動 / 仮名 / 元表記` の切り替え）
+- **感情・演技指示・間**（絵文字タグや `pause_after_ms`）
+- **編集指示メモ（`notes`）**（生成後に効果音を重ねる位置などの自由記述メモ。TTS生成には影響しません）
+- **発話の長さ**（**20〜80文字程度**が推奨目安です。15文字未満の短文や80文字超の長文は、意味や演出の切れ目で調整を検討してください）
 
-## 3. Notebook v2を起動する
+確認が済んだら、`works/my_book/scenario.json` を上書き保存します。
 
-以下はNotebook v2をColabで使う手順です。CLIやローカル環境を使う方は、末尾の「CLI版などを使いたい方へ」をご覧ください。
+---
 
-[**Notebook v2をGoogle Colabで開く**](https://colab.research.google.com/github/karin-tsumugi-lab/koebuta-colab/blob/main/notebook/Koebuta_Notebook_v2.ipynb)
+## 3. CLIで朗読音声を検査・生成する
 
-1. ColabのランタイムをGPUに設定します。
-2. セルを上から順に実行します。
-3. Google Driveを使う場合は、Drive用セルの`USE_DRIVE`を`True`にします。
-4. モデルの準備が終わると、操作画面のURLとユーザー名・パスワードが表示されます。
-5. URLを開き、表示された情報でログインします。
+音声生成には **`cli/irodori_generate.py`** を使用します。詳しいオプションは **[CLI朗読生成ガイド](cli/README.md)** を参照してください。
 
-初回の準備には時間がかかります。進行状況はColabのセル出力で確認できます。
+1. **生成設定 `works/my_book/settings.json` を用意する**。方法Aの共通参照WAVには下の例を使います。方法B・Cで用意した設定はそのまま使い、手順2へ進みます。
+   （`voice_kit` の `--adopt ... --write-settings works/my_book/settings.json` で作成済みの場合はそのまま使えます。`voices` の相対パスは `settings.json` のある `works/my_book/` を基準に解決されます）
+   ```json
+   {
+     "title": "作品名",
+     "voiceMode": "clone",
+     "reading": "shared",
+     "voices": {"voice_a": "voices/narrator.wav"},
+     "baseCaption": "落ち着いた明瞭な日本語の朗読。",
+     "acting": true,
+     "emotion": true,
+     "narratorEmotion": true,
+     "ttsModel": "Aratako/Irodori-TTS-v4.1-Small",
+     "seed": 314,
+     "steps": 40,
+     "pause": 0.28
+   }
+   ```
 
-操作画面のURLとログイン情報は、公開しないでください。
+2. **`--dry-run` で生成計画と読みを確認する（GPU不使用）**
+   ```bash
+   python3 cli/irodori_generate.py \
+     --scenario works/my_book/scenario.json \
+     --settings works/my_book/settings.json \
+     --dry-run
+   ```
 
-## 4. 作品を読み込み、声を決める
+3. **Colab GPUで音声を生成・回収する**
+   ```bash
+   python3 cli/irodori_generate.py \
+     --scenario works/my_book/scenario.json \
+     --settings works/my_book/settings.json \
+     --session work-sess --job run01 --out works/my_book/run01 \
+     --new --gpu T4 --stop-after-download
+   ```
 
-操作画面へ、手順2で保存したJSONまたは作品ZIPをアップロードし、「作品を読み込む」を押します。Google Drive内の作品フォルダーから読み込むこともできます。
+---
 
-続いて人物ごとの声を確認します。
+## 4. 試聴して保存・必要なら部分再生成する
 
-- 参照WAVがある場合は、人物に割り当てます。
-- 声を新しく作る場合は、「声の試作」で説明文を調整し、試聴して採用します。
-- 参照WAVが未設定の人物は、本文生成時に自動参照作成または参照なしの生成が行われます。
+生成が完了すると、`works/my_book/run01/` に結合済みの完成音声 **`result.wav`** と、発話IDごとの個別WAVを収めた **`segments.zip`** が保存されます。
 
-複数の人物がいる作品では、全編を生成する前に、それぞれの声を試しておくと確認しやすくなります。
+完成音声を試聴し、読みやイントネーションを直したい発話があれば、`scenario.json` を修正したうえで `--ids t0010,t0020` のように発話IDを指定し、新しい `--job` と `--out`（例：`--job retry01 --out works/my_book/retry01`）へ部分再生成できます。
 
-## 5. 音声を生成し、気になる部分を直す
-
-生成条件を確認し、「全編生成」を押します。
-
-生成後は試聴し、誤読、声の一貫性、感情、効果音、文章のつなぎ目を確認してください。
-
-気になる箇所は、対象を選んで「新しい候補を生成」します。採用済み音声と聞き比べて、よい候補を採用してください。
-
-本文・読み・話者・感情・演技指示を修正する場合は、エディタでシナリオを修正して保存し、Notebookへ読み込み直します。
-
-## 6. 完成音声を出力・保存する
-
-「完成WAV再結合・出力」を押し、次のファイルをダウンロードします。
-
-- 全編を結合した完成WAV
-- 発話ごとの音声をまとめたZIP
-
-候補を採用し直した場合は、完成WAVを再結合してください。
-
-途中で作業を終える場合は、「作業状態を保存」を使います。再開時は同じ作品を読み込み、保存先を指定して「保存状態を復元」を押します。
-
-Colabの一時領域は、ランタイム終了などで失われる場合があります。必要な音声をダウンロードし、継続する作業はGoogle Driveなどへ保存してから終了してください。
-
-詳しい操作は、[Notebook v2操作ガイド](notebook/NOTEBOOK_V2_GUIDE.md)をご覧ください。
-
-## CLI版などを使いたい方へ
-
-| 使いたい方法 | 案内 |
-| --- | --- |
-| Colabの画面から生成する | 上記のNotebook v2の手順 |
-| 手元のPCから命令してColabで連続生成する | [CLI版の利用案内](cli/README.md) |
-| シナリオを編集する | [エディタの利用案内](docs/EDITOR_GUIDE.md) |
-| 単一話者の短い返答を音声化する実装例を調べる | [Fast版](fast/README.md) |
-| 手元のGPUへ移植する | [ローカルGPU移植案](notebook/LOCAL_DEVELOPMENT_HANDOFF.md)。未検証の作業案です |
-
-CLI開発版2.0.0-devの新入口は、シナリオの発話・明示TTS片をそのまま生成し、`--ids` で対象を指定できます。既存の自動分割を行う旧入口とは区別してください。シナリオJSONに加えて、別の生成設定JSONが必要です。エディタで指定した設定や分割情報の対応範囲は、[互換性の表](docs/EDITOR_GUIDE.md)で確認してください。
-
-AIエージェントへ依頼する場合は、[AIエージェント向け制作手順](docs/AGENT_WORKFLOW.md)を渡してください。CLIの個別操作は [CLIの利用案内](cli/README.md) を参照できます。
+---
 
 ## 関連資料
 
-- [シナリオJSON仕様](notebook/01_SPEC_SHEET.md)
-- [Notebook v2操作ガイド](notebook/NOTEBOOK_V2_GUIDE.md)
-- [ライセンス](LICENSE)
-- [第三者の権利表示](THIRD_PARTY_NOTICES.md)
-- [収録元と検証範囲](docs/PROVENANCE.md)
-
-正式なNotebook版はv2です。旧v1の資料は、過去の構成の確認と移行のために保管しています。
+- [参照音声作成キット（声づくりガイド）](voice_kit/README.md)
+- [CLI朗読生成ガイド](cli/README.md)
+- [エディタ（Scenario Inspector v3）利用案内](docs/EDITOR_GUIDE.md)
+- [AIエージェント向け制作手順](docs/AGENT_WORKFLOW.md)
+- [シナリオJSON仕様書](prompts/01_SPEC_SHEET.md) / [v3シナリオ詳細仕様](docs/V3_SCENARIO_SPEC.md)
+- [Colabの利用条件](docs/COLAB_USAGE.md) / [ライセンス](LICENSE) / [第三者の権利表示](THIRD_PARTY_NOTICES.md) / [収録元と検証範囲](docs/PROVENANCE.md)

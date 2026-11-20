@@ -1,9 +1,9 @@
-<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Koebuta Scenario Inspector v0.1.6</title>
+<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Koebuta Scenario Inspector v3</title>
 <style>
 :root{font-family:system-ui,-apple-system,"Yu Gothic",Meiryo,sans-serif;color:#203041;background:#f4f7fa;font-size:14px}*{box-sizing:border-box}body{margin:0}button,input,select,textarea{font:inherit}button{cursor:pointer;border:1px solid #cbd5e1;background:white;border-radius:7px;padding:8px 10px;color:#263952}button:hover:not(:disabled){background:#eaf2fb}button:disabled{opacity:.48;cursor:default}button.primary{background:#1858a5;color:white;border-color:#1858a5}button.primary:hover:not(:disabled){background:#16477d}header{height:auto;min-height:66px;background:white;border-bottom:1px solid #dce3ed;display:flex;gap:9px;align-items:center;padding:12px 18px;flex-wrap:wrap;position:sticky;top:0;z-index:4}.brand{font-weight:750;margin-right:16px;color:#1c3558;white-space:nowrap}header .filename{margin-left:auto;color:#65768c;font-size:12px}.layout{display:grid;grid-template-columns:minmax(270px,23%) minmax(0,1fr);gap:0;min-height:calc(100vh - 100px)}aside{border-right:1px solid #d5dfec;background:white;padding:14px;max-height:calc(100vh - var(--header-height,67px));overflow:auto;position:sticky;top:var(--header-height,67px)}main{padding:16px;min-width:0}.heading{font-size:15px;font-weight:700;margin:0 0 12px}.muted{color:#718096;font-size:12px;line-height:1.5}.speaker{width:100%;display:flex;flex-direction:column;text-align:left;gap:3px;padding:10px;margin-bottom:6px}.speaker small{font-size:11px;color:#6a7b8f;overflow-wrap:anywhere}.speaker.active{border-color:#4d87d0;background:#edf4ff}.detailTitle{font-weight:700;margin:18px 0 9px;padding-top:9px;border-top:1px solid #ddd}.voiceButtons{display:flex;gap:5px;flex-wrap:wrap}.voiceButtons button{font-size:11px}.path{overflow-wrap:anywhere;margin-top:8px}label{display:block;font-size:12px;color:#425671;margin:8px 0}label input,label select,label textarea{display:block;width:100%;margin-top:5px;border:1px solid #cbd5e1;border-radius:6px;padding:7px;background:white;color:#1b3049}label textarea{resize:vertical}.editorDock{position:sticky;top:var(--header-height,66px);z-index:3;background:#f4f7fa;border-bottom:1px solid #cbd6e5;box-shadow:0 3px 9px #20304112;padding:10px 0 9px;margin:-16px 0 12px}.editorDock .controls{margin-bottom:0}.editorDock .issuePanel{margin:0 0 9px;border:0;padding:0}.issueHeading{display:flex;align-items:center;gap:10px;margin:0 0 7px}.issueHeading .heading{margin:0}.issueHeading .issueCount{font-size:12px;color:#65768c}.editorDock .issues{max-height:78px;overflow-y:auto;align-content:flex-start}.scenarioTable tr{scroll-margin-top:calc(var(--header-height,66px) + var(--editor-dock-height,160px) + 12px)}.controls{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-bottom:11px}.controls .spacer{flex:1}.forceLabel{display:flex;gap:4px;align-items:center;margin:0;padding:6px 7px;border:1px solid #e3b77d;border-radius:7px;background:#fff7ec;color:#83511d;font-size:11px;white-space:nowrap}.forceLabel input{margin:0}.lengthLimits{display:flex;gap:6px;align-items:center;padding:2px 7px;border:1px solid #ced9e7;border-radius:7px;background:#eaf1fa}.lengthLimits label{display:flex;align-items:center;gap:4px;margin:0;font-size:11px;white-space:nowrap}.lengthLimits input{width:62px;margin:0;padding:6px 4px;border:1px solid #bccde1;border-radius:5px;background:#fff;font-size:12px}.lengthLimits small{font-size:10px;color:#54667c;white-space:nowrap}.controls input[type=search]{width:240px;max-width:100%;padding:9px;border:1px solid #cdd6e1;border-radius:7px}.controls select{border:1px solid #cdd6e1;border-radius:7px;background:#fff;padding:8px}.tableWrap{overflow-x:auto;border:1px solid #d5dfeb;border-radius:10px;background:white}.scenarioTable{border-collapse:separate;border-spacing:0;width:100%;table-layout:fixed;min-width:1150px}.scenarioTable th{position:sticky;top:0;background:#e8eef7;text-align:left;color:#43556d;font-size:12px;padding:10px;border-bottom:1px solid #cbd6e5;z-index:1}.scenarioTable td{padding:5px;border-bottom:1px solid #edf0f5;vertical-align:top}.scenarioTable th:nth-child(1){width:74px}.scenarioTable th:nth-child(2){width:135px}.scenarioTable th:nth-child(3){width:24%}.scenarioTable th:nth-child(4){width:23%}.scenarioTable th:nth-child(5){width:15%}.scenarioTable th:nth-child(6){width:105px}.scenarioTable th:nth-child(7){width:135px}.scenarioTable th:nth-child(8){width:100px}.scenarioTable textarea{width:100%;min-height:44px;height:48px;border:1px solid transparent;border-radius:4px;resize:vertical;background:transparent;padding:5px;line-height:1.45;overflow:auto;font-size:12px}.scenarioTable textarea:focus,.scenarioTable textarea.focused{outline:2px solid #79a9ee;min-height:110px;height:130px;background:#fff}.scenarioTable select{width:100%;border:1px solid transparent;background:transparent;padding:6px 1px;font-size:12px}.scenarioTable tr.partrow td{background:#f7fbff;border-bottom-color:#deebfa}.scenarioTable tr.partrow td:first-child{border-left:3px solid #8aa9d4}.scenarioTable tr.partrow .sourceReadOnly{font-size:11px;color:#6c7c90;max-height:56px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;padding:5px}.scenarioTable .ttsPartNote{font-size:10px;color:#345e93;padding:2px 5px}.scenarioTable textarea[readonly]{color:#647890;background:#f0f5fa}.scenarioTable tr:hover td{background:#f6faff}.scenarioTable tr.selected td{background:#e9f4ff}.scenarioTable tr.err td:first-child{box-shadow:inset 4px 0 #c83242}.scenarioTable tr.warn td:first-child{box-shadow:inset 4px 0 #e3a11f}.scenarioTable tr.notice td:first-child{box-shadow:inset 4px 0 #7d9fc7}.scenarioTable tr.separator td{background:#f5f2ea}.scenarioTable .pausecell input{min-width:0;width:100%;padding:5px 2px;border:1px solid #d1dbe8;border-radius:4px;font-size:12px;font-family:inherit;color:#263a56}.scenarioTable .pausecell small{display:block;font-size:10px;color:#68798e;margin-top:4px}.scenarioTable .pauseEntry{display:flex;gap:3px;align-items:center}.scenarioTable .pauseEntry input{flex:1;width:0}.scenarioTable .pauseReset{font-size:10px;padding:4px 5px;white-space:nowrap}.scenarioTable .pauseReset:disabled{display:none}.scenarioTable .index{font-size:12px}.index input{margin-right:5px}.idInput{display:block;width:100%;min-width:0;padding:3px 2px;margin-top:5px;font-size:10px;color:#657790;border:1px solid transparent;background:transparent;border-radius:3px}.idInput:focus{border-color:#80aadb;background:white}.statuscell{font-size:13px}.statuscell small{display:block;font-size:10px;color:#68798e;max-height:45px;overflow:hidden}.tiny{font-size:10px;padding:3px;margin-top:4px}.footer{display:flex;align-items:center;justify-content:space-between;margin-top:10px;color:#64748b}.pager{display:flex;gap:5px;align-items:center}.issuePanel{margin-top:17px;border-top:1px solid #d5dfeb;padding-top:15px}.issues{display:flex;gap:6px;flex-wrap:wrap;max-height:150px;overflow:auto}.issue{font-size:11px;text-align:left;padding:6px 8px}.issue.error{border-color:#f3aaaa;color:#a3232c}.issue.warning{border-color:#efca78;color:#8c5900}.issue.notice{border-color:#c3d1e2;color:#537190}.statusbar{background:#edf3f9;border-top:1px solid #d9e4ef;padding:8px 18px;font-size:12px;color:#465e77;position:sticky;bottom:0}.statusbar.error{color:#b92835}dialog{border:1px solid #bbcadd;border-radius:14px;box-shadow:0 12px 70px #243d5c36;padding:23px;max-width:580px;width:calc(100% - 30px);color:#273b52}dialog::backdrop{background:#1f344c80}.dialogHead{font-size:18px;font-weight:750;margin:0 0 14px}.settingsGrid{display:grid;grid-template-columns:1fr 1fr;gap:4px 16px}.settingsGrid .full{grid-column:1/-1}.settingsGrid .check{display:flex;align-items:center;gap:9px}.settingsGrid .check input{width:auto;margin:0}.dialogActions{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}.empty{padding:35px!important;text-align:center;color:#64748b}.flash{animation:flash 1.4s}@keyframes flash{from{outline:2px solid #dfaf30}to{outline:0}}@media(max-width:900px){.layout{grid-template-columns:1fr}aside{position:static;max-height:none;border-right:none;border-bottom:1px solid #d5dfeb}main{padding:10px}.editorDock{margin:-10px 0 12px}.brand{width:100%}header .filename{margin-left:0}}
 </style></head><body>
-<header id="appHeader"><span class="brand">🎙 Koebuta Scenario Inspector <small>v0.1.6</small></span><button id="folderBtn">📁 作品フォルダ</button><button id="jsonBtn">📄 JSONを開く</button><button id="saveBtn" class="primary" disabled>💾 保存</button><button id="saveAsBtn" disabled>フォルダ保存</button><button id="zipBtn" disabled>ZIP出力</button><button id="settingsBtn" disabled>⚙ 生成設定</button><button id="sampleBtn">デモ</button><span id="filename" class="filename">未読込</span></header>
-<div class="layout"><aside><h2 class="heading">話者確認</h2><div id="speakers"></div><div id="speakerDetail"></div></aside><main><div id="editorDock" class="editorDock"><section class="issuePanel" aria-label="検査結果"><div class="issueHeading"><h2 class="heading">検査結果</h2><span id="issueCount" class="issueCount" aria-live="polite"></span></div><div id="issues" class="issues"></div></section><div class="controls"><button id="mergeBtn" disabled>🔗 結合（発話／TTS片）</button><label class="forceLabel" title="話者・感情・演技・間・原文の境界などの安全条件を無視します。適用前に確認が必要です"><input type="checkbox" id="forceMergeToggle"> ⚠ 結合条件を無視</label><button id="splitBtn" disabled>✂ TTS分割</button><button id="autoBtn" disabled>✨ 自動整形（確認後）</button><span class="lengthLimits" role="group" aria-label="検査・整形の文字数基準"><label>短文 &lt; <input id="shortLimit" type="number" min="1" step="1" value="15" aria-label="短文と判定する文字数（未満）"></label><label>長文 &gt; <input id="longLimit" type="number" min="2" step="1" value="140" aria-label="長文と判定する文字数（超）"></label><small>文字</small></span><button id="undoBtn" disabled>↶ Undo</button><button id="redoBtn" disabled>↷ Redo</button><span class="spacer"></span><input id="search" type="search" placeholder="台詞・話者・演技を検索" aria-label="検索"><select id="filter" aria-label="表示範囲"><option value="all">すべて</option><option value="issues">エラー・警告</option><option value="short">短文</option><option value="long">長文</option><option value="review">編集後要確認</option><option value="speaker">選択話者のみ</option></select></div></div>
+<header id="appHeader"><span class="brand">🎙 Koebuta Scenario Inspector <small>v3</small></span><button id="folderBtn">📁 作品フォルダ</button><button id="jsonBtn">📄 JSONを開く</button><button id="saveBtn" class="primary" disabled>💾 保存</button><button id="saveAsBtn" disabled>フォルダ保存</button><button id="zipBtn" disabled>ZIP出力</button><button id="settingsBtn" disabled>⚙ 生成設定</button><button id="sampleBtn">デモ</button><span id="filename" class="filename">未読込</span></header>
+<div class="layout"><aside><h2 class="heading">話者確認</h2><div id="speakers"></div><div id="speakerDetail"></div></aside><main><div id="editorDock" class="editorDock"><section class="issuePanel" aria-label="検査結果"><div class="issueHeading"><h2 class="heading">検査結果</h2><span id="issueCount" class="issueCount" aria-live="polite"></span></div><div id="issues" class="issues"></div></section><div class="controls"><button id="mergeBtn" disabled>🔗 結合</button><label class="forceLabel" title="話者・感情・演技・間・原文の境界などの安全条件を無視します。適用前に確認が必要です"><input type="checkbox" id="forceMergeToggle"> ⚠ 結合条件を無視</label><button id="autoBtn" disabled>✨ 自動整形（確認後）</button><span class="lengthLimits" role="group" aria-label="検査・整形の文字数基準"><label>短文 &lt; <input id="shortLimit" type="number" min="1" step="1" value="15" aria-label="短文と判定する文字数（未満）"></label><label>長文 &gt; <input id="longLimit" type="number" min="2" step="1" value="140" aria-label="長文と判定する文字数（超）"></label><small>文字</small></span><button id="undoBtn" disabled>↶ Undo</button><button id="redoBtn" disabled>↷ Redo</button><span class="spacer"></span><input id="search" type="search" placeholder="台詞・話者・演技を検索" aria-label="検索"><select id="filter" aria-label="表示範囲"><option value="all">すべて</option><option value="issues">エラー・警告</option><option value="short">短文</option><option value="long">長文</option><option value="review">編集後要確認</option><option value="speaker">選択話者のみ</option></select></div></div>
 <div class="tableWrap"><table class="scenarioTable"><thead><tr><th># / ID</th><th>話者</th><th>セリフ（原文）</th><th>TTS text</th><th>演技指示</th><th>感情（絵文字）</th><th>発話後の間 (ms)</th><th>状態</th></tr></thead><tbody id="rows"></tbody></table></div>
 <p class="muted">※ 発話後の間は適用予定値を表示します。数値を変更すると個別指定として保存されます。「自動へ戻す」で共通／空行の設定を再適用できます。空行の情報はJSONに保持します。TTS分割片は保存JSONの独自情報です。Notebook v2は保存したTTS分割位置を利用します。CLI版では独自の分割検査が適用されます。</p><div class="footer"><span id="totals"></span><div class="pager"><span id="selection">0行選択</span><button id="prev">前</button><span id="pagination"></span><button id="next">次</button></div></div></main></div>
 <div id="status" class="statusbar">準備完了。作品フォルダかJSONを開いてください。</div>
@@ -278,22 +278,6 @@ function ttsParts(s,project=null){
   if(resolved.warnings.length)throw Error('ルビの読みが確定していません: '+resolved.warnings.join('、'));
   return [resolved.value];
 }
-function splitTtsPart(project,index,partIndex=0,offset=null){
-  const s=project.segments[index];
-  if(!nonEmptySpeech(s))throw Error('発話以外・空本文はTTS分割できません');
-  const parts=ttsParts(s,project);
-  if(!Number.isInteger(partIndex)||partIndex<0||partIndex>=parts.length)throw Error('分割対象のTTS片が見つかりません');
-  const target=parts[partIndex];
-  const choice=offset===null?chooseSplit(target):{at:offset,fallback:false};
-  if(!choice||!safeBoundaries(target).has(choice.at))throw Error('ルビ・結合文字を壊さないTTS分割位置を指定してください');
-  const [a,b]=cut(target,choice.at);
-  if(!a.trim()||!b.trim())throw Error('分割後に空の読み上げ文ができます');
-  parts.splice(partIndex,1,a,b);
-  const next=clone(project),ns=next.segments[index];
-  ns.tts_text=parts.join('');ns.koebuta_tts_parts=parts;
-  meta(ns,'tts_split',choice.fallback);
-  return {project:next,warnings:choice.fallback?['自然な区切りが見つからず、文字数位置でTTSを分割しました']:[]};
-}
 function mergeTtsParts(project,index,partIndex){
   const s=project.segments[index];
   if(!nonEmptySpeech(s)||!Array.isArray(s.koebuta_tts_parts)||!validTtsParts(s))throw Error('有効なTTS分割情報がありません');
@@ -305,27 +289,6 @@ function mergeTtsParts(project,index,partIndex){
   if(spoken(ns,next).value!==s.tts_text)throw Error('結合後の読み上げ文が変化しました');
   meta(ns,'tts_merge');
   return {project:next,warnings:[]};
-}
-function splitLongTts(project,index,high){
-  const original=project.segments[index],parts=ttsParts(original,project),nextParts=[];
-  let changed=false,fallback=false;
-  for(const part of parts){
-    let rest=part,guard=0;
-    while(cplen(rest.trim())>high&&guard++<10000){
-      const count=Math.max(2,Math.ceil(cplen(rest.trim())/high));
-      const choice=chooseSplit(rest,cplen(rest)/count);
-      if(!choice)break;
-      const [a,b]=cut(rest,choice.at);if(!a.trim()||!b.trim())break;
-      nextParts.push(a);rest=b;changed=true;fallback ||=choice.fallback;
-    }
-    nextParts.push(rest);
-  }
-  if(!changed)return null;
-  const old=spoken(original,project);
-  if(old.warnings.length||nextParts.join('')!==old.value)throw Error('TTS分割前後の読みが一致しません');
-  const result=clone(original);result.tts_text=old.value;result.koebuta_tts_parts=nextParts;
-  meta(result,'tts_split',fallback);
-  return {segment:result,fallback};
 }
 function meta(s,action,fallback=false,forced=false){
   const old=isObject(s.koebuta_edit)?s.koebuta_edit:{};
@@ -382,6 +345,8 @@ function forceMerge(project,start,end=start+1){
   if(rows.some(s=>!isObject(s)||(!nonEmptySpeech(s)&&s.segment_type!=='separator')))
     throw Error('発話と区切り以外の不正な行は強制結合できません');
   const speechRows=rows.filter(nonEmptySpeech);
+  if(rows.some(r=>r.notes?.length||r.koebuta_added_ruby?.length))
+    throw Error('編集指示または追加ルビのある発話です。結合する前に引き継ぎ先を確認してください');
   if(speechRows.length<2)throw Error('結合対象に発話が2件必要です');
   const warnings=[];
   for(const row of speechRows){
@@ -463,6 +428,8 @@ function nonEmptySpeech(s){return isObject(s)&&(!s.segment_type||s.segment_type=
 function manualMerge(project,index){
   const a=project.segments[index],b=project.segments[index+1];
   if(!nonEmptySpeech(a)||!nonEmptySpeech(b))throw Error('発話以外・空本文は結合できません');
+  if(a.notes?.length||b.notes?.length||a.koebuta_added_ruby?.length||b.koebuta_added_ruby?.length)
+    throw Error('編集指示または追加ルビの引き継ぎ先を確認してください');
   if(a.speaker_id!==b.speaker_id)throw Error('話者が異なります');
   const gap=sourceGap(project,index);
   if(gap===null||gap.trim())throw Error('原稿上で隣接していないか、間に文章があります');
@@ -513,12 +480,26 @@ function manualSplit(project,index,offset=null){
     if(whole.warnings.length||left.warnings.length||right.warnings.length||whole.value!==left.value+right.value)throw Error('分割するとルビの読みが変わるため中止しました');
   }
   const first=clone(s),second=clone(s);first.text=a;second.text=b;
+  delete second.notes;
+  const warnings=candidate.fallback?['自然な区切りが見つからず、文字数位置で分割しました']:[];
+  if(s.notes?.length){
+    warnings.push(`編集指示は元の発話ID「${s.id}」に残しました。配置を確認してください`);
+  }
+  if(Array.isArray(s.koebuta_added_ruby)){
+    if(rubyIssue(s))throw Error(rubyIssue(s));
+    const boundary=cplen(a);
+    if(s.koebuta_added_ruby.some(r=>r.start<boundary&&boundary<r.end))
+      throw Error('追加ルビの途中では分割できません');
+    first.koebuta_added_ruby=s.koebuta_added_ruby.filter(r=>r.end<=boundary);
+    second.koebuta_added_ruby=s.koebuta_added_ruby.filter(r=>r.start>=boundary)
+      .map(r=>({...r,start:r.start-boundary,end:r.end-boundary}));
+  }
   const used=new Set(project.segments.map(x=>x?.id));second.id=newPartId(used,String(s.id||'segment'));
   if(hasTTS){[first.tts_text,second.tts_text]=cut(s.tts_text,candidate.at);}
   delete first.pause_after_ms;delete first.blank_lines_after;delete first.blank_line_pause_ms;
-  meta(first,'manual_split',candidate.fallback);meta(second,'manual_split',candidate.fallback);
+  meta(first,'manual_split',candidate.fallback,!!s.notes?.length);meta(second,'manual_split',candidate.fallback);
   const result=clone(project);result.segments.splice(index,1,first,second);
-  return {project:result,warnings:candidate.fallback?['自然な区切りが見つからず、文字数位置で分割しました']:[]};
+  return {project:result,warnings};
 }
 /** Returns a reason when a short speech pair cannot be merged without changing its delivery. */
 function safeAutoMerge(proj,i,low,high){
@@ -526,6 +507,8 @@ function safeAutoMerge(proj,i,low,high){
   const reject=reason=>({ok:false,reason});
   if(!a||!b)return reject('隣接する発話がありません');
   if(!nonEmptySpeech(a)||!nonEmptySpeech(b))return reject('区切り行または空の本文があります');
+  if(a.notes?.length||b.notes?.length||a.koebuta_added_ruby?.length||b.koebuta_added_ruby?.length)
+    return reject('編集指示または追加ルビの引き継ぎ先を確認してください');
   if(a.speaker_id!==b.speaker_id)return reject('話者が異なります');
   if((a.emotion||'neutral')!==(b.emotion||'neutral'))return reject('感情が異なります');
   if((a.acting_description||'')!==(b.acting_description||''))return reject('演技指示が異なります');
@@ -551,23 +534,6 @@ function planAuto(project,low=12,high=140,indices=null,options={}){
   if(!Number.isInteger(low)||!Number.isInteger(high)||low<1||low>=high)throw Error('文字数基準が不正です');
   const targetIds=indices===null?null:new Set(indices.map(i=>project.segments[i]?.id));
   const result=clone(project),logs=[],skips=[],used=new Set(result.segments.map(s=>s?.id));
-  let expanded=[];
-  for(const s of result.segments){
-    if(targetIds&&!targetIds.has(s.id)){expanded.push(s);continue;}
-    if(!nonEmptySpeech(s)){expanded.push(s);continue;}
-    if(!validTtsParts(s)){skips.push(`${s.id}: TTS分割情報が不整合です`);expanded.push(s);continue;}
-    const resolved=spoken(s,result);
-    if(resolved.warnings.length){skips.push(`${s.id}: ルビの読みが未確定`);expanded.push(s);continue;}
-    const partLengths=ttsParts(s,result).map(x=>cplen(x.trim()));
-    if(!partLengths.some(x=>x>high)){expanded.push(s);continue;}
-    try{
-      const adjusted=splitLongTts(result,result.segments.indexOf(s),high);
-      if(!adjusted){skips.push(`${s.id}: 安全なTTS分割位置がありません`);expanded.push(s);continue;}
-      expanded.push(adjusted.segment);
-      logs.push(`TTS分割 ${s.id}: ${adjusted.segment.koebuta_tts_parts.length}片${adjusted.fallback?'（自然な区切りなし）':''}`);
-    }catch(error){skips.push(`${s.id}: ${error.message}`);expanded.push(s);}
-  }
-  result.segments=expanded;
   let i=0;
   while(i<result.segments.length-1){
     const a=result.segments[i],b=result.segments[i+1];
@@ -610,6 +576,22 @@ function planAuto(project,low=12,high=140,indices=null,options={}){
   }
   return {project:result,logs,skips};
 }
+function rubyIssue(segment){
+  if(!Object.hasOwn(segment,'koebuta_added_ruby'))return '';
+  const entries=segment.koebuta_added_ruby;
+  if(!Array.isArray(entries))return '追加ルビは配列で指定してください';
+  const chars=Array.from(segment.text||''),ranges=[];
+  for(const r of entries){
+    if(!isObject(r)||!Number.isSafeInteger(r.start)||!Number.isSafeInteger(r.end)||
+       r.start<0||r.start>=r.end||r.end>chars.length||
+       chars.slice(r.start,r.end).join('')!==r.surface||
+       typeof r.reading!=='string'||!r.reading.trim()||!['auto','kana','surface'].includes(r.selection))
+      return '追加ルビの範囲・表記・読み・採用状態を確認してください';
+    if(ranges.some(([a,b])=>a<r.end&&r.start<b))return '追加ルビの対象範囲が重複しています';
+    ranges.push([r.start,r.end]);
+  }
+  return '';
+}
 function diagnostics(raw,low=12,high=140){
   const issues=[];const add=(level,index,message)=>issues.push({level,index,message});
   if(!isObject(raw)){add('error',null,'最上位がオブジェクトではありません');return issues;}
@@ -634,6 +616,11 @@ function diagnostics(raw,low=12,high=140){
         sourceMismatch=true;
       }else sourceCursor=found+s.text.length;
     }
+    if(Object.hasOwn(s,'notes')&&(!Array.isArray(s.notes)||s.notes.some(n=>typeof n!=='string')))
+      add('error',i,'notes は文字列の配列で指定してください');
+    const attachmentIssue=rubyIssue(s);if(attachmentIssue)add('error',i,attachmentIssue);
+    if(Object.hasOwn(s,'koebuta_added_ruby')&&Object.hasOwn(s,'koebuta_tts_parts'))
+      add('error',i,'v3ではTTS片の代わりに、発話IDを分けてください');
     if(s.segment_type==='separator')continue;
     if(s.segment_type!=null&&s.segment_type!=='speech'){add('error',i,`不明なsegment_type: ${s.segment_type}`);continue;}
     if(typeof s.speaker_id!=='string'||!Object.hasOwn(speakers,s.speaker_id))add('error',i,`話者IDが存在しません: ${s.speaker_id??'(なし)'}`);
@@ -685,7 +672,7 @@ function refresh(){
   state.issues=state.doc?diagnostics(state.doc,state.low,state.high):[];
   byId('shortLimit').value=state.low;byId('longLimit').value=state.high;
   byId('filename').textContent=(state.folder?'📁 ':'📄 ')+state.filename+(state.dirty?'  ● 未保存':'');
-  for(const id of ['saveBtn','saveAsBtn','zipBtn','settingsBtn','mergeBtn','splitBtn','autoBtn','undoBtn','redoBtn'])byId(id).disabled=!loaded;
+  for(const id of ['saveBtn','saveAsBtn','zipBtn','settingsBtn','mergeBtn','autoBtn','undoBtn','redoBtn'])byId(id).disabled=!loaded;
   byId('undoBtn').disabled=!state.undo.length;byId('redoBtn').disabled=!state.redo.length;
   const errors=state.issues.filter(x=>x.level==='error').length;
   const warnings=state.issues.filter(x=>x.level==='warning').length;
@@ -758,11 +745,15 @@ function renderTable(){
       pause?.kind==='区切り'?'区切り有':pause?.hasBlank?'空行有':isSep?'区切り':'共通';
     const explicitPause=Object.hasOwn(s,'pause_after_ms')&&s.pause_after_ms!=null;
     const pauseCell=`<td class="pausecell"><div class="pauseEntry"><input type="number" min="0" step="1" aria-label="行${i+1}の発話後の間（ms）" title="数値を変更すると個別指定になります。表示だけではJSONに固定されません" data-field="pause_after_ms" data-idx="${i}" value="${html(pauseMs)}"><button type="button" class="pauseReset" data-pause-reset="${i}" ${explicitPause?'':'disabled'} title="自動計算に戻す">自動へ戻す</button></div><small>${html(pauseSource)}</small></td>`;
+    const notes=Array.isArray(s.notes)?s.notes:[];
+    const noteEditor=[...notes,''].map((note,j)=>`<textarea aria-label="編集指示" data-note="${i}:${j}" rows="2" placeholder="[効果音] この発話の直後に…">${html(note)}</textarea>`).join('');
+    const rubyEditor=Array.isArray(s.koebuta_added_ruby)?s.koebuta_added_ruby.map((r,j)=>isObject(r)?
+      `<label>🔖 ${html(r.surface)}《${html(r.reading)}》 <select aria-label="追加ルビの採用" data-ruby-choice="${i}:${j}">${Object.entries({auto:'自動',kana:'仮名',surface:'元表記'}).map(([key,label])=>`<option value="${key}" ${r.selection===key?'selected':''}>${label}</option>`).join('')}</select></label>`:'').join(''):'';
     const parentRow=`<tr data-index="${i}" class="${state.selected.has(i)?'selected ':''}${isSep?'separator ':''}${level}">
       <td class="index"><input type="checkbox" data-select="${i}" ${state.selected.has(i)?'checked':''} aria-label="行${i+1}を選択"><span>${i+1}</span><input class="idInput" aria-label="発話ID" data-field="id" data-idx="${i}" value="${html(s.id||'')}"></td>
       <td><select data-field="speaker_id" data-idx="${i}" ${isSep?'disabled':''}>${!Object.hasOwn(state.doc.speakers,s.speaker_id)?`<option selected value="${html(s.speaker_id||'')}">⚠ ${html(s.speaker_id||'未設定')}</option>`:''}${selectList.replace(`value="${html(s.speaker_id)}"`,`value="${html(s.speaker_id)}" selected`)}</select></td>
       <td class="textcell"><textarea data-field="text" data-idx="${i}" rows="2" placeholder="原文">${html(s.text||'')}</textarea></td>
-      <td class="textcell">${hasParts?`<div class="ttsPartNote">全文（${s.koebuta_tts_parts.length}片に分割済み）</div>`:''}<textarea data-field="tts_text" data-idx="${i}" rows="2" ${hasParts?'readonly title="分割片を下の行で編集してください"':''} placeholder="未指定（原文を使用）">${html(s.tts_text||'')}</textarea></td>
+      <td class="textcell">${hasParts?`<div class="ttsPartNote">全文（${s.koebuta_tts_parts.length}片に分割済み）</div>`:''}<textarea data-field="tts_text" data-idx="${i}" rows="2" ${hasParts?'readonly title="分割片を下の行で編集してください"':''} placeholder="未指定（原文を使用）">${html(s.tts_text||'')}</textarea>${rubyEditor}<details ${notes.length?'open':''}><summary>編集指示${notes.length?`（${notes.length}件）`:''}</summary>${noteEditor}</details></td>
       <td><textarea data-field="acting_description" data-idx="${i}" rows="2" placeholder="未指定">${html(s.acting_description||'')}</textarea></td>
       <td class="emotion"><select data-field="emotion" data-idx="${i}">${!Object.hasOwn(EMOTIONS,s.emotion)?`<option selected value="${html(s.emotion||'')}">❓ 不明</option>`:''}${Object.entries(EMOTIONS).map(([k,v])=>`<option value="${k}" ${s.emotion===k?'selected':''}>${v[1]} ${v[0]}</option>`).join('')}</select></td>
       ${pauseCell}
@@ -1094,25 +1085,6 @@ ${r.warnings.join('\n')}
   if(!confirm(`行${indices[0]+1}〜${indices.at(-1)+1}を結合します。\n${warnings.join('\n')||'安全条件を確認しました'}\n\n実行しますか？`))return;
   clearSelection();change(next,`${indices.length}行を結合`);
 }
-function doSplit(){
-  let index,partIndex;
-  if(state.partSelected.size){
-    if(state.partSelected.size!==1)throw Error('分割するTTS片を1つ選択してください');
-    [index,partIndex]=[...state.partSelected][0].split(':').map(Number);
-  }else{
-    const arr=[...state.selected];if(arr.length!==1)throw Error('分割する発話を1件選択してください');
-    index=arr[0];partIndex=0;
-    if(Array.isArray(state.doc.segments[index].koebuta_tts_parts))throw Error('この発話はすでにTTS分割済みです。分割するTTS片のチェックを選択してください');
-  }
-  const source=ttsParts(state.doc.segments[index],state.doc)[partIndex];
-  const choice=chooseSplit(source);
-  const raw=prompt(`TTS textの分割位置（選択したTTS片の先頭からのUnicode文字数）を入力。\n空欄なら自動提案 ${choice?.at??'なし'} 文字目を使用します。`,String(choice?.at??''));
-  if(raw===null)return;
-  const offset=raw.trim()===''?null:Number(raw);if(offset!==null&&!Number.isInteger(offset))throw Error('分割位置は整数にしてください');
-  const r=splitTtsPart(state.doc,index,partIndex,offset);
-  if(!confirm(`行${index+1}のTTS textを分割します。原文・話者・演技・間は変わりません。\n${r.warnings.join('\n')}\n分割を実行しますか？`))return;
-  clearSelection();change(r.project,'TTS textを分割');
-}
 function doAuto(){
   const allIndices=[...state.selected,...[...state.partSelected].map(s=>Number(s.split(':')[0]))];
   const indices=allIndices.length?[...new Set(allIndices)].sort((a,b)=>a-b):null;
@@ -1178,6 +1150,16 @@ byId('speakerDetail').addEventListener('click',e=>{const b=e.target.closest('[da
   if(action==='remove-wav'){const next=clone(state.doc);delete next.speakers[state.speaker].reference_wav;change(next,'WAVの割当を解除');}
 });
 byId('rows').addEventListener('change',e=>{const el=e.target;
+  if(el.dataset.note||el.dataset.rubyChoice){
+    const [i,j]=(el.dataset.note||el.dataset.rubyChoice).split(':').map(Number);
+    const next=clone(state.doc),row=next.segments[i];
+    if(el.dataset.note){
+      const notes=Array.isArray(row.notes)?row.notes:[];
+      if(el.value==='')notes.splice(j,1);else notes[j]=el.value;
+      if(notes.length)row.notes=notes;else delete row.notes;
+    }else row.koebuta_added_ruby[j].selection=el.value;
+    change(next,'発話の編集指示・追加ルビを更新');return;
+  }
   if(el.dataset.field){try{commitField(Number(el.dataset.idx),el.dataset.field,el.value);}catch(error){alert(error.message);renderTable();}}
   if(el.dataset.ttsPartField){try{const [i,j]=el.dataset.ttsPartField.split(':').map(Number);commitTtsPart(i,j,el.value);}catch(error){alert(error.message);renderTable();}}
 });
@@ -1225,7 +1207,6 @@ for(const id of ['shortLimit','longLimit'])byId(id).addEventListener('change',ap
 byId('prev').addEventListener('click',()=>{state.page--;renderTable()});
 byId('next').addEventListener('click',()=>{state.page++;renderTable()});
 byId('mergeBtn').addEventListener('click',()=>{try{doMerge()}catch(e){alert('結合できません: '+e.message)}});
-byId('splitBtn').addEventListener('click',()=>{try{doSplit()}catch(e){alert('分割できません: '+e.message)}});
 byId('autoBtn').addEventListener('click',()=>{try{doAuto()}catch(e){alert('自動整形エラー: '+e.message)}});
 byId('undoBtn').addEventListener('click',undo);byId('redoBtn').addEventListener('click',redo);
 byId('issues').addEventListener('click',e=>{const el=e.target.closest('[data-jump]');if(!el||el.disabled)return;

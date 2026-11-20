@@ -94,7 +94,8 @@ def _safe_boundary(text, offset):
     return not any(match.start() < offset < match.end() for match in TAG_PATTERN.finditer(text))
 
 
-def build_plan(scenario, settings, *, base='.', voices=None, selected=None):
+def build_plan(scenario, settings, *, base='.', voices=None, selected=None, ruby_deferred=False):
+    from .ruby_bridge import check_notes
     diagnostics = []
 
     def add(level, code, field, message, sid=None, part=None):
@@ -199,6 +200,10 @@ def build_plan(scenario, settings, *, base='.', voices=None, selected=None):
             error('segment', 'オブジェクトが必要です')
             continue
         sid = row.get('id')
+        try:
+            check_notes(row)
+        except ValueError as exc:
+            error('notes', str(exc), sid)
         valid_id(sid, 'segment.id')
         if isinstance(sid, str):
             if sid in seen:
@@ -360,7 +365,11 @@ def build_plan(scenario, settings, *, base='.', voices=None, selected=None):
         apply_emotion = cfg['emotion'] and (cfg['narratorEmotion'] or person['kind'] != 'narrator')
         if not apply_emotion and row['emotion'] != 'neutral':
             add('warning', 'W_DIRECTIVE_DISABLED', 'emotion', '感情タグの反映は無効です', sid, unit['part_index'])
-        spoken_count = len(''.join(c for c in TAG_PATTERN.sub('', unit['spoken']) if not c.isspace()))
+        spoken_text = unit['spoken']
+        if ruby_deferred and '《' in spoken_text:
+            from .ruby_core import parse_aozora_ruby
+            spoken_text = parse_aozora_ruby(spoken_text, strict=False, allow_ascii_bar=True).plain_text
+        spoken_count = len(''.join(c for c in TAG_PATTERN.sub('', spoken_text) if not c.isspace()))
         if spoken_count < 20 or spoken_count > 80:
             severity = '強い警告' if spoken_count < 10 else ('短文警告' if spoken_count < 15 else '推奨範囲外の通知')
             add('warning' if spoken_count < 15 else 'info', 'W_LENGTH', 'tts_text',
