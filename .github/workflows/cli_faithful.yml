@@ -3,6 +3,8 @@ on:
   pull_request:
     paths:
       - 'cli/**'
+      - 'voice_kit/**'
+      - 'Koebuta_Scenario_Inspector_v3.html'
       - '.github/workflows/cli_faithful.yml'
   workflow_dispatch:
 jobs:
@@ -15,7 +17,8 @@ jobs:
           python-version: '3.11'
       - run: python -m unittest -v test_faithful test_irodori_generate test_cli_terminal test_ruby_bridge test_v3_scenario
         working-directory: cli
-      - run: python -m unittest -v test_inspector_p0 test_notebook_v2 test_v2_emoji test_v2_source_validation
+      - run: python -m unittest -v test_voice_kit
+        working-directory: voice_kit
       - uses: actions/setup-node@v4
         with:
           node-version: '24'

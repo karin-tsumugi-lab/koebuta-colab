@@ -179,7 +179,7 @@ def main(argv=None):
                         help='音声生成を行わず、Colab GPUでauto_selectの事前判定と要確認語リスト(ruby_review.json)のみ回収する')
     parser.add_argument('--export-compatible', type=Path, metavar='JSON',
                         help='確定した読みを旧版向けJSONへ書き出す（音声生成なし）')
-    parser.add_argument('--version', action='version', version='Koebuta CLI 2.0.0-dev (faithful-v1)')
+    parser.add_argument('--version', action='version', version='Koebuta CLI v3')
     args = parser.parse_args(argv)
     if args.export_compatible and (args.ids or args.ruby_preflight or args.new):
         parser.error('--export-compatible は作品全体の書き出し専用です')

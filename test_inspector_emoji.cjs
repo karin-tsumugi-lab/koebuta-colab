@@ -2,7 +2,7 @@
 const fs = require('node:fs');
 const vm = require('node:vm');
 const assert = require('node:assert/strict');
-const html = fs.readFileSync('Koebuta_Scenario_Inspector_v0.1.6.html', 'utf8');
+const html = fs.readFileSync('Koebuta_Scenario_Inspector_v3.html', 'utf8');
 new vm.Script(html.slice(html.indexOf('<script>') + 8, html.indexOf('</script>')));
 const catalog = JSON.parse(html.match(/const EMOTIONS = (\{[\s\S]*?\n\});/)[1]);
 assert.equal(Object.keys(catalog).length, 34);

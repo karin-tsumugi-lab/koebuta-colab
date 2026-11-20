@@ -1,132 +1,244 @@
-# Koebuta v3 CLI
+# Koebuta v3 CLI 朗読生成ガイド
 
-準備済みのシナリオJSONを Irodori-TTS で連続生成し、完成音声をローカルへ回収するCLIです。WebUIを使いません。
+作成済みのシナリオJSON（`schema_version: 1`）を Google Colab GPU 上の Irodori-TTS で連続生成し、完成音声をローカルへ回収する公式CLI（`cli/irodori_generate.py`）の案内です。
 
-> **Colabの利用規約を確認してください。** 公式CLIの利用にもColabの規約が適用されます。無料・CU残高なしの管理ランタイムには遠隔操作や外部WebUI中心の利用等の追加制限があり、CLIは制限を回避するための手段ではありません。有料でも一般の禁止事項・利用上限は残ります。認証・GPU生成の前に [Colab利用条件の注意](../docs/COLAB_USAGE.md) と公式資料を確認してください。
+> **Colabの利用規約を確認してください。**  
+> 公式CLIの利用にもColabの規約が適用されます。無料・CU残高なしの管理ランタイムには追加制限があり、CLIは制限を回避する手段ではありません。有料でも一般の禁止事項・利用上限は残ります。認証・GPU生成の前に [Colab利用条件の注意](../docs/COLAB_USAGE.md) と公式資料を確認してください。
 
-## 動作確認の範囲
-
-`irodori_generate.py` はV3の発話をシナリオの順に生成します。新規シナリオでは、長い文を発話IDで分けます。交換形式は `schema_version: 1` です。
-
-新経路はCPUの模擬推論と既存回帰試験で確認しています。2026-11-16にMuseのLinux環境で新経路の実Colab・T4生成を試し、全体4単位（27.74秒）と一片指定1単位（5.36秒）の生成・回収・機械検査・停止が成功しました。利用者の試聴でも問題なしとの報告を受領しています。長編性能や長時間セッションでのresident継続性は今回の確認範囲外です。検査結果と未確認範囲は [実装検証記録](../docs/CLI_FAITHFUL_VALIDATION.md)、確定した判断は [仕様v0.2](../docs/CLI_FAITHFUL_SPEC.md) を参照してください。
+---
 
 ## 必要なもの
 
 - WSL2 Ubuntu（確認済みは26.04）またはLinux
-- Python 3.10以上。ホスト側は標準ライブラリのみで動作します
+- Python 3.10以上（ホスト側は標準ライブラリのみで動作し、重いML計算はColab GPU側で実行されます）
 - 認証済みの Colab CLI（確認済みは0.7.5）
-- 本文付きのシナリオJSONと生成設定JSON
-- GPU生成を行う場合のGoogle Colab利用権限。モデル利用承認・認証条件はIrodori-TTSに従います
+- シナリオJSON（例：`works/my_book/scenario.json`）と生成設定JSON（例：`works/my_book/settings.json`）
+- クローンを使用する場合は、利用権限のある参照音声WAV（ない場合は [参照音声作成キット](../voice_kit/README.md) で作成できます）
 
-Windowsから起動する場合は、WindowsのPythonからでもWSL側のColab CLIを検出できます。WSL内から起動する場合は、入力パスをWSL形式で指定してください。
+Windowsから起動する場合は `python3` を `python` に読み替えてください。以下のコマンド例はすべて**リポジトリのルートフォルダー**から実行する形式で統一しています。
 
-## Colab CLIの認証と接続
+---
 
-Colab CLIのインストール方法と認証画面は、CLI本体の公式手順に従ってください。認証情報、Cookie、トークンを設定JSON、シナリオJSON、ログ、リポジトリへ書き込まないでください。
+## 1. Colab CLIの接続確認
 
-次でCLIが呼び出せることを先に確認します。
+Colab CLIのインストールと認証は、CLI本体の公式手順に従ってください。認証情報・Cookie・トークンを設定JSONやリポジトリへ書き込まないでください。
 
 ```bash
 colab --help
 colab sessions
 ```
 
-Colab CLI 0.7.5では `--version` が未対応との実機報告があります。版番号は導入に使用したパッケージ管理ツールの表示やCLIの更新通知で確認し、`--version` のusageエラーを接続・生成の失敗と混同しないでください。
+※ Colab CLI 0.7.5 では `--version` オプションが未対応のため、版番号はパッケージ管理ツールの表示等で確認してください。
 
-このプロジェクト側では、Colab CLIの認証を自動化・代行しません。新規GPU作成、原稿・参照音声のGoogle Colabへの転送、GPU利用枠の消費は、実行前に利用者が理解して承認してください。
+---
 
-## 最初の確認（GPUを使わない）
+## 2. 生成設定JSON（`settings.json`）を用意する
 
-リポジトリ直下から、まずdry-runを実行します。Colabへ接続せず、出力フォルダーも作りません。
+シナリオJSONと同じ作品フォルダー（例：`works/my_book/`）に、声の割り当てやモデル条件を指定する `works/my_book/settings.json` を作成します。参照音声WAVの相対パスは **`settings.json` があるフォルダー（`works/my_book/`）を基準** に解決されます。
 
-```bash
-python cli/irodori_generate.py --scenario cli/irodori_cli_examples/generate_scenario.json --settings cli/irodori_cli_examples/generate_settings.json --dry-run
+### パターンA：一人朗読（共通の参照WAVでクローン）
+
+`voice_kit` で `--save-to works/my_book/voices/narrator.wav --write-settings works/my_book/settings.json` を実行した場合は、以下の形式で自動作成されます。
+
+```json
+{
+  "title": "作品名",
+  "voiceMode": "clone",
+  "reading": "shared",
+  "voices": {"voice_a": "voices/narrator.wav"},
+  "baseCaption": "落ち着いた明瞭な日本語の朗読。",
+  "acting": true,
+  "emotion": true,
+  "narratorEmotion": true,
+  "ttsModel": "Aratako/Irodori-TTS-v4.1-Small",
+  "seed": 314,
+  "steps": 40,
+  "pause": 0.28
+}
 ```
 
-環境により `python` を `python3` に読み替えてください。成功時は標準出力にJSONだけが出力されます。
+### パターンB：複数人朗読（話者ごとに参照WAVを割り当て）
 
-## GPU生成
+`reading` を `"cast"` にし、`speakerVoices`（話者ID → プロファイル名）と `voices`（プロファイル名 → WAVパス）を指定します。
 
-作品の `scenario.json` と [サンプル設定](irodori_cli_examples/generate_settings.json)から作った `settings.json` を使います。クローン時は設定の `voices` に参照WAVを指定します。[設定例](../docs/AGENT_WORKFLOW.md#4-作品フォルダーと生成設定)
-
-以下は新しいT4ランタイムを作成し、準備・生成・回収・検証後に停止する例です。
-
-```bash
-python cli/irodori_generate.py --scenario scenario.json --settings settings.json --session narration-v1 --job chapter01 --out outputs/chapter01-cli --new --gpu T4 --stop-after-download
+```json
+{
+  "title": "作品名",
+  "voiceMode": "clone",
+  "reading": "cast",
+  "speakerVoices": {
+    "narrator": "narrator",
+    "aoi": "aoi"
+  },
+  "voices": {
+    "narrator": "voices/narrator.wav",
+    "aoi": "voices/aoi.wav"
+  },
+  "baseCaption": "自然で聞き取りやすい日本語の朗読。",
+  "acting": true,
+  "emotion": true,
+  "narratorEmotion": true,
+  "ttsModel": "Aratako/Irodori-TTS-v4.1-Small",
+  "seed": 314,
+  "steps": 40,
+  "pause": 0.28
+}
 ```
 
-- `--new` を付けない場合、指定名の既存セッションだけを利用します。新しいランタイムは作りません。
-- `--skip-prepare` は、同じ版のTTS環境を準備済みのセッションだけに使います。`--new` とは併用できません。
-- `--stop-after-download` は、生成・回収・音声検証・保存がすべて成功してから停止します。省略時はセッションを保持します。
-- `--no-usage` はCU照会だけを省略します。CUはアカウント全体の値であり、このジョブ単独の実消費とは表示しません。
-- `--out` は実行ごとに新しいフォルダーを指定してください。既存出力は上書きしません。
+### パターンC：参照WAVを使わず声の説明文（VoiceDesign）で生成
 
-実際に割り当てられたGPUと新規作成時の指定は別々に表示されます。GPU指定だけで実GPUが確定したとは判断しません。
+`voiceMode` を `"design"` にします。`reading: "shared"` では `baseCaption` が、`reading: "cast"` では各話者の `voice_caption` が使用されます。事前に [参照音声作成キット](../voice_kit/README.md) で気に入ったシードのWAVを1本作ってからクローン（パターンA/B）で本編を生成すると、長編でも声質を揃えやすくなります。
 
-## シナリオと設定
+### 主な設定キーと既定値
 
-入力は本文付き `schema_version: 1`、`speakers`、`segments` を持つシナリオJSONと、別の生成設定JSONです。配役整理、読み補正、感情判定、本文修復、自動分割・結合は行いません。改行を含む見出しも、一発話なら一つの生成要求のままです。80文字超や短文は通知し、勝手に補正しません。
+| キー | 既定値 | 説明 |
+|---|---|---|
+| `reading` | `"shared"` | `"shared"`（全員共通の声）または `"cast"`（話者別の声） |
+| `voiceMode` | `"design"` | `"clone"`（参照WAVを使用）または `"design"`（説明文から生成） |
+| `baseCaption` | `"自然で聞き取りやすい日本語の朗読。"` | ベースとなる声質・朗読スタイルの説明文 |
+| `acting` | `true` | 話者・発話の `acting_description`（演技指示）をCaptionへ反映する |
+| `emotion` | `true` | 発話の `emotion`（感情絵文字タグ）を反映する |
+| `narratorEmotion` | `true` | `kind: "narrator"`（地の文・語り手）にも感情タグを反映する |
+| `ttsModel` | `"Aratako/Irodori-TTS-v4.1-Small"` | 使用するTTSモデル |
+| `seed` | `314` | 乱数シード（0〜2147483647） |
+| `steps` | `40` | 生成ステップ数（`20` / `40` / `60`） |
+| `pause` | `0.28` | 発話間の基本休止秒数（0〜10秒。個別の `pause_after_ms` がない箇所に適用） |
 
-`tts_text` は作業用の読み上げ全文です。v3の作業用ルビは `｜親文字《読み》` に揃えます。CLIは作者の読みを照合し、自動指定の追加ルビは本生成時に判定します。位置指定絵文字は保持し、発話全体の感情タグと演技Captionは生成時に適用します。`source` は任意で、未提供時に作りません。提供時の順序付き部分照合は最初の不一致を警告し、許可済み改変か本文の不備かは利用者が判断します。入力ファイルは上書きしません。
+---
 
-旧シナリオの `koebuta_tts_parts` を使う場合は、2個以上の非空文字列、非空の `tts_text`、片の連結と `tts_text` の完全一致が必要です。結合文字・絵文字の途中の切断は拒否します。各片へ親の話者・感情・演技・声・生成条件を継承し、片の間に休止を追加しません。HTMLの `koebuta_settings` と話者の `reference_wav` は自動採用しません。別設定JSONと必要な `--voice` を使ってください。
+## 3. `--dry-run` で事前検査する（GPU不使用）
 
-区切り（`segment_type: "separator"`）は読み上げません。`text` と `speaker_id` は省略でき、指定する話者は登録済みである必要があります。`emotion` は区切りも `neutral` を指定してください。
-
-設定には `title`、`voiceMode`、`reading`、`baseCaption`、`seed`、`steps`、`pause`、`ttsModel`、`acting`、`emotion`、`narratorEmotion`、`textOptions`、`speakerVoices`、`voices` を使えます。未知のキーは拒否します。参照WAVの相対パスは設定JSONのあるフォルダーから解決し、選択範囲で必要な参照音声だけを検査・転送します。
-
-**移行時の変更：** 未指定の `acting`・`emotion`・`narratorEmotion` はすべて `true` です。明示した `false` は尊重し、演出を抑制する場合に警告します。既存設定を使う場合は値を確認してください。自動空行休止（`textOptions.blankMode: group/count`）、記号からの区切り生成（`symbolSeparators: true`）、追加の読み変換（`readingMode: selective/all`）は拒否します。必要な休止・読みをシナリオへ明示してください。
-
-### 休止
-
-`pause_after_ms` は0〜10000の整数です。発話の指定値（0を含む）を優先し、未指定なら直後の区切りに明示された値の最大値、それもなければ発話間だけ共通 `pause`（秒、既定0.28、0〜10）を使います。休止を合算しません。冒頭・末尾に共通値を足さず、明示された端の休止は保持します。生の改行や `blank_lines_after` から休止を推定しません。
-
-### 対象を指定した再生成
-
-同じシナリオへ `--ids t0001,t0003` のように指定します。旧データのTTS片は `--ids a,b#2` の形式でも指定できます。親IDはその全片、`親ID#番号` は1始まりの明示片を指定します。入力順で生成し、重複は一度だけ、存在しないID・区切りID・空指定は生成前に拒否します。下位CLIの旧 `--regenerate` と混用しません。
+Colabに接続する前に、必ずローカルで `--dry-run` を実行して構文・話者・参照WAVの存在・解決後の読みを確認します。`--dry-run` 時は `--session` / `--job` / `--out` を省略できます。
 
 ```bash
-python cli/irodori_generate.py --scenario scenario.json --settings settings.json --session narration-v1 --job retry01 --out outputs/retry01 --ids t0001,t0003 --dry-run
+python3 cli/irodori_generate.py \
+  --scenario works/my_book/scenario.json \
+  --settings works/my_book/settings.json \
+  --dry-run
 ```
 
-dry-runを確認後、実行時には `--dry-run` を外します。毎回新しいジョブIDと出力先を使います。結果は選択範囲のWAVです。既存全編への自動差し替えや候補採用は行いません。飛ばした発話の長さ・休止を補間せず、選択した左側単位の休止を使います。親の全片が揃った場合だけ親発話WAVを追加し、一片だけを親全体の完成扱いにしません。
+- 成功すると標準出力に生成計画のJSONが出力されます。
+- 原文にある作者ルビや、手動確定（`selection: "kana"` / `"surface"`）の追加ルビは解決済みの形で `requests` に表示されます。
+- 自動判定待ち（`selection: "auto"`）の追加ルビがある場合は、`ruby_pending` に候補一覧が表示されます。
 
-未確認の感情・演技設定を自動で品質承認するものではありません。無人生成の入口では、渡されたシナリオをそのまま対象にするため内部的に未確認許可を明示します。実行前に、人がシナリオの話者、読み、感情、演技、参照音声の権利を確認してください。
+---
 
-## 成果物の回収と確認
+## 4. ルビの解決規則と事前判定（`--ruby-preflight`）
 
-成功時に `AUDIO_READY` と完成WAVのパスが出ます。`--out` 内には少なくとも次を残します。
+### v3におけるルビの扱い
+
+Koebuta v3のシナリオ（作者ルビや `koebuta_added_ruby` を含む発話）では、ルビの由来に応じて次のとおり解決されます。
+
+1. **原文にある作者ルビ（および `tts_text` に青空文庫形式で補記された必須ルビ）**:  
+   `--ruby-mode` の指定にかかわらず、**常に指定された読みへ展開**されます。
+2. **追加ルビ（`koebuta_added_ruby`）の手動確定分**:  
+   `selection: "kana"` は常に仮名へ展開され、`selection: "surface"` は常に元表記（漢字等）のまま維持されます。スコア判定で覆ることはありません。
+3. **追加ルビ（`koebuta_added_ruby`）の自動判定分（`selection: "auto"`）**:  
+   発話に `selection: "auto"` が含まれる場合、既定で **`--ruby-mode auto_select`** が選ばれ、Colab GPU上のテキストエンコーダ特徴量の類似度スコア（`cos_cond`）と閾値（複数トークン語 `0.8327`、1トークン語 `0.65`）によって機械判定されます（`cos_cond <= 閾値` の候補を仮名へ展開、それ以外は元表記を維持）。  
+   ※ スコア判定は特徴量の類似度に基づく機械的な選択であり、同音異義語や文脈上の誤読をすべて自動判別するものではありません。固有名詞・当て字・確実に読ませたい語は、エディタまたはJSON上で手動確定（`"kana"` または `"surface"`）してください。
+
+### ルビ関連オプション
+
+| オプション | 既定値 | 説明 |
+|---|---|---|
+| `--ruby-mode` | 自動（`auto`候補があれば `auto_select`、なければ `none`） | v3シナリオでは `auto_select` 時に `selection: "auto"` のスコア判定を有効にします（`none` 指定時は `auto` 候補を元表記のまま維持します）。※ `original`（インラインルビの親文字維持）および `partial_kana`（インラインルビの全展開）は、`koebuta_added_ruby` を持たない旧形式テキスト向けのモードです |
+| `--ruby-threshold` | `0.8327` | `auto_select` 時の複数トークン語閾値（`cos_cond <= threshold` で仮名化） |
+| `--ruby-single-threshold` | `0.65` | `auto_select` 時の1トークン語閾値 |
+| `--ruby-device` | `auto` | `auto`（`auto_select` はColab GPU、他はローカル）/ `remote` / `local` |
+| `--ruby-preflight` | `False` | 音声生成を行わず、Colab GPUでスコア判定と仮名化対象リスト（`ruby_review.json`）のみ回収 |
+
+### 事前判定（Preflight）→ 確認 → 本生成の流れ（任意）
+
+本生成の前に、`selection: "auto"` の候補のうちどれが仮名化判定になるかを確認・調整したい場合は、`--ruby-preflight` を使います。
+
+1. **事前判定のみ実行（ランタイムは保持）**
+   ```bash
+   python3 cli/irodori_generate.py \
+     --scenario works/my_book/scenario.json \
+     --settings works/my_book/settings.json \
+     --session work-sess --job pre01 --out works/my_book/preflight \
+     --ruby-preflight --new --gpu T4
+   ```
+   `works/my_book/preflight/ruby_review.json` の `flagged_items` に、仮名化（`kana`）となった語が前後文脈付きで出力されます。必要に応じて `scenario.json` の `selection` を `"kana"` / `"surface"`（または `tts_text`）で調整します。
+
+2. **同じランタイムを再利用して本生成（`--skip-prepare`）**
+   ```bash
+   python3 cli/irodori_generate.py \
+     --scenario works/my_book/scenario.json \
+     --settings works/my_book/settings.json \
+     --session work-sess --job run01 --out works/my_book/run01 \
+     --skip-prepare --stop-after-download
+   ```
+
+---
+
+## 5. 本生成（GPUで音声生成・回収・停止）
+
+新規T4ランタイムを作成し、準備・音声生成・回収・検証後に自動停止する標準コマンドです。
+
+```bash
+python3 cli/irodori_generate.py \
+  --scenario works/my_book/scenario.json \
+  --settings works/my_book/settings.json \
+  --session work-sess \
+  --job run01 \
+  --out works/my_book/run01 \
+  --new --gpu T4 \
+  --stop-after-download
+```
+
+- `--out` には**実行ごとに新しいフォルダー**を指定してください（既存の出力先は上書き保護のため拒否されます）。
+- `--new` を付けない場合は、指定名の既存セッションを利用します。
+- `--skip-prepare` は同じ版のTTS環境を準備済みのセッションを再利用するときだけ指定します（`--new` とは併用不可）。
+- `--stop-after-download` を付けると、生成・回収・音声検証がすべて成功した後にランタイムを自動停止します。続けて別ジョブを走らせる場合は外してください。
+
+---
+
+## 6. 発話単位の再生成（`--ids`）
+
+試聴して一部の発話だけ読みや演技を直したい場合は、元の `scenario.json` を修正したうえで `--ids` に発話ID（カンマ区切り）を指定し、新しい `--job` と `--out` へ部分生成します。
+
+```bash
+# まず dry-run で選択対象を確認
+python3 cli/irodori_generate.py \
+  --scenario works/my_book/scenario.json \
+  --settings works/my_book/settings.json \
+  --ids t0010,t0020 --dry-run
+
+# 選択した発話だけをGPU生成
+python3 cli/irodori_generate.py \
+  --scenario works/my_book/scenario.json \
+  --settings works/my_book/settings.json \
+  --session work-sess --job retry01 --out works/my_book/retry01 \
+  --ids t0010,t0020 --new --gpu T4 --stop-after-download
+```
+
+※ 部分生成の `result.wav` は選択した発話のみを結合した音声です。全編の完成音声への自動差し替えは行わないため、個別WAV（`segments.zip`）を使って編集ソフト等で差し替えるか、修正が固まってから全編を通しで生成してください。
+
+---
+
+## 7. 出力ファイルと確認項目
+
+生成が成功すると標準出力の末尾に `AUDIO_READY <result.wavのパス>` が表示され、`--out` フォルダーに以下が保存されます。
 
 | ファイル | 内容 |
 | --- | --- |
-| `result.wav` | 入力順に結合した全体／選択範囲の音声 |
-| `segments.zip` | 生成単位のWAVと、旧データで全片が揃った親発話WAV。大文字と小文字が違うIDも別名で展開できるようにします |
-| `generated_project.json` | 元シナリオ・設定と実行契約を含む回収記録（シナリオ単体ではない） |
-| `pipeline.json` | 完了状態、検証結果、保存先、停止結果 |
-| `plan.json` | 生成要求・親ID／片番号・範囲・実効設定・診断 |
-| `telemetry.json` | CU照会、GPU詳細、経過時間。取得不可も記録 |
-| `events.jsonl` / `*.log` | 進捗と工程ログ |
+| `result.wav` | 対象範囲を入力順に結合した完成朗読音声 |
+| `segments.zip` | 発話IDを先頭に持つ個別WAV（`audio/t0010_...wav` 等）のアーカイブ |
+| `generated_project.json` | 実行時のシナリオ・設定・ルビ判定結果を含む回収記録 |
+| `pipeline.json` | 完了状態（`status: "complete"`）、WAV検証結果、セッション停止結果（`session_stopped`） |
+| `plan.json` | 合成要求・実効設定・診断一覧 |
+| `telemetry.json` | アカウント全体のCU残量照会・実効GPU・経過時間 |
+| `events.jsonl` / `*.log` | 進行イベントと各工程のログ |
 
-終了コード0は、生成・回収・機械検証・保存の成功を示します。音質や演技品質の合格ではありません。必ず完成WAVと発話別WAVを試聴し、誤読、話者、声の一貫性、感情、つなぎ目、音量、雑音を確認してください。
+終了コード `0` は機械検証（WAVのSHA256・フレーム数一致）の成功を示します。必ず `result.wav` を試聴し、読み・イントネーション・感情・間を確認してください。
 
-モデル等の固定revisionは、`pipeline.json` の `recovered` が示す回収先の `job/job.json` にある `provenance.model_revision`、`codec_revision`、`watermark_model_revision`、`tokenizer_revisions` へ記録されます。`telemetry.json` はCU・GPU・時間の記録で、モデルrevisionの保存先ではありません。試験報告ではこの回収記録から転記してください。
+---
 
-## トラブル時
+## 8. トラブル時の対処
 
-- **接続が切れた／Ctrl+Cを押した**: 遠隔生成が続いている可能性があります。同じ生成をすぐ再送せず、`pipeline.json`、実行受付情報、`recovery_command.json` を確認してください。Ctrl+Cの終了コード130はローカル監視の中断であり、遠隔停止を保証しません。
-- **Colab CLIのtimeout**: 確認したCLIでは `colab exec --timeout` が処理を厳密に停止しない観測があります。タイムアウトだけを失敗判定にせず、受付記録と遠隔状態を照合してください。
-- **失敗したが成果物がある**: 出力フォルダーとセッションは保持されます。入口が表示・保存した回収コマンドを使い、再生成せずに回収を試みてください。回収だけで `result.wav` の書き出しを自動再開するわけではありません。
-- **停止だけ失敗した**: 回収済みの完成音声は有効な場合があります。`pipeline.json` の `session_stopped` と `shutdown_error`、さらにColabの状態を確認してください。
-- **既存セッションの再利用に失敗した**: 実機で初期接続エラーを観測しています。自動再試行しません。ログと回収案内を確認し、状態照合後に判断してください。
+- **接続が切れた／Ctrl+Cで中断した**: ローカル監視が止まってもColab側で生成が続いている場合があります。すぐに同じ生成を再送せず、`pipeline.json` と `recovery_command.json` を確認してください。`recovery_command.json` が生成されていれば、表示された回収コマンドで再生成せずに成果物を回収できます。
+- **ランタイム停止だけ失敗した（`SESSION_STOP_FAILED`）**: 音声の回収自体は完了しています。`colab sessions` で稼働状況を確認し、不要なら `colab stop -s <セッション名>` で手動停止してください。
+- **旧版互換JSONの書き出し**: 確定済みの読みを `tts_text` へ展開し `koebuta_added_ruby` を除去した旧版互換JSONを書き出す場合は、`python3 cli/irodori_generate.py --scenario works/my_book/scenario.json --settings works/my_book/settings.json --export-compatible works/my_book/legacy_scenario.json` を使用します。
 
-参照音声、原稿、認証情報を添えて障害報告を公開しないでください。
-
-## 詳細資料
-
-配布ZIPに同梱された [v1.0.1の詳細仕様・出力・終了コード](DISTRIBUTED_README.md) と [AIエージェント用手順](AGENTS.md)、[トラブル対策](TROUBLESHOOTING.md) を参照してください。旧 `python -m irodori_cli` の分析・自動分割・キャッシュ経路は維持しています。新入口との挙動の違いに注意してください。
-
-`DISTRIBUTED_*` と第三者表示は元配布物の記録も兼ねています。第三者表示にある旧名Yomibuta・α版や調査用fixtureへの言及は配布当時の記述で、fixture本体はこの構成に含みません。現在の操作手順はこのREADMEを参照してください。
-
-### v3のシナリオ項目
-
-v3のルビは青空文庫形式に揃え、生成単位は発話です。遠隔自動判定を使う場合も `--dry-run` には作者指定と手動確定の読みが反映されます。未判定の候補は `ruby_pending` で確認できます。発話の `notes` は自由記述の編集指示です。追加ルビと個別WAVの命名は [v3詳細仕様](../docs/V3_SCENARIO_SPEC.md) を参照してください。旧版へ確定済みの読みを渡すには、通常の `--scenario` と `--settings` に `--export-compatible legacy.json` を指定します。
+さらに詳しいトラブル対策は [TROUBLESHOOTING.md](TROUBLESHOOTING.md) を参照してください。

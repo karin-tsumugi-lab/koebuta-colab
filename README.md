@@ -1,33 +1,135 @@
 # Koebuta v3
 
-原稿をシナリオに整え、Irodori-TTSで朗読を作ります。**原稿 → シナリオJSON → HTMLで確認 → CLIで検査・生成 → WAVを試聴**の順に進めます。
+Koebutaは、原稿を話者・読み・感情・演技指示付きのシナリオJSONに整理し、Irodori-TTSで朗読音声を生成するためのツール群です。
 
-## 1. AIでシナリオを作る
+制作の本線は次の4ステップです。
 
-チャット型AIに、[V3シナリオ作成プロンプト](docs/V3_SCENARIO_PROMPT.md)、[話者・感情などのJSON仕様](notebook/01_SPEC_SHEET.md)、朗読したい原稿を渡します。AIが確認した朗読範囲・声・演出の方針に答え、できたJSONを `scenario.json` として保存します。任せられる判断は「おまかせ」と伝えられます。
+1. **AIで原稿をシナリオJSONにする**（`works/my_book/scenario.json`）
+2. **HTMLエディタで内容を確認・調整する**
+3. **CLIで朗読音声を検査・生成する**（`works/my_book/settings.json` → `result.wav`）
+4. **試聴して保存・必要なら部分再生成する**
 
-AIエージェントに生成まで任せる場合は、[AIエージェント向け制作手順](docs/AGENT_WORKFLOW.md)の依頼欄を使ってください。
+> **AIエージェントへ制作をまとめて委託する場合**  
+> [AIエージェント向け制作手順](docs/AGENT_WORKFLOW.md) の依頼欄を埋め、原稿と一緒にエージェント（Claude Code / Codex 等）へ渡してください。声の試作からシナリオ作成、CLIでの音声生成・回収までを一貫して案内しています。
 
-## 2. HTMLでシナリオを確認する
+---
 
-[Scenario Inspector](Koebuta_Scenario_Inspector_v0.1.6.html)を手元のブラウザーで開き、`scenario.json` を読み込みます。話者、原文と読み上げ文、感情・演技、発話の区切りを確認し、編集したらJSONを保存します。🔖は追加ルビです。効果音素材を入れる位置などの作業指示は発話の `notes` に記録できます。[エディタの使い方](docs/EDITOR_GUIDE.md)
+## 用意するもの
 
-## 3. CLIで検査し、朗読を生成する
+- 読ませたい原稿
+- ChatGPTやGeminiなど、ファイルや長文を扱えるチャット型AI（またはAIエージェント）
+- Google Colabを利用できるGoogleアカウントとGPU利用枠（ホスト側は標準Python 3.10以上と認証済みColab CLI）
 
-1. `scenario.json` と同じフォルダーに、[生成設定サンプル](cli/irodori_cli_examples/generate_settings.json)を `settings.json` としてコピーします。サンプルは声の説明から一人分の声を作る設定です。クローンを使う場合は参照WAVを保存し、CLI用設定の `voices` に指定します。[参照WAVの設定例](docs/AGENT_WORKFLOW.md#4-作品フォルダーと生成設定)
-2. リポジトリ直下で、下のコマンドを実行します。発話ID、読み上げ文、話者、診断を確かめます。追加ルビの自動候補は `ruby_pending` に表示され、本生成時に判定されます。
-3. 内容を確認したら、[CLIのGPU生成手順](cli/README.md#gpu生成)へ進みます。Colabの接続準備と本生成のコマンドはCLI案内にあります。
+Colabを利用する場合は、原稿や参照音声をアップロードし、GPU利用枠を消費します。開始前に [Colabの利用条件](docs/COLAB_USAGE.md)、[ライセンス](LICENSE)、[第三者の権利表示](THIRD_PARTY_NOTICES.md) を確認してください。
 
-```bash
-python cli/irodori_generate.py --scenario scenario.json --settings settings.json --dry-run
-```
+---
 
-環境により `python` を `python3` に読み替えてください。構造や読みだけ試す場合は、同梱の [サンプルシナリオ](cli/irodori_cli_examples/generate_scenario.json)も使えます。
+## 事前分岐：声の用意（3つの方法から選ぶ）
 
-## 4. WAVを試聴する
+朗読に使う声は、次の3通りのいずれかで用意します。ここでは作品フォルダーを `works/my_book/` とする例で統一します。
 
-出力先の `result.wav` は結合音声、`segments.zip` は発話IDで照合できる個別WAVです。誤読や演技を直した発話は、CLIの `--ids` で指定して再生成できます。
+- **方法A：手持ちの参照音声WAVを使う**  
+  利用権限のあるWAVファイルを `works/my_book/voices/narrator.wav`（複数人朗読なら話者ごと）に配置し、**「1. 原稿をシナリオJSONにする」** へ進みます。
+- **方法B：参照音声作成キット（`voice_kit/`）で新しく声を作る**  
+  参照音声がない場合や登場人物に合う声を作りたい場合は、**[参照音声作成キット](voice_kit/README.md)** を使います。
+  1. [声づくり対話プロンプト](voice_kit/VOICE_PROMPT.md) でAIと対話して声の説明文と試聴セリフを決めます（または12種の定番プリセットから選びます）。
+  2. `voice_kit/irodori_voice_kit.py` でシード違いのサンプル音声を生成して聴き比べます。
+  3. 気に入ったシードを `--adopt` で選び、`--save-to` と `--write-settings` で参照WAVと本番設定の保存先を指定します。
+- **方法C：参照音声WAVを使わず、声の説明文（VoiceDesign）で直接生成する**  
+  [VoiceDesign用の設定例](cli/irodori_cli_examples/generate_settings.json)を `works/my_book/settings.json` にコピーし、`baseCaption` に声の説明を記入します。
 
-[v3シナリオ詳細仕様](docs/V3_SCENARIO_SPEC.md) · [ライセンス](LICENSE) · [第三者の権利表示](THIRD_PARTY_NOTICES.md)
+---
 
-Notebook版と [V3試作ガイド](V3_PROTOTYPE_GUIDE.md)は過去の資料です。
+## 1. AIで原稿をシナリオJSONにする
+
+チャット型AIに、次の2点を渡してください（依頼プロンプト単体で必要なJSON構造・感情ID・ルビ規則をすべて含んでいます）。
+
+1. [シナリオ化の依頼プロンプト](prompts/02_CHAT_PROMPT.md)
+2. 読ませたい原稿
+
+（詳細なデータ仕様リファレンスは [シナリオJSON仕様書](prompts/01_SPEC_SHEET.md) を参照してください）
+
+依頼時に **一人朗読／複数人朗読** を指定してください（その他の項目は「おまかせ」でも進められます）。  
+AIが出力したJSONを **`works/my_book/scenario.json`** として保存します（JSONのフォーマット識別子は `"schema_version": 1` です）。
+
+- 長い作品や難読語が多い作品には、追加指示も併用できます：
+  - [03A 長編シナリオ化追加指示](prompts/03A_LONG_FORM_ADDON.md)
+  - [03B エージェント向け追加指示](prompts/03B_AGENT_ADDON.md)
+  - [03C 読み上げ文・追加ルビの追加調整](prompts/03C_READING_ADDON.md)
+
+---
+
+## 2. HTMLエディタで内容を確認・調整する
+
+[Scenario Inspector v3](Koebuta_Scenario_Inspector_v3.html) を手元のブラウザー（Chrome / Edge推奨）で開き、`works/my_book/scenario.json` を読み込みます。画面でできる操作とJSON側で修正する項目の詳細は [エディタ利用案内](docs/EDITOR_GUIDE.md) を参照してください。
+
+主に次の点を確認・修正します。
+
+- **話者の割り当て**（誰の台詞・地の文か）
+- **本文と読み上げ文**（作者ルビの保持、AIが補った追加ルビ `🔖` の採用状態 `自動 / 仮名 / 元表記` の切り替え）
+- **感情・演技指示・間**（絵文字タグや `pause_after_ms`）
+- **編集指示メモ（`notes`）**（生成後に効果音を重ねる位置などの自由記述メモ。TTS生成には影響しません）
+- **発話の長さ**（**20〜80文字程度**が推奨目安です。15文字未満の短文や80文字超の長文は、意味や演出の切れ目で調整を検討してください）
+
+確認が済んだら、`works/my_book/scenario.json` を上書き保存します。
+
+---
+
+## 3. CLIで朗読音声を検査・生成する
+
+音声生成には **`cli/irodori_generate.py`** を使用します。詳しいオプションは **[CLI朗読生成ガイド](cli/README.md)** を参照してください。
+
+1. **生成設定 `works/my_book/settings.json` を用意する**。方法Aの共通参照WAVには下の例を使います。方法B・Cで用意した設定はそのまま使い、手順2へ進みます。
+   （`voice_kit` の `--adopt ... --write-settings works/my_book/settings.json` で作成済みの場合はそのまま使えます。`voices` の相対パスは `settings.json` のある `works/my_book/` を基準に解決されます）
+   ```json
+   {
+     "title": "作品名",
+     "voiceMode": "clone",
+     "reading": "shared",
+     "voices": {"voice_a": "voices/narrator.wav"},
+     "baseCaption": "落ち着いた明瞭な日本語の朗読。",
+     "acting": true,
+     "emotion": true,
+     "narratorEmotion": true,
+     "ttsModel": "Aratako/Irodori-TTS-v4.1-Small",
+     "seed": 314,
+     "steps": 40,
+     "pause": 0.28
+   }
+   ```
+
+2. **`--dry-run` で生成計画と読みを確認する（GPU不使用）**
+   ```bash
+   python3 cli/irodori_generate.py \
+     --scenario works/my_book/scenario.json \
+     --settings works/my_book/settings.json \
+     --dry-run
+   ```
+
+3. **Colab GPUで音声を生成・回収する**
+   ```bash
+   python3 cli/irodori_generate.py \
+     --scenario works/my_book/scenario.json \
+     --settings works/my_book/settings.json \
+     --session work-sess --job run01 --out works/my_book/run01 \
+     --new --gpu T4 --stop-after-download
+   ```
+
+---
+
+## 4. 試聴して保存・必要なら部分再生成する
+
+生成が完了すると、`works/my_book/run01/` に結合済みの完成音声 **`result.wav`** と、発話IDごとの個別WAVを収めた **`segments.zip`** が保存されます。
+
+完成音声を試聴し、読みやイントネーションを直したい発話があれば、`scenario.json` を修正したうえで `--ids t0010,t0020` のように発話IDを指定し、新しい `--job` と `--out`（例：`--job retry01 --out works/my_book/retry01`）へ部分再生成できます。
+
+---
+
+## 関連資料
+
+- [参照音声作成キット（声づくりガイド）](voice_kit/README.md)
+- [CLI朗読生成ガイド](cli/README.md)
+- [エディタ（Scenario Inspector v3）利用案内](docs/EDITOR_GUIDE.md)
+- [AIエージェント向け制作手順](docs/AGENT_WORKFLOW.md)
+- [シナリオJSON仕様書](prompts/01_SPEC_SHEET.md) / [v3シナリオ詳細仕様](docs/V3_SCENARIO_SPEC.md)
+- [Colabの利用条件](docs/COLAB_USAGE.md) / [ライセンス](LICENSE) / [第三者の権利表示](THIRD_PARTY_NOTICES.md) / [収録元と検証範囲](docs/PROVENANCE.md)
