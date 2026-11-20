@@ -21,7 +21,7 @@ Windowsから起動する場合は `python3` を `python` に読み替えてく�
 
 ## 1. Colab CLIの接続確認
 
-Colab CLIのインストールと認証は、CLI本体の公式手順に従ってください。認証情報・Cookie・トークンを設定JSONやリポジトリへ書き込まないでください。
+Colab CLIのインストールと認証は、[Google Colab CLIの公式手順](https://github.com/googlecolab/google-colab-cli#installation)を参照してください。認証情報・Cookie・トークンを設定JSONやリポジトリへ書き込まないでください。
 
 ```bash
 colab --help
