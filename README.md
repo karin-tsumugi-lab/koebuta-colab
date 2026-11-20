@@ -22,6 +22,8 @@ Koebutaは、原稿を話者・読み・感情・演技指示付きのシナリ�
 
 Colabを利用する場合は、原稿や参照音声をアップロードし、GPU利用枠を消費します。開始前に [Colabの利用条件](docs/COLAB_USAGE.md)、[ライセンス](LICENSE)、[第三者の権利表示](THIRD_PARTY_NOTICES.md) を確認してください。
 
+**手元のGPUで生成したい場合**は、Irodori-TTSで短い一文を試す手順と、Koebutaのシナリオから連続生成するために必要な変更をまとめた [ローカルGPUへの移植案内](docs/LOCAL_GPU_PORTING.md) をご覧ください。
+
 ---
 
 ## 事前分岐：声の用意（3つの方法から選ぶ）
