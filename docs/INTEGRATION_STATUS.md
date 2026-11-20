@@ -1,6 +1,13 @@
 # 統合状況
 
-## 現在のmain（2026-11-16）
+## 現在のmain（2026-11-20）
+
+- [PR #9](https://github.com/karin-tsumugi-lab/koebuta-colab/pull/9) を `aed3c0b` でマージ。マージ直後の `main` と検証済みのPR先頭 `bcce229` にファイル差分がないことをGitHubの比較で確認。
+- 公開READMEの見出しは「Koebuta v3」。シナリオ制作プロンプトは `prompts/` にあり、任意のHTML Inspector確認を経てCLIで検査・生成する。参照音声作成キットを追加し、旧Notebook本体・専用テスト・ツール・CIは廃止した。
+- 検証結果は [PRのCPU CI](https://github.com/karin-tsumugi-lab/koebuta-colab/actions/runs/44746212419) 成功。旧Notebook削除後のローカル検証はCLI 73件、voice_kit 7件、Inspectorの絵文字挿入テストが成功し、CLI配布マニフェストのSHA-256が62件一致した。
+- `d3be8df` の実生成で参照音声候補2件と、採用WAVを使ったCLIの個別・結合WAVの生成と回収を確認。マージ後のGPU再試験は未実施。V2の『山月記』の手元のシナリオは、外字注記直後のルビでV3の `--dry-run` が構文エラーになる。旧作の移行可否は作品ごとに検査する。
+
+## 2026-11-16のmain（履歴）
 
 - [PR #7](https://github.com/karin-tsumugi-lab/koebuta-colab/pull/7) を bbb253e6、続いて [PR #8](https://github.com/karin-tsumugi-lab/koebuta-colab/pull/8) を d761dc9c でmainへマージ済み。履歴を保持し、強制的な置き換えは行っていない。
 - シナリオ化プロンプトv0.3、Notebook v2の原文照合警告化、CLI 2.0.0-devの忠実生成・親／片の対象指定を反映。CLI配布版1.0.1の記録とJSON交換形式v1は区別する。
