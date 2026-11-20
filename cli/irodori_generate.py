@@ -21,13 +21,56 @@ ROOT = Path(__file__).resolve().parent
 
 
 
-def load_inputs(scenario_path, settings_path, voice_items=(), selected=None):
+def load_inputs(
+    scenario_path,
+    settings_path,
+    voice_items=(),
+    selected=None,
+    *,
+    ruby_mode='none',
+    ruby_threshold=0.8327,
+    ruby_single_threshold=0.65,
+    ruby_device='auto',
+    ruby_preflight=False,
+    ruby_scorer=None,
+):
     from irodori_cli.faithful import build_plan, load_json, plan_signature, CONTRACT, PlanError
+    from irodori_cli.ruby_bridge import apply_ruby_to_scenario, prepare_remote_ruby_scenario
     try:
         scenario, settings = load_json(scenario_path), load_json(settings_path)
     except (ValueError, OSError) as exc:
         raise PlanError([dict(level='error', code='E_STRUCTURE', segment_id=None,
                               field='input', message=str(exc))]) from exc
+    ruby_report = []
+    ruby_filter = None
+    if ruby_preflight and ruby_device == 'local':
+        raise ValueError('--ruby-preflight は遠隔判定モードです。--ruby-device local とは併用できません')
+    if ruby_preflight and ruby_mode == 'none':
+        ruby_mode = 'auto_select'
+    if ruby_mode != 'none':
+        resolved_device = 'remote' if ruby_preflight else (
+            ('remote' if ruby_mode == 'auto_select' else 'local') if ruby_device == 'auto' else ruby_device
+        )
+        try:
+            if resolved_device == 'remote':
+                scenario = prepare_remote_ruby_scenario(scenario, strict=True)
+                ruby_filter = {
+                    'mode': ruby_mode,
+                    'threshold': float(ruby_threshold),
+                    'single_token_threshold': ruby_single_threshold,
+                }
+            else:
+                scenario, ruby_report = apply_ruby_to_scenario(
+                    scenario,
+                    mode=ruby_mode,
+                    threshold=ruby_threshold,
+                    single_token_threshold=ruby_single_threshold,
+                    strict=True,
+                    scorer=ruby_scorer,
+                )
+        except ValueError as exc:
+            raise PlanError([dict(level='error', code='E_RUBY_SYNTAX', segment_id=None,
+                                  field='tts_text', message=str(exc))]) from exc
     overrides = {}
     for item in voice_items:
         key, separator, value = item.partition('=')
@@ -36,12 +79,18 @@ def load_inputs(scenario_path, settings_path, voice_items=(), selected=None):
             raise ValueError('--voiceは重複のないprofile=ファイル形式です')
         overrides[key] = str(Path(value).expanduser().resolve())
     plan = build_plan(scenario, settings, base=Path(settings_path).resolve().parent,
-                      voices=overrides, selected=selected)
+                      voices=overrides, selected=selected, ruby_deferred=bool(ruby_filter))
     if set(overrides) - set(plan['voices']):
         raise ValueError('--voiceに選択範囲で使用しない参照音声があります')
     document = dict(contract=CONTRACT, scenario=scenario, settings=settings, selection=selected,
                     expected_plan=plan_signature(plan), execution=plan['execution'],
                     diagnostics=plan['diagnostics'], effective_settings=plan['settings'])
+    if ruby_report:
+        document['ruby_decisions'] = ruby_report
+    if ruby_filter:
+        document['ruby_filter'] = ruby_filter
+    if ruby_preflight:
+        document['ruby_preflight'] = True
     # The existing transport reads a 2MiB project, including its execution envelope.
     # Check the actual serialized size before allocating a remote runtime.
     serialized = json.dumps(document, ensure_ascii=False, indent=2, allow_nan=False) + '\n'
@@ -83,9 +132,9 @@ def main(argv=None):
     parser.add_argument('--settings', required=True, type=Path, help='独立した生成設定JSON')
     parser.add_argument('--ids', help='対象発話IDまたは明示片（例 t001,t003#2）。新しい出力先へ選択生成')
     parser.add_argument('--voice', action='append', default=[], help='profile=WAV。設定内の同名プロファイルを上書き')
-    parser.add_argument('--session', required=True, help='Colabセッション名。新規作成は--newを指定')
-    parser.add_argument('--job', required=True, help='遠隔ジョブの識別名（英数字・_・-、60文字以内）')
-    parser.add_argument('--out', required=True, type=Path, help='新しい出力フォルダー')
+    parser.add_argument('--session', help='Colabセッション名。新規作成は--newを指定（--dry-run時は省略可）')
+    parser.add_argument('--job', help='遠隔ジョブの識別名（英数字・_・-、60文字以内。--dry-run時は省略可）')
+    parser.add_argument('--out', type=Path, help='新しい出力フォルダー（--dry-run時は省略可）')
     parser.add_argument('--new', action='store_true', help='新しいGPUランタイムを作成')
     parser.add_argument('--gpu', default='T4', choices=['T4', 'L4', 'G4', 'A100', 'H100'])
     parser.add_argument('--skip-prepare', action='store_true', help='同じ版のTTS準備済みランタイムを使用')
@@ -93,23 +142,55 @@ def main(argv=None):
     parser.add_argument('--timeout', type=int, default=7200, help='工程ごとの待機上限秒（既定7200）。切断時は遠隔状態を確認')
     parser.add_argument('--dry-run', action='store_true', help='ローカル検査と生成計画のみ。Colabに接続しない')
     parser.add_argument('--no-usage', action='store_true', help='CU残量の照会を省略する')
+    parser.add_argument('--ruby-mode', default='none',
+                        choices=['none', 'original', 'partial_kana', 'auto_select'],
+                        help='tts_text（未指定時はtext）の青空文庫ルビ変換モード（既定: none）')
+    parser.add_argument('--ruby-threshold', type=float, default=0.8327,
+                        help='auto_select時の複数トークン語閾値（既定: 0.8327）')
+    parser.add_argument('--ruby-single-threshold', type=float, default=0.65,
+                        help='auto_select時の1トークン語閾値（既定: 0.65）')
+    parser.add_argument('--ruby-device', default='auto',
+                        choices=['auto', 'remote', 'local'],
+                        help='ルビ選択の実行先（既定: auto = auto_selectはColab GPU、他はローカル）')
+    parser.add_argument('--ruby-preflight', action='store_true',
+                        help='音声生成を行わず、Colab GPUでauto_selectの事前判定と要確認語リスト(ruby_review.json)のみ回収する')
     parser.add_argument('--version', action='version', version='Koebuta CLI 2.0.0-dev (faithful-v1)')
     args = parser.parse_args(argv)
+    if args.dry_run:
+        args.session = args.session or 'dry-run'
+        args.job = args.job or 'dry-run'
+    elif not args.session or not args.job or args.out is None:
+        parser.error('--session / --job / --out は必須です（--dry-run 時のみ省略可）')
     identifier(args.session, 'session', 60)
     identifier(args.job, 'job', 60)
     if args.timeout <= 0 or (args.new and args.skip_prepare):
         raise ValueError('timeoutは正の秒数です。--newと--skip-prepareは併用できません')
-    project, voices, requests = load_inputs(args.scenario, args.settings, args.voice, args.ids)
+    project, voices, requests = load_inputs(
+        args.scenario,
+        args.settings,
+        args.voice,
+        args.ids,
+        ruby_mode=args.ruby_mode,
+        ruby_threshold=args.ruby_threshold,
+        ruby_single_threshold=args.ruby_single_threshold,
+        ruby_device=args.ruby_device,
+        ruby_preflight=args.ruby_preflight,
+    )
     cfg = project['effective_settings']
     for item in project['diagnostics']:
         if item['level'] == 'warning':
             print(f"WARNING {item['code']} {item.get('segment_id') or '全体'}: {item['message']}", file=sys.stderr)
     if args.dry_run:
-        print(json.dumps({'session': args.session, 'new_runtime': args.new,
-                          'prepare': not args.skip_prepare, 'engine': 'tts',
-                          'model': cfg['ttsModel'], 'requests': requests,
-                          'execution': project['execution'], 'settings': cfg,
-                          'diagnostics': project['diagnostics']}, ensure_ascii=False, indent=2))
+        payload = {'session': args.session, 'new_runtime': args.new,
+                   'prepare': not args.skip_prepare, 'engine': 'tts',
+                   'model': cfg['ttsModel'], 'requests': requests,
+                   'execution': project['execution'], 'settings': cfg,
+                   'diagnostics': project['diagnostics']}
+        if 'ruby_decisions' in project:
+            payload['ruby_decisions'] = project['ruby_decisions']
+        if 'ruby_filter' in project:
+            payload['ruby_filter'] = project['ruby_filter']
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
         return 0
     # Claim a fresh directory before invoking Colab; never overwrite previous results.
     out = args.out.resolve()
@@ -218,22 +299,39 @@ def main(argv=None):
         if not recovered.is_relative_to(out / 'synthesize'):
             raise ValueError('回収先が今回の出力フォルダーに含まれていません')
         verified = verify_recovery(recovered)
-        if not verified.get('audio_checked') or verified.get('job_status') != 'complete':
-            raise ValueError('対象範囲の音声生成が完了していません。回収結果を確認してください')
-        manifest = verify_authored_recovery(recovered, project, requests)
-        combined = manifest['combined']
-        shutil.copyfile(inside(recovered / 'job', combined['file']), out / 'result.wav')
-        with zipfile.ZipFile(out / 'segments.zip', 'w', zipfile.ZIP_DEFLATED) as archive:
-            for relative in dict.fromkeys(combined['take_files']):
-                archive.write(inside(recovered / 'job', relative), relative)
-            for sid, record in manifest.get('parent_audio', {}).items():
-                archive.write(inside(recovered / 'job', record['file']), 'utterances/' + sid + '.wav')
-        shutil.copyfile(recovered / 'project.json', out / 'generated_project.json')
-        summary = {'status': 'complete', 'session': args.session, 'job': args.job,
-                   'audio': str(out / 'result.wav'), 'segments': str(out / 'segments.zip'),
-                   'recovered': str(recovered), 'verification': verified, 'session_stopped': False,
-                   'execution': project['execution']}
-        atomic_json(out / 'pipeline.json', summary)
+        if args.ruby_preflight:
+            if verified.get('job_status') != 'preflight_complete':
+                raise ValueError('事前判定が完了していません。回収結果を確認してください')
+            manifest = read_json(recovered / 'job/job.json')
+            if manifest.get('authored_plan_signature') != project['expected_plan']:
+                raise ValueError('回収した事前判定の計画署名がホストと一致しません')
+            shutil.copyfile(recovered / 'job/ruby_decisions.json', out / 'ruby_decisions.json')
+            shutil.copyfile(recovered / 'job/ruby_review.json', out / 'ruby_review.json')
+            shutil.copyfile(recovered / 'project.json', out / 'generated_project.json')
+            summary = {'status': 'preflight_complete', 'session': args.session, 'job': args.job,
+                       'ruby_decisions': str(out / 'ruby_decisions.json'),
+                       'ruby_review': str(out / 'ruby_review.json'),
+                       'flagged_count': manifest.get('ruby_review', {}).get('flagged_count', 0),
+                       'recovered': str(recovered), 'verification': verified, 'session_stopped': False,
+                       'execution': project['execution']}
+            atomic_json(out / 'pipeline.json', summary)
+        else:
+            if not verified.get('audio_checked') or verified.get('job_status') != 'complete':
+                raise ValueError('対象範囲の音声生成が完了していません。回収結果を確認してください')
+            manifest = verify_authored_recovery(recovered, project, requests)
+            combined = manifest['combined']
+            shutil.copyfile(inside(recovered / 'job', combined['file']), out / 'result.wav')
+            with zipfile.ZipFile(out / 'segments.zip', 'w', zipfile.ZIP_DEFLATED) as archive:
+                for relative in dict.fromkeys(combined['take_files']):
+                    archive.write(inside(recovered / 'job', relative), relative)
+                for sid, record in manifest.get('parent_audio', {}).items():
+                    archive.write(inside(recovered / 'job', record['file']), 'utterances/' + sid + '.wav')
+            shutil.copyfile(recovered / 'project.json', out / 'generated_project.json')
+            summary = {'status': 'complete', 'session': args.session, 'job': args.job,
+                       'audio': str(out / 'result.wav'), 'segments': str(out / 'segments.zip'),
+                       'recovered': str(recovered), 'verification': verified, 'session_stopped': False,
+                       'execution': project['execution']}
+            atomic_json(out / 'pipeline.json', summary)
     except (Exception, KeyboardInterrupt) as exc:
         interrupted = isinstance(exc, KeyboardInterrupt)
         failed = {'status': 'interrupted' if interrupted else 'failed', 'session': args.session,
@@ -276,6 +374,14 @@ def main(argv=None):
     finish_telemetry()
     summary['telemetry'] = telemetry
     atomic_json(out / 'pipeline.json', summary)
+    if args.ruby_preflight:
+        console.say(f'事前判定完了: {len(requests)}生成単位 / 要確認語 {summary["flagged_count"]}件 / 経過 {duration(time.monotonic()-started)}')
+        console.say('要確認語リスト: ' + str(out / 'ruby_review.json'))
+        console.say('全判定結果: ' + str(out / 'ruby_decisions.json'))
+        console.say('ランタイム: ' + ('停止確認済み' if summary['session_stopped'] else
+                    '停止未確認（状態を確認してください）' if summary.get('shutdown_error') else '保持中（明示停止が必要）'))
+        print('PREFLIGHT_READY', out / 'ruby_review.json', flush=True)
+        return 0
     console.say(f'{"選択範囲の生成完了" if project["execution"]["scope"] == "selection" else "全体の生成完了"}: {len(requests)}生成単位 / 音声 {verified["combined_seconds"]:.2f}秒 / 経過 {duration(time.monotonic()-started)}')
     console.say('検証: WAVのハッシュ・フレーム数が一致')
     console.say(('選択範囲WAV: ' if project['execution']['scope'] == 'selection' else '完成WAV: ') + str(out / 'result.wav'))
