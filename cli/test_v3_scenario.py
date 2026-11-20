@@ -155,3 +155,24 @@ class V3ScenarioTests(unittest.TestCase):
         resolved, unresolved = preview['ruby_decisions'][0]['decisions']
         self.assertEqual(resolved['selected'], 'kana')
         self.assertIsNone(unresolved['selected'])
+
+    def test_author_reading_survives_legacy_conversion_or_flags_conflict(self):
+        for fmt, original in (
+            ('narou', '冷気(れいき)が窓から入ってきました。'),
+            ('kakuyomu', '|冷気《れいき》が窓から入ってきました。'),
+            ('pixiv', '[[rb:冷気 > れいき]]が窓から入ってきました。'),
+            ('aozora', '｜冷気《れいき》が窓から入ってきました。'),
+        ):
+            with self.subTest(format=fmt):
+                row = self.scenario['segments'][0]
+                row.update(text=original, text_format=fmt, koebuta_added_ruby=[])
+                for tts in ('冷気が窓から入ってきました。', 'れいきが窓から入ってきました。'):
+                    row['tts_text'] = tts
+                    self.save()
+                    document, _, requests = load_inputs(self.source, self.settings)
+                    self.assertEqual(document['scenario']['segments'][0]['text'], original)
+                    self.assertEqual(requests[0]['request']['text'], 'れいきが窓から入ってきました。')
+                row['tts_text'] = '｜冷気《ひやけ》が窓から入ってきました。'
+                self.save()
+                with self.assertRaisesRegex(PlanError, 'れいき.*ひやけ.*要確認'):
+                    load_inputs(self.source, self.settings)

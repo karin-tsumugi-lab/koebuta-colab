@@ -11,6 +11,7 @@ from .text_conversion import strip_aozora_layout
 from .ruby_core import (
     RubySyntaxError,
     RubyParseResult,
+    RubySpan,
     StandaloneSpanScorer,
     apply_ruby_selections,
     convert_ruby_text,
@@ -73,6 +74,35 @@ def check_notes(row):
         raise ValueError('notes は文字列の配列で指定してください')
 
 
+def _project_source_ruby(original, source_format):
+    """Keep original bases, readings and offsets from the existing format parser."""
+    from .text_conversion import convert_with_map
+
+    _, issues, source_map = convert_with_map(original, source_format)
+    if issues:
+        raise RubySyntaxError('原文のルビを特定できません: ' + ' / '.join(issues))
+    parts, spans, cursor = [], [], 0
+    for piece in source_map:
+        value = piece['rendered']
+        if piece['operation'] == 'ruby':
+            start, end = piece['source_span']
+            markup = original[start:end]
+            if source_format == 'pixiv':
+                surface = markup[5:-2].split('>', 1)[0].strip()
+            elif '《' in markup:
+                surface = markup.split('《', 1)[0].lstrip('｜|')
+            else:
+                surface = markup.replace('（', '(', 1).split('(', 1)[0]
+            if not surface:
+                raise RubySyntaxError(f'原文のルビの親文字を特定できません: {markup}')
+            spans.append(RubySpan(surface, value, cursor, cursor + len(surface), True))
+            value = surface
+        parts.append(value)
+        piece['tts_span'] = [cursor, cursor + len(value)]
+        cursor += len(value)
+    return RubyParseResult(original, ''.join(parts), tuple(spans)), source_map
+
+
 def _managed_ruby(row, mode, threshold, single_threshold, scorer):
     """Resolve authored readings, retaining unrelated edits and TTS boundaries."""
     def parse(text):
@@ -95,10 +125,7 @@ def _managed_ruby(row, mode, threshold, single_threshold, scorer):
             if any(piece['operation'] == 'ruby' and '《' not in raw_tts[slice(*piece['source_span'])]
                    for piece in tts_map):
                 raise RubySyntaxError('なろう形式のルビを青空文庫形式へ変換してください')
-        source_reading, issues, source_map = convert_with_map(original, source_format)
-        if issues:
-            raise RubySyntaxError('原文のルビを特定できません: ' + ' / '.join(issues))
-        authored = RubyParseResult(original, source_reading)
+        authored, source_map = _project_source_ruby(original, source_format)
     else:
         authored = parse(original)
     raw_tts = raw_tts or original
@@ -134,6 +161,11 @@ def _managed_ruby(row, mode, threshold, single_threshold, scorer):
     for span in authored.spans:
         loc = locate(span.plain_start, span.plain_end, span.surface, span.reading)
         if loc is not None:
+            existing = mandatory.get(loc)
+            if existing is not None and existing.reading != span.reading:
+                raise RubySyntaxError(
+                    f'原文ルビ「{span.surface}《{span.reading}》」と'
+                    f'読み上げ文のルビ「{existing.reading}」が一致しません。要確認')
             mandatory[loc] = replace(span, plain_start=loc[0], plain_end=loc[1])
     replacements = [(a, b, span.reading) for (a, b), span in mandatory.items()]
     entries = row.get('koebuta_added_ruby', [])

@@ -61,9 +61,9 @@
     "irodori_cli/faithful_worker.py": "ed1360e9e7c3e292f638136c8eb2ee931c37386b077ac1310da9717f5fdfb8df",
     "irodori_cli/emoji_tags.py": "d9e161ee2c9bcdbefc73bf3fc0b4208b4695898f8d12bff700047d4afb224857",
     "test_faithful.py": "b89e7fe5c215b2ae9f69ec0c8601e88e6ba8d47c9a31d13890da3dd1fb960774",
-    "irodori_cli/ruby_bridge.py": "24f7a72690d9678ce28a5aee157b52b5c037c8882f34a20e988786a3295d99cd",
+    "irodori_cli/ruby_bridge.py": "d415733d023a0bb7523775c9a9c17faa5c1ecb76880162c240428f3552e08420",
     "irodori_cli/ruby_core.py": "14f2f5521d0c1f3d2c60f05c76468a558c45f5d09a9dd0439b430858a5fb5d7e",
-    "test_v3_scenario.py": "9f610d21e5cd522beebc091e4960958d77e7e8af408726c6112201040feeaabd"
+    "test_v3_scenario.py": "7cce5f9b4d0556f3b01f2ca3052dc12a762903ec6f41e6b3eff5fa483fb112d3"
   },
   "execution_contract": "koebuta-faithful-v1"
 }
