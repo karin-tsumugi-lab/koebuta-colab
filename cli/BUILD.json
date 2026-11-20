@@ -61,9 +61,9 @@
     "irodori_cli/faithful_worker.py": "ccb86aa6bfbcf0c75735327f51267858e730b61a81090388d566db208d531d55",
     "irodori_cli/emoji_tags.py": "d9e161ee2c9bcdbefc73bf3fc0b4208b4695898f8d12bff700047d4afb224857",
     "test_faithful.py": "b89e7fe5c215b2ae9f69ec0c8601e88e6ba8d47c9a31d13890da3dd1fb960774",
-    "irodori_cli/ruby_bridge.py": "2ffd01b62a409d00e85a64b585eccc507d66b6908e5633ab3cc1ba4860d70c29",
-    "irodori_cli/ruby_core.py": "a5ee62ab7875f568a900e0227c772f5b2c8cc6c655645888738932d2f79b86b4",
-    "test_v3_scenario.py": "380e7f85580c10cfd10923fa844d5e09f2259ffccb2bfcc074012a920a05a344"
+    "irodori_cli/ruby_bridge.py": "ec896bc6b85f781f6b80a090f2399f0d189c980820fa22866e285b9919e04c12",
+    "irodori_cli/ruby_core.py": "fc55776141a85d7eef8f55f6066877452dd4f4ff34d4fae3f6429d6788cae1f9",
+    "test_v3_scenario.py": "fe682ea17f98af26f5f77970100519d7458bd836f9d8d07283235ad4fed382f9"
   },
   "execution_contract": "koebuta-faithful-v1"
 }

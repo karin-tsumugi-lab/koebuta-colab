@@ -89,6 +89,7 @@ def parse_aozora_ruby(
     *,
     strict: bool = False,
     allow_ascii_bar: bool = True,
+    literal_unpaired_bars: bool = False,
 ) -> RubyParseResult:
     """Parse Aozora/Kakuyomu-style ruby annotations while preserving plain text and positions."""
     bars = {"｜", "|"} if allow_ascii_bar else {"｜"}
@@ -119,7 +120,8 @@ def parse_aozora_ruby(
             while j < n and text[j] not in ("\n", "《", "》") and text[j] not in bars:
                 j += 1
             if j >= n or text[j] != "《":
-                warn("E_ORPHAN_BAR", i, "ルビ開始記号 '｜' に対応する '《読み》' がありません", text[i : min(n, i + 16)])
+                if not literal_unpaired_bars:
+                    warn("E_ORPHAN_BAR", i, "ルビ開始記号 '｜' に対応する '《読み》' がありません", text[i : min(n, i + 16)])
                 append_plain(ch)
                 i += 1
                 continue

@@ -192,6 +192,19 @@ class V3ScenarioTests(unittest.TestCase):
         with self.assertRaisesRegex(PlanError, 't0001.*縦棒'):
             load_inputs(self.source, self.settings)
 
+    def test_literal_bar_in_working_text_with_canonical_ruby(self):
+        row = self.scenario['segments'][0]
+        del row['koebuta_added_ruby']
+        row.update(text='縦線｜を確かめて、明日を待つ。', text_format='none',
+                   tts_text='縦線｜を確かめて、｜明日《あす》を待つ。')
+        self.save()
+        _, _, requests = load_inputs(self.source, self.settings)
+        self.assertEqual(requests[0]['request']['text'], '縦線｜を確かめて、あすを待つ。')
+        row['text_format'] = 'aozora'
+        self.save()
+        with self.assertRaisesRegex(PlanError, 'E_ORPHAN_BAR'):
+            load_inputs(self.source, self.settings)
+
     def test_preflight_review_counts_only_automatic_candidates(self):
         self.save()
         doc, voices, requests = load_inputs(self.source, self.settings)

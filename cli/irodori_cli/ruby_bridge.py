@@ -131,7 +131,8 @@ def _managed_ruby(row, mode, threshold, single_threshold, scorer):
     def parse(text, *, working=False):
         if normalize_safe_ruby_formats(text) != text or '《《' in text:
             raise RubySyntaxError('読み上げ文のルビは青空文庫形式（｜親文字《読み》）に変換してください')
-        parsed = parse_aozora_ruby(strip_aozora_layout(text), strict=True)
+        parsed = parse_aozora_ruby(strip_aozora_layout(text), strict=True,
+                                   literal_unpaired_bars=working and source_format == 'none')
         if working and any(not span.explicit_bar for span in parsed.spans):
             raise RubySyntaxError('読み上げ文のルビには縦棒が必要です（｜親文字《読み》）')
         return parsed
