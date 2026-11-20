@@ -2,6 +2,8 @@
 
 作成済みのシナリオJSON（`schema_version: 1`）を Google Colab GPU 上の Irodori-TTS で連続生成し、完成音声をローカルへ回収する公式CLI（`cli/irodori_generate.py`）の案内です。
 
+手元のGPUで生成したい場合は、[ローカルGPUへの移植案内](../docs/LOCAL_GPU_PORTING.md)を参照してください。
+
 > **Colabの利用規約を確認してください。**  
 > 公式CLIの利用にもColabの規約が適用されます。無料・CU残高なしの管理ランタイムには追加制限があり、CLIは制限を回避する手段ではありません。有料でも一般の禁止事項・利用上限は残ります。認証・GPU生成の前に [Colab利用条件の注意](../docs/COLAB_USAGE.md) と公式資料を確認してください。
 
