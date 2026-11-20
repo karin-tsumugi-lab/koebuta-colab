@@ -1,4 +1,4 @@
-# Koebuta CLI 2.0.0-dev（忠実生成）
+# Koebuta v3 CLI
 
 準備済みのシナリオJSONを Irodori-TTS で連続生成し、完成音声をローカルへ回収するCLIです。WebUIを使いません。
 
@@ -6,7 +6,7 @@
 
 ## 動作確認の範囲
 
-開発版の `irodori_generate.py` は、作成済みの発話・明示TTS片をそのまま生成する入口です。CLI 1.0.1の自動分割はこの入口では使いません。交換形式は引き続き `schema_version: 1` です。CLIの版とJSON形式の版を混同しないでください。
+`irodori_generate.py` はV3の発話をシナリオの順に生成します。新規シナリオでは、長い文を発話IDで分けます。交換形式は `schema_version: 1` です。
 
 新経路はCPUの模擬推論と既存回帰試験で確認しています。2026-11-16にMuseのLinux環境で新経路の実Colab・T4生成を試し、全体4単位（27.74秒）と一片指定1単位（5.36秒）の生成・回収・機械検査・停止が成功しました。利用者の試聴でも問題なしとの報告を受領しています。長編性能や長時間セッションでのresident継続性は今回の確認範囲外です。検査結果と未確認範囲は [実装検証記録](../docs/CLI_FAITHFUL_VALIDATION.md)、確定した判断は [仕様v0.2](../docs/CLI_FAITHFUL_SPEC.md) を参照してください。
 
@@ -37,20 +37,22 @@ Colab CLI 0.7.5では `--version` が未対応との実機報告があります�
 
 ## 最初の確認（GPUを使わない）
 
-この配布一式の `cli/` フォルダーへ移動して、まずdry-runを実行します。Colabへ接続せず、出力フォルダーも作りません。
+リポジトリ直下から、まずdry-runを実行します。Colabへ接続せず、出力フォルダーも作りません。
 
 ```bash
-python3 irodori_generate.py --scenario irodori_cli_examples/generate_scenario.json --settings irodori_cli_examples/generate_settings.json --session narration-v1 --job chapter01 --out outputs/chapter01-cli --dry-run
+python cli/irodori_generate.py --scenario cli/irodori_cli_examples/generate_scenario.json --settings cli/irodori_cli_examples/generate_settings.json --dry-run
 ```
 
-WindowsのPythonから実行する場合は `python3` を `python` に読み替えます。成功時は標準出力にJSONだけが出力されます。
+環境により `python` を `python3` に読み替えてください。成功時は標準出力にJSONだけが出力されます。
 
 ## GPU生成
+
+作品の `scenario.json` と [サンプル設定](irodori_cli_examples/generate_settings.json)から作った `settings.json` を使います。クローン時は設定の `voices` に参照WAVを指定します。[設定例](../docs/AGENT_WORKFLOW.md#4-作品フォルダーと生成設定)
 
 以下は新しいT4ランタイムを作成し、準備・生成・回収・検証後に停止する例です。
 
 ```bash
-python3 irodori_generate.py --scenario irodori_cli_examples/generate_scenario.json --settings irodori_cli_examples/generate_settings.json --session narration-v1 --job chapter01 --out outputs/chapter01-cli --new --gpu T4 --stop-after-download
+python cli/irodori_generate.py --scenario scenario.json --settings settings.json --session narration-v1 --job chapter01 --out outputs/chapter01-cli --new --gpu T4 --stop-after-download
 ```
 
 - `--new` を付けない場合、指定名の既存セッションだけを利用します。新しいランタイムは作りません。
@@ -65,9 +67,9 @@ python3 irodori_generate.py --scenario irodori_cli_examples/generate_scenario.js
 
 入力は本文付き `schema_version: 1`、`speakers`、`segments` を持つシナリオJSONと、別の生成設定JSONです。配役整理、読み補正、感情判定、本文修復、自動分割・結合は行いません。改行を含む見出しも、一発話なら一つの生成要求のままです。80文字超や短文は通知し、勝手に補正しません。
 
-`tts_text` が非空ならそれを使い、未指定・空なら `text` の明示ルビだけを指定形式で展開します。位置指定絵文字は保持し、発話全体の感情タグと演技Captionは生成時に適用します。`source` は任意で、未提供時に作りません。提供時の順序付き部分照合は最初の不一致を警告し、許可済み改変か本文の不備かは利用者が判断します。入力ファイルは上書きしません。
+`tts_text` は作業用の読み上げ全文です。v3の作業用ルビは `｜親文字《読み》` に揃えます。CLIは作者の読みを照合し、自動指定の追加ルビは本生成時に判定します。位置指定絵文字は保持し、発話全体の感情タグと演技Captionは生成時に適用します。`source` は任意で、未提供時に作りません。提供時の順序付き部分照合は最初の不一致を警告し、許可済み改変か本文の不備かは利用者が判断します。入力ファイルは上書きしません。
 
-`koebuta_tts_parts` がある場合は、2個以上の非空文字列、非空の `tts_text`、片の連結と `tts_text` の完全一致が必要です。結合文字・絵文字の途中の切断は拒否します。各片へ親の話者・感情・演技・声・生成条件を継承し、片の間に休止を追加しません。HTMLの `koebuta_settings` と話者の `reference_wav` は自動採用しません。別設定JSONと必要な `--voice` を使ってください。
+旧シナリオの `koebuta_tts_parts` を使う場合は、2個以上の非空文字列、非空の `tts_text`、片の連結と `tts_text` の完全一致が必要です。結合文字・絵文字の途中の切断は拒否します。各片へ親の話者・感情・演技・声・生成条件を継承し、片の間に休止を追加しません。HTMLの `koebuta_settings` と話者の `reference_wav` は自動採用しません。別設定JSONと必要な `--voice` を使ってください。
 
 区切り（`segment_type: "separator"`）は読み上げません。`text` と `speaker_id` は省略でき、指定する話者は登録済みである必要があります。`emotion` は区切りも `neutral` を指定してください。
 
@@ -81,10 +83,10 @@ python3 irodori_generate.py --scenario irodori_cli_examples/generate_scenario.js
 
 ### 対象を指定した再生成
 
-同じシナリオへ `--ids a,b#2` のように指定します。親IDはその全片、`親ID#番号` は1始まりの明示片を指定します。入力順で生成し、重複は一度だけ、存在しないID・区切りID・空指定は生成前に拒否します。下位CLIの旧 `--regenerate` と混用しません。
+同じシナリオへ `--ids t0001,t0003` のように指定します。旧データのTTS片は `--ids a,b#2` の形式でも指定できます。親IDはその全片、`親ID#番号` は1始まりの明示片を指定します。入力順で生成し、重複は一度だけ、存在しないID・区切りID・空指定は生成前に拒否します。下位CLIの旧 `--regenerate` と混用しません。
 
 ```bash
-python3 irodori_generate.py --scenario scenario.json --settings settings.json --session narration-v1 --job retry01 --out outputs/retry01 --ids a,b#2 --dry-run
+python cli/irodori_generate.py --scenario scenario.json --settings settings.json --session narration-v1 --job retry01 --out outputs/retry01 --ids t0001,t0003 --dry-run
 ```
 
 dry-runを確認後、実行時には `--dry-run` を外します。毎回新しいジョブIDと出力先を使います。結果は選択範囲のWAVです。既存全編への自動差し替えや候補採用は行いません。飛ばした発話の長さ・休止を補間せず、選択した左側単位の休止を使います。親の全片が揃った場合だけ親発話WAVを追加し、一片だけを親全体の完成扱いにしません。

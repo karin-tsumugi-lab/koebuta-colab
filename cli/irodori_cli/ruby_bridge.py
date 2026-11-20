@@ -17,6 +17,7 @@ from .ruby_core import (
     convert_ruby_text,
     normalize_safe_ruby_formats,
     parse_aozora_ruby,
+    score_ruby_span,
 )
 
 
@@ -55,14 +56,16 @@ def _speech_rows(scenario):
                     and row.get('segment_type') != 'separator')
 
 
-def _requires_ruby_resolution(row):
+def _requires_ruby_resolution(row, *, include_implicit=False):
     if 'koebuta_added_ruby' in row:
         return True
     original = row.get('text')
     working = row.get('tts_text')
     if not isinstance(original, str) or 'koebuta_tts_parts' in row:
         return False
-    if isinstance(working, str) and '｜' in working and '《' in working:
+    if (isinstance(working, str) and '《' in working
+            and ('｜' in working or include_implicit or row.get('text_format') == 'aozora')
+            and parse_aozora_ruby(working, strict=False).spans):
         return True
     fmt = row.get('text_format', 'aozora')
     if fmt in ('pixiv', 'narou', 'kakuyomu'):
@@ -71,11 +74,12 @@ def _requires_ruby_resolution(row):
         from .text_conversion import convert_with_map
         _, _, pieces = convert_with_map(original, fmt)
         return any(piece['operation'] == 'ruby' for piece in pieces)
-    return '《' in original and bool(parse_aozora_ruby(original, strict=False).spans)
+    return fmt != 'none' and '《' in original and bool(parse_aozora_ruby(original, strict=False).spans)
 
 
-def requires_ruby_resolution(scenario):
-    return any(_requires_ruby_resolution(row) for row in _speech_rows(scenario))
+def requires_ruby_resolution(scenario, *, include_implicit=False):
+    return any(_requires_ruby_resolution(row, include_implicit=include_implicit)
+               for row in _speech_rows(scenario))
 
 
 def has_automatic_ruby(scenario):
@@ -124,10 +128,13 @@ def _project_source_ruby(original, source_format):
 
 def _managed_ruby(row, mode, threshold, single_threshold, scorer):
     """Resolve authored readings, retaining unrelated edits and TTS boundaries."""
-    def parse(text):
+    def parse(text, *, working=False):
         if normalize_safe_ruby_formats(text) != text or '《《' in text:
             raise RubySyntaxError('読み上げ文のルビは青空文庫形式（｜親文字《読み》）に変換してください')
-        return parse_aozora_ruby(strip_aozora_layout(text), strict=True)
+        parsed = parse_aozora_ruby(strip_aozora_layout(text), strict=True)
+        if working and any(not span.explicit_bar for span in parsed.spans):
+            raise RubySyntaxError('読み上げ文のルビには縦棒が必要です（｜親文字《読み》）')
+        return parsed
 
     original = row['text']
     source_format = row.get('text_format', 'aozora')
@@ -145,12 +152,16 @@ def _managed_ruby(row, mode, threshold, single_threshold, scorer):
                    for piece in tts_map):
                 raise RubySyntaxError('なろう形式のルビを青空文庫形式へ変換してください')
         authored, source_map = _project_source_ruby(original, source_format)
+    elif source_format == 'none':
+        authored = RubyParseResult(original, original)
     else:
         authored = parse(original)
-    raw_tts = raw_tts or original
-    if not raw_tts.strip():
-        raw_tts = original
-    resolved = parse(raw_tts)
+    if not raw_tts or not raw_tts.strip() or (source_map is None and raw_tts == original):
+        resolved = authored
+    elif source_format == 'none' and not parse_aozora_ruby(raw_tts, strict=False).spans:
+        resolved = RubyParseResult(raw_tts, raw_tts)
+    else:
+        resolved = parse(raw_tts, working=True)
     plain = resolved.plain_text
     mandatory = {(s.plain_start, s.plain_end): s for s in resolved.spans}
     edits = (SequenceMatcher(None, authored.plain_text, plain, autojunk=False).get_opcodes()
@@ -170,12 +181,15 @@ def _managed_ruby(row, mode, threshold, single_threshold, scorer):
             if plain[left:right] == reading:
                 return left, right
         for tag, a, b, c, d in edits:
-            if (tag == 'equal' and a <= start < end <= b
-                    and authored.plain_text.count(surface) == plain.count(surface) == 1):
-                return c + start - a, c + end - a
+            if tag == 'equal' and a <= start < end <= b:
+                context = authored.plain_text[a:b]
+                if (authored.plain_text.find(context) == authored.plain_text.rfind(context)
+                        and plain.find(context) == plain.rfind(context)):
+                    return c + start - a, c + end - a
             if tag == 'replace' and (a, b) == (start, end) and plain[c:d] == reading:
                 return c, d
-        raise RubySyntaxError(f'読み上げ文で対象「{surface}」を特定できません。要確認')
+        hint = f' 作者指定の読みを展開する場合は「{reading}」を記してください。' if reading else ''
+        raise RubySyntaxError(f'読み上げ文で対象「{surface}」を特定できません。要確認。{hint}')
 
     for span in authored.spans:
         loc = locate(span.plain_start, span.plain_end, span.surface, span.reading)
@@ -191,6 +205,7 @@ def _managed_ruby(row, mode, threshold, single_threshold, scorer):
         raise RubySyntaxError('koebuta_added_ruby は配列で指定してください')
     occupied = []
     decisions = []
+    ignored = []
     for entry in entries:
         if not isinstance(entry, dict):
             raise RubySyntaxError('追加ルビはオブジェクトで指定してください')
@@ -206,6 +221,7 @@ def _managed_ruby(row, mode, threshold, single_threshold, scorer):
         if source_map is not None:
             if any(piece['operation'] == 'ruby' and a < piece['source_span'][1]
                    and piece['source_span'][0] < b for piece in source_map):
+                ignored.append(entry)
                 continue
             def source_boundary(pos):
                 boundary = mapped_boundary(source_map, pos)
@@ -221,27 +237,34 @@ def _managed_ruby(row, mode, threshold, single_threshold, scorer):
             if start is None or end is None:
                 raise RubySyntaxError(f'追加ルビの対象位置を確認してください: {surface}')
         else:
-            prefix = strip_aozora_layout(original[:a])
-            start = len(parse_aozora_ruby(prefix, strict=False).plain_text)
+            if source_format == 'none':
+                start = a
+            else:
+                left = len(strip_aozora_layout(original[:a]))
+                right = len(strip_aozora_layout(original[:b]))
+                if any(left < span.source_end and span.source_start < right for span in authored.spans):
+                    ignored.append(entry)
+                    continue
+                prefix = strip_aozora_layout(original[:a])
+                start = len(parse_aozora_ruby(prefix, strict=False).plain_text)
             end = start + len(surface)
         if authored.plain_text[start:end] != surface:
             raise RubySyntaxError(f'追加ルビの対象位置を確認してください: {surface}')
         if any(start < span.plain_end and span.plain_start < end for span in authored.spans):
+            ignored.append(entry)
             continue
         loc = locate(start, end, surface, reading if selection == 'kana' else None)
         start, end = loc
         if plain[start:end] != surface:  # A confirmed addition was already expanded.
             continue
         if any(start < right and left < end for left, right in mandatory):
+            ignored.append(entry)
             continue
         use_kana = selection == 'kana'
         score = None
         if selection == 'auto' and mode == 'auto_select':
-            encoded = f'{plain[:start]}｜{surface}《{reading}》{plain[end:]}'
-            result = convert_ruby_text(encoded, mode='auto_select', threshold=threshold,
-                                       single_token_threshold=single_threshold, scorer=scorer, strict=True)
-            decision, = result.decisions
-            score, use_kana = decision.score, decision.selected == 'kana'
+            span = RubySpan(surface, reading, start, end, True)
+            score, use_kana = score_ruby_span(plain, span, scorer, threshold, single_threshold)
         if use_kana:
             replacements.append((start, end, reading))
         decisions.append(dict(surface=surface, reading=reading, plain_start=start,
@@ -264,7 +287,7 @@ def _managed_ruby(row, mode, threshold, single_threshold, scorer):
         raise RubySyntaxError('v3ではTTS片を作成できません。発話IDを分けたシナリオを使用してください')
     row['tts_text'] = render(0, len(plain))
     return dict(segment_id=row.get('id'), plain_text=plain,
-                tts_text=row['tts_text'], decisions=decisions)
+                tts_text=row['tts_text'], decisions=decisions, ignored_due_to_mandatory_ruby=ignored)
 
 
 def prepare_remote_ruby_scenario(
@@ -313,13 +336,15 @@ def apply_ruby_to_scenario(
     selected_segment_ids: set[str] | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """Apply ruby conversion to scenario `tts_text` (and `koebuta_tts_parts` when present)."""
-    managed = requires_ruby_resolution(scenario)
+    include_implicit = mode == 'none'
+    managed = requires_ruby_resolution(scenario, include_implicit=include_implicit)
     if managed:
         updated = copy.deepcopy(scenario)
         reports = []
         for row in updated['segments']:
             if (not isinstance(row, dict) or row.get('segment_type') == 'separator'
-                    or not _requires_ruby_resolution(row) or not isinstance(row.get('text'), str)
+                    or not _requires_ruby_resolution(row, include_implicit=include_implicit)
+                    or not isinstance(row.get('text'), str)
                     or (row.get('tts_text') is not None and not isinstance(row['tts_text'], str))):
                 continue
             if selected_segment_ids is not None and row.get('id') not in selected_segment_ids:

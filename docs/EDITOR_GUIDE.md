@@ -16,7 +16,7 @@
 
 ## CLI開発版の新入口
 
-以下の互換性表はCLI開発版2.0.0-devの新入口を対象とします。配布版1.0.1・旧CLI経路との差は後段で説明します。開発版2.0.0-devの `irodori_generate.py` は `koebuta_tts_parts` を使い、改行でも分割し直しません。区切りの `speaker_id`・`text` は省略できます。`source` は任意で、照合不一致は警告です。HTMLの `koebuta_settings`・`reference_wav` の自動取込は引き続きありません。休止・選択生成と移行条件は [CLI README](../cli/README.md) を参照してください。Notebook・HTML本体の処理は今回変更していません。
+以下の互換性表はCLI開発版2.0.0-devの新入口を対象とします。配布版1.0.1・旧CLI経路との差は後段で説明します。開発版2.0.0-devの `irodori_generate.py` は `koebuta_tts_parts` を使い、改行でも分割し直しません。区切りの `speaker_id`・`text` は省略できます。`source` は任意で、照合不一致は警告です。HTMLの `koebuta_settings`・`reference_wav` の自動取込は引き続きありません。休止・選択生成と移行条件は [CLI README](../cli/README.md) を参照してください。v3で使う手順は [README](../README.md) を参照してください。
 
 ## TTS分割と原文
 
@@ -28,7 +28,7 @@ TTS分割は原文 `text` や原稿全文 `source` を切り刻まず、`koebuta
 
 ## 生成側への受け渡し
 
-| HTMLの保存情報 | 正式Notebook v2 | CLI 2.0.0-devの新入口 |
+| HTMLの保存情報 | 旧Notebook v2 | CLI 2.0.0-devの新入口 |
 | --- | --- | --- |
 | `koebuta_settings` | 読み込み時と生成計画へ反映 | 自動取り込みなし。別設定JSONを指定 |
 | 話者 `reference_wav` / 共用WAV | 作品内の参照WAVを解決 | 別設定JSONの `voices` と `speakerVoices` 等で指定 |
@@ -43,7 +43,7 @@ HTMLの生成設定画面にある「将来のCLI用拡張」という文言は�
 
 区切りは交換形式v1では `speaker_id` を省略できますが、CLI v1.0.1の入力検査は全項目に登録済み話者と空白だけでない `text` を要求します。原稿に区切り記号があればその文字を保持し、区切りにも `pause_after_ms`（CLIは0〜10000ms）を指定できます。原稿が空行だけなら、記号を追加して埋めず、区切り項目を作らずに直前の発話の `pause_after_ms` へ必要な間を指定できます。原稿全文を含める場合は空行も `source` に保持します。これはCLIへの受け渡し条件であり、交換形式全体の必須項目を増やすものではありません。また、旧CLI経路は短い発話でも改行位置で内部分割します。見出しを改行付きで結合したJSONが受け付けられても、TTSの短文生成を避けられるとは限りません。
 
-正式Notebookの操作は [v2操作ガイド](../notebook/NOTEBOOK_V2_GUIDE.md) を参照してください。v1の内蔵編集画面を前提にした過去の操作説明は旧版資料として扱います。
+旧Notebookの操作は [v2操作ガイド](../notebook/NOTEBOOK_V2_GUIDE.md) を参照してください。v1の内蔵編集画面を前提にした過去の操作説明は旧版資料として扱います。
 
 [Fast版](../fast/README.md) も `koebuta_settings`・参照WAVパス・TTS分割境界の自動取り込みに対応しません。単一話者だけを対象とし、参照音声は `--ref`、分割と短文結合はFast版独自の規則を使います。空行情報は結合を防ぐために使いますが、Notebookと同じ空行休止時間を自動適用するわけではありません。
 

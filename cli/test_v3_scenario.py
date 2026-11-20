@@ -9,7 +9,7 @@ import unittest
 import zipfile
 
 from irodori_cli.faithful import PlanError
-from irodori_cli.faithful_worker import _resolve_ruby_plan
+from irodori_cli.faithful_worker import _resolve_ruby_plan, build_ruby_review
 from irodori_generate import load_inputs, main, write_segment_archive
 
 
@@ -155,6 +155,50 @@ class V3ScenarioTests(unittest.TestCase):
         resolved, unresolved = preview['ruby_decisions'][0]['decisions']
         self.assertEqual(resolved['selected'], 'kana')
         self.assertIsNone(unresolved['selected'])
+
+    def test_repeated_surface_is_resolved_by_context_after_working_text_edit(self):
+        row = self.scenario['segments'][0]
+        row.update(text='冷い朝に冷い川を見た。', tts_text='😐冷い朝に冷い川を見た。')
+        start = row['text'].rindex('冷い')
+        row['koebuta_added_ruby'] = [dict(start=start, end=start+2, surface='冷い',
+                                         reading='つめたい', selection='kana')]
+        self.save()
+        _, _, requests = load_inputs(self.source, self.settings)
+        self.assertEqual(requests[0]['request']['text'], '😐冷い朝につめたい川を見た。')
+
+    def test_explicit_author_ruby_overlap_and_literal_plain_text(self):
+        row = self.scenario['segments'][0]
+        row.update(text='｜李徴《りせい》が来た。', koebuta_added_ruby=[
+            dict(start=1, end=3, surface='李徴', reading='りちょう', selection='kana')])
+        self.save()
+        doc, _, requests = load_inputs(self.source, self.settings)
+        self.assertEqual(requests[0]['request']['text'], 'りせいが来た。')
+        self.assertEqual(doc['ruby_decisions'][0]['ignored_due_to_mandatory_ruby'],
+                         row['koebuta_added_ruby'])
+        row.update(text='｜という記号の隣に冷い川と記す。', text_format='none')
+        start = row['text'].index('冷い')
+        row['koebuta_added_ruby'] = [dict(start=start, end=start+2, surface='冷い',
+                                         reading='つめたい', selection='auto')]
+        self.save()
+        doc, voices, requests = load_inputs(self.source, self.settings)
+        plan, _ = _resolve_ruby_plan(doc, {'requests': requests}, voices, lambda *a: .1)
+        self.assertEqual(plan['requests'][0]['request']['text'], '｜という記号の隣につめたい川と記す。')
+
+    def test_dry_run_rejects_working_ruby_without_explicit_bar(self):
+        row = self.scenario['segments'][0]
+        row.update(text='明日に出発する予定です。', tts_text='明日《あす》に出発する予定です。')
+        del row['koebuta_added_ruby']
+        self.save()
+        with self.assertRaisesRegex(PlanError, 't0001.*縦棒'):
+            load_inputs(self.source, self.settings)
+
+    def test_preflight_review_counts_only_automatic_candidates(self):
+        self.save()
+        doc, voices, requests = load_inputs(self.source, self.settings)
+        plan, decisions = _resolve_ruby_plan(doc, {'requests': requests}, voices, lambda *a: .99)
+        review = build_ruby_review(plan, decisions)
+        self.assertEqual(review['total_ruby_spans'], 1)
+        self.assertEqual(review['flagged_items'], [])
 
     def test_mandatory_ruby_without_added_ruby_field(self):
         row = self.scenario['segments'][0]

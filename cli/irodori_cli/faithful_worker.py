@@ -63,7 +63,7 @@ def execute(document, voices, job, infer, engine=None, ruby_scorer=None):
         if ruby_scorer is None and hasattr(infer, 'get_ruby_scorer'):
             ruby_scorer = infer.get_ruby_scorer()
         effective_plan, ruby_decisions = _resolve_ruby_plan(document, planned, voices, ruby_scorer=ruby_scorer)
-        for row, eff_row in zip(rows, effective_plan['requests']):
+        for row, eff_row in zip(rows, effective_plan['requests'], strict=True):
             row['request']['text'] = eff_row['request']['text']
             row['fingerprint'] = digest(dict(
                 effective=eff_row['fingerprint'],
@@ -102,9 +102,11 @@ def build_ruby_review(planned, ruby_decisions):
     for rd in ruby_decisions:
         sid = rd.get('segment_id')
         decisions = rd.get('decisions', [])
-        total_spans += len(decisions)
         plain = rd.get('plain_text', '')
         for d in decisions:
+            if d.get('selection', 'auto') != 'auto':
+                continue
+            total_spans += 1
             if d.get('selected') == 'kana':
                 start = max(0, int(d.get('plain_start', 0)) - 8)
                 end = min(len(plain), int(d.get('plain_end', 0)) + 8)

@@ -49,7 +49,7 @@ def load_inputs(
         raise ValueError('--ruby-preflight は遠隔判定モードです。--ruby-device local とは併用できません')
     if ruby_preflight and ruby_mode == 'none':
         ruby_mode = 'auto_select'
-    if ruby_mode != 'none' or requires_ruby_resolution(scenario):
+    if ruby_mode != 'none' or requires_ruby_resolution(scenario, include_implicit=True):
         resolved_device = 'remote' if ruby_preflight else (
             ('remote' if ruby_mode == 'auto_select' else 'local') if ruby_device == 'auto' else ruby_device
         )
@@ -212,9 +212,6 @@ def main(argv=None):
             stream.write('\n')
         return 0
     cfg = project['effective_settings']
-    for item in project['diagnostics']:
-        if item['level'] == 'warning':
-            print(f"WARNING {item['code']} {item.get('segment_id') or '全体'}: {item['message']}", file=sys.stderr)
     if args.dry_run:
         from irodori_cli.faithful import build_plan
         from irodori_cli.ruby_bridge import apply_ruby_to_scenario, requires_ruby_resolution
@@ -238,6 +235,9 @@ def main(argv=None):
                         if item['selection'] == 'auto':
                             item['selected'] = None
                             pending.append(dict(segment_id=result['segment_id'], **item))
+        for item in diagnostics:
+            if item['level'] == 'warning':
+                print(f"WARNING {item['code']} {item.get('segment_id') or '全体'}: {item['message']}", file=sys.stderr)
         payload = {'session': args.session, 'new_runtime': args.new,
                    'prepare': not args.skip_prepare, 'engine': 'tts',
                    'model': cfg['ttsModel'], 'requests': requests,
@@ -251,6 +251,9 @@ def main(argv=None):
             payload['ruby_filter'] = project['ruby_filter']
         print(json.dumps(payload, ensure_ascii=False, indent=2))
         return 0
+    for item in project['diagnostics']:
+        if item['level'] == 'warning':
+            print(f"WARNING {item['code']} {item.get('segment_id') or '全体'}: {item['message']}", file=sys.stderr)
     # Claim a fresh directory before invoking Colab; never overwrite previous results.
     out = args.out.resolve()
     if out.exists():
@@ -371,6 +374,7 @@ def main(argv=None):
                        'ruby_decisions': str(out / 'ruby_decisions.json'),
                        'ruby_review': str(out / 'ruby_review.json'),
                        'flagged_count': manifest.get('ruby_review', {}).get('flagged_count', 0),
+                       'total_ruby_spans': manifest.get('ruby_review', {}).get('total_ruby_spans'),
                        'recovered': str(recovered), 'verification': verified, 'session_stopped': False,
                        'execution': project['execution']}
             atomic_json(out / 'pipeline.json', summary)
@@ -431,6 +435,8 @@ def main(argv=None):
     atomic_json(out / 'pipeline.json', summary)
     if args.ruby_preflight:
         console.say(f'事前判定完了: {len(requests)}生成単位 / 要確認語 {summary["flagged_count"]}件 / 経過 {duration(time.monotonic()-started)}')
+        if summary['total_ruby_spans'] == 0:
+            console.say('事前判定の対象となる自動ルビ候補はありません。')
         console.say('要確認語リスト: ' + str(out / 'ruby_review.json'))
         console.say('全判定結果: ' + str(out / 'ruby_decisions.json'))
         console.say('ランタイム: ' + ('停止確認済み' if summary['session_stopped'] else

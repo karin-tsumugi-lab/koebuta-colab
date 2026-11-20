@@ -1,69 +1,33 @@
 # Koebuta v3
 
-Koebutaは、原稿を話者・読み・感情・演技指示付きのシナリオに整理し、Irodori-TTSで生成し一つの朗読音声にするためのツールです。
+原稿をシナリオに整え、Irodori-TTSで朗読を作ります。**原稿 → シナリオJSON → HTMLで確認 → CLIで検査・生成 → WAVを試聴**の順に進めます。
 
-基本の流れは、**AIでシナリオを作る → エディタで確認する → Irodori-TTSで音声を作る → 試聴して保存する**、の4段階です。
-面倒な人のためにAIエージェントへ委託し自動で処理を行う手順書も用意しています。
+## 1. AIでシナリオを作る
 
-エージェントへまとめて依頼する方は、[AIエージェント向け制作手順](docs/AGENT_WORKFLOW.md)の依頼欄を埋め、Koebutaツール群と原稿と一緒に渡してください。シナリオ作成からCLIでの音声生成・回収までを案内しています。
+チャット型AIに、[V3シナリオ作成プロンプト](docs/V3_SCENARIO_PROMPT.md)、[話者・感情などのJSON仕様](notebook/01_SPEC_SHEET.md)、朗読したい原稿を渡します。AIが確認した朗読範囲・声・演出の方針に答え、できたJSONを `scenario.json` として保存します。任せられる判断は「おまかせ」と伝えられます。
 
-## 用意するもの
+AIエージェントに生成まで任せる場合は、[AIエージェント向け制作手順](docs/AGENT_WORKFLOW.md)の依頼欄を使ってください。
 
-- 読ませたい原稿
-- ChatGPTやGeminiなど、ファイルや文章を扱えるチャット型AI
-- Google Colabを利用できるGoogleアカウントとGPU利用枠、あるいはIrodori-TTSを実行可能なローカル環境
-- 声をクローンする場合は、利用する権限のある参照音声WAV
+## 2. HTMLでシナリオを確認する
 
-参照音声を用意せず、声の説明文から試作して使うこともできます。
+[Scenario Inspector](Koebuta_Scenario_Inspector_v0.1.6.html)を手元のブラウザーで開き、`scenario.json` を読み込みます。話者、原文と読み上げ文、感情・演技、発話の区切りを確認し、編集したらJSONを保存します。🔖は追加ルビです。効果音素材を入れる位置などの作業指示は発話の `notes` に記録できます。[エディタの使い方](docs/EDITOR_GUIDE.md)
 
-Colabを利用する場合は、原稿や参照音声をアップロードし、GPU利用枠を消費します。開始前に、[Colabの利用条件](docs/COLAB_USAGE.md)、[ライセンス](LICENSE)、[第三者の権利表示](THIRD_PARTY_NOTICES.md)を確認してください。
+## 3. CLIで検査し、朗読を生成する
 
-## 1. 原稿をシナリオJSONにする
+1. `scenario.json` と同じフォルダーに、[生成設定サンプル](cli/irodori_cli_examples/generate_settings.json)を `settings.json` としてコピーします。サンプルは声の説明から一人分の声を作る設定です。クローンを使う場合は参照WAVを保存し、CLI用設定の `voices` に指定します。[参照WAVの設定例](docs/AGENT_WORKFLOW.md#4-作品フォルダーと生成設定)
+2. リポジトリ直下で、下のコマンドを実行します。発話ID、読み上げ文、話者、診断を確かめます。追加ルビの自動候補は `ruby_pending` に表示され、本生成時に判定されます。
+3. 内容を確認したら、[CLIのGPU生成手順](cli/README.md#gpu生成)へ進みます。Colabの接続準備と本生成のコマンドはCLI案内にあります。
 
-チャット型AIに、次の3点を渡してください。
+```bash
+python cli/irodori_generate.py --scenario scenario.json --settings settings.json --dry-run
+```
 
-1. [シナリオ化の依頼文](notebook/02_CHAT_PROMPT.md)
-2. [シナリオJSONの仕様書](notebook/01_SPEC_SHEET.md)
-3. 読ませたい原稿
+環境により `python` を `python3` に読み替えてください。構造や読みだけ試す場合は、同梱の [サンプルシナリオ](cli/irodori_cli_examples/generate_scenario.json)も使えます。
 
-一人朗読／複数人朗読を指定してください。共通プロンプトv0.3は、作品全体の理解→全体方針→場面演出→発話分割の順に制作します。読み補助は既定Bです。タイトル・著者名・章題などの `text` 改変は、明示許可がある範囲だけ認め、本文・台詞は保持します。
+## 4. WAVを試聴する
 
-AIが作成したシナリオJSONを、手元のPCへ保存します。JSON交換形式は `schema_version: 1` のままで、Notebook v2等のアプリの版とは別です。
+出力先の `result.wav` は結合音声、`segments.zip` は発話IDで照合できる個別WAVです。誤読や演技を直した発話は、CLIの `--ids` で指定して再生成できます。
 
-CLIは原文不一致を警告として表示し、生成は継続できます。許可済み見出し改変か意図しない本文差分かを確認してください。`source` は元原稿のまま保持します。`source` 未提供時は照合未実施です。いずれも原稿全体の確認は別途必要です。詳しくは[エディタ案内](docs/EDITOR_GUIDE.md)を参照してください。
+[v3シナリオ詳細仕様](docs/V3_SCENARIO_SPEC.md) · [ライセンス](LICENSE) · [第三者の権利表示](THIRD_PARTY_NOTICES.md)
 
-長い作品や読みの難しい作品には、追加の依頼文も用意しています。
-
-- [notebookフォルダー](notebook/)の`03A`・`03B`・`03C`を、用途に合わせて利用してください。
-
-## 2. エディタで内容を確認する
-
-[Scenario Inspector](Koebuta_Scenario_Inspector_v0.1.6.html)をダウンロードし、手元のブラウザーで開きます。手順の詳細は[エディタの利用案内](docs/EDITOR_GUIDE.md)にあります。
-
-シナリオJSONを読み込み、次を確認・修正してください。
-
-- 話者の割り当て
-- 本文と読み
-- 感情・演技指示
-- 音声生成する文章の区切り
-
-発話長は**20〜80文字程度**が基本目安です。15文字未満は生成不安定性に注意し、10文字未満の単独生成は可能な限り避け、80文字超は分割を検討します。原文・話者・意味・演出の境界を優先し、自然に続く場合だけ短文を統合してください。シナリオの発話とTTS内部の生成片は別です。許可済みの見出し改変でも原文照合の指摘は自動免除されないため、変更箇所と残る原稿を確認します。
-
-絵文字タグによる感情や効果音も、声・文脈・挿入位置で結果が変わります。生成後の試聴で調整してください。
-
-確認が済んだら、JSONを保存します。参照WAVもまとめる場合は、エディタの作品ZIP出力を使うと、次の読み込みへ進めます。
-
-## 3. CLIで朗読を生成する
-
-正式な生成入口は [CLIの `irodori_generate.py`](cli/README.md) です。生成設定JSONを用意し、まず `--dry-run` で発話と読みを確認します。発話単位の再生成には `--ids` を使えます。通常の出力は結合WAVと、発話IDを先頭に持つ個別WAVのZIPです。
-
-新規シナリオのルビは青空文庫形式を使います。出典の表記と `source` を保持し、他形式から変換したルビは `tts_text` に記述します。長い発話はシナリオ上で別発話に分けます。編集指示と追加ルビの書式は [v3詳細仕様](docs/V3_SCENARIO_SPEC.md) を参照してください。
-
-## 関連資料
-
-- [シナリオJSON仕様](notebook/01_SPEC_SHEET.md)
-- [ライセンス](LICENSE)
-- [第三者の権利表示](THIRD_PARTY_NOTICES.md)
-- [収録元と検証範囲](docs/PROVENANCE.md)
-
-Notebook版は旧資料です。v3の朗読生成にはCLIを使用してください。
+Notebook版と [V3試作ガイド](V3_PROTOTYPE_GUIDE.md)は過去の資料です。

@@ -34,6 +34,8 @@ class RubySpan:
     plain_start: int
     plain_end: int
     explicit_bar: bool
+    source_start: int = 0
+    source_end: int = 0
 
 
 @dataclass(frozen=True)
@@ -155,6 +157,8 @@ def parse_aozora_ruby(
                     plain_start=start,
                     plain_end=plain_len,
                     explicit_bar=True,
+                    source_start=i,
+                    source_end=close_idx + 1,
                 )
             )
             i = close_idx + 1
@@ -193,6 +197,8 @@ def parse_aozora_ruby(
                     plain_start=start,
                     plain_end=plain_len,
                     explicit_bar=False,
+                    source_start=i - len(surface),
+                    source_end=close_idx + 1,
                 )
             )
             i = close_idx + 1
@@ -239,6 +245,42 @@ def apply_ruby_selections(
 
 
 SpanScorer = Callable[[str, str, int, int, str], float]
+
+
+def score_ruby_span(plain, span, scorer, threshold, single_token_threshold):
+    repl_text = (
+        plain[: span.plain_start]
+        + span.reading
+        + plain[span.plain_end :]
+    )
+    score_span_fn = getattr(scorer, "score_span", None)
+    if callable(score_span_fn):
+        score_val, span_tokens = score_span_fn(
+            plain,
+            repl_text,
+            span.plain_start,
+            span.plain_end,
+            span.reading,
+        )
+        score = float(score_val)
+        eff_threshold = (
+            single_token_threshold
+            if (single_token_threshold is not None and span_tokens == 1)
+            else threshold
+        )
+    else:
+        score = float(
+            scorer(
+                plain,
+                repl_text,
+                span.plain_start,
+                span.plain_end,
+                span.reading,
+            )
+        )
+        eff_threshold = threshold
+    is_kana = score <= eff_threshold
+    return score, is_kana
 
 
 def convert_ruby_text(
@@ -294,41 +336,12 @@ def convert_ruby_text(
         if scorer is None:
             raise ValueError("auto_select mode requires a `scorer` callable.")
 
-        score_span_fn = getattr(scorer, "score_span", None)
         decisions_list: list[RubySelectionDecision] = []
         use_kana_flags: list[bool] = []
         for span in parsed.spans:
-            repl_text = (
-                parsed.plain_text[: span.plain_start]
-                + span.reading
-                + parsed.plain_text[span.plain_end :]
+            score, is_kana = score_ruby_span(
+                parsed.plain_text, span, scorer, threshold, single_token_threshold
             )
-            if callable(score_span_fn):
-                score_val, span_tokens = score_span_fn(
-                    parsed.plain_text,
-                    repl_text,
-                    span.plain_start,
-                    span.plain_end,
-                    span.reading,
-                )
-                score = float(score_val)
-                eff_threshold = (
-                    single_token_threshold
-                    if (single_token_threshold is not None and span_tokens == 1)
-                    else threshold
-                )
-            else:
-                score = float(
-                    scorer(
-                        parsed.plain_text,
-                        repl_text,
-                        span.plain_start,
-                        span.plain_end,
-                        span.reading,
-                    )
-                )
-                eff_threshold = threshold
-            is_kana = score <= eff_threshold
             use_kana_flags.append(is_kana)
             decisions_list.append(
                 RubySelectionDecision(
