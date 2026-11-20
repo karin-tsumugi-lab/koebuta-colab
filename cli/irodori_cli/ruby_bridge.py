@@ -100,7 +100,8 @@ def _managed_ruby(row, mode, threshold, single_threshold, scorer):
             if plain[left:right] == reading:
                 return None
         for tag, a, b, c, d in edits:
-            if tag == 'equal' and a <= start < end <= b and plain.count(surface) == 1:
+            if (tag == 'equal' and a <= start < end <= b
+                    and authored.plain_text.count(surface) == plain.count(surface) == 1):
                 return c + start - a, c + end - a
             if tag == 'replace' and (a, b) == (start, end) and plain[c:d] == reading:
                 return None  # Explicit TTS text already contains this reading.

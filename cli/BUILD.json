@@ -61,7 +61,7 @@
     "irodori_cli/faithful_worker.py": "ed1360e9e7c3e292f638136c8eb2ee931c37386b077ac1310da9717f5fdfb8df",
     "irodori_cli/emoji_tags.py": "d9e161ee2c9bcdbefc73bf3fc0b4208b4695898f8d12bff700047d4afb224857",
     "test_faithful.py": "b89e7fe5c215b2ae9f69ec0c8601e88e6ba8d47c9a31d13890da3dd1fb960774",
-    "irodori_cli/ruby_bridge.py": "ded9595d73e13c26e690c05e889704187d7ccb28d93a156806a6c9cb9cdb2d78",
+    "irodori_cli/ruby_bridge.py": "2a0a8ab5acaf2f078eb5e7b6c41f0bb6123cf274434b2afed7b3cf0f682c4ecc",
     "irodori_cli/ruby_core.py": "14f2f5521d0c1f3d2c60f05c76468a558c45f5d09a9dd0439b430858a5fb5d7e",
     "test_v3_scenario.py": "99bfbba360fa9ef06696cec79a5a3ac1373218e2d0e3ed77a9bc82c014c8d142"
   },
