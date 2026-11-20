@@ -13,7 +13,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: python -m unittest -v test_faithful test_irodori_generate test_cli_terminal
+      - run: python -m unittest -v test_faithful test_irodori_generate test_cli_terminal test_ruby_bridge test_v3_scenario
         working-directory: cli
       - run: python -m unittest -v test_inspector_p0 test_notebook_v2 test_v2_emoji test_v2_source_validation
       - uses: actions/setup-node@v4

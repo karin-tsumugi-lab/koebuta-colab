@@ -1,10 +1,10 @@
-# Koebuta Notebook v2
+# Koebuta Notebook v2（旧資料）
 
 > Colabの無料枠・CU残高なしでの外部WebUI利用には追加制限があります。[Colab利用条件の注意](../docs/COLAB_USAGE.md) を確認してください。有料プランでも一般の禁止事項やリソース制限は残ります。
 
-Irodori-TTSを利用し、シナリオJSONから話者ごとの朗読音声を作成する正式版の生成専用ノートブックです。操作手順は [v2操作ガイド](NOTEBOOK_V2_GUIDE.md)、全体の使い分けは [総合README](../README.md) を参照してください。
+Irodori-TTSを利用し、シナリオJSONから話者ごとの朗読音声を作成する旧世代の生成専用ノートブックです。v3の生成には [CLI](../cli/README.md) を使用してください。操作手順は [v2操作ガイド](NOTEBOOK_V2_GUIDE.md)、全体の使い分けは [総合README](../README.md) を参照してください。
 
-## 起動
+## 旧版の起動手順
 
 このフォルダーの [Notebook v2をColabで開く](https://colab.research.google.com/github/karin-tsumugi-lab/koebuta-colab/blob/main/notebook/Koebuta_Notebook_v2.ipynb)。
 
@@ -17,7 +17,7 @@ Irodori-TTSを利用し、シナリオJSONから話者ごとの朗読音声を�
 
 シナリオ化は一人朗読・複数人朗読共通の [02 v0.3](02_CHAT_PROMPT.md) を使い、作品全体→場面→発話の順に演出します。一人朗読は一つの話者IDです。発話長20〜80文字は推奨範囲であり、内部生成片とは区別します。見出し類の `text` 改変は明示許可のある範囲だけで、本文・台詞は保持します。JSON交換形式v1とNotebook v2は別の版番号です。
 
-正式Notebook v2は原文不一致を警告として表示し、生成は継続できます。許可済み見出し改変か意図しない本文差分かを確認してください。`source` は元原稿のまま保持します。CLIの新入口も `source` 提供時には原文不一致を警告します。`source` 未提供時は照合未実施です。いずれも原稿全体の確認は別途必要です。詳しくは[エディタ案内](../docs/EDITOR_GUIDE.md)を参照してください。
+旧Notebook v2は原文不一致を警告として表示し、生成は継続できます。許可済み見出し改変か意図しない本文差分かを確認してください。`source` は元原稿のまま保持します。CLIの新入口も `source` 提供時には原文不一致を警告します。`source` 未提供時は照合未実施です。いずれも原稿全体の確認は別途必要です。詳しくは[エディタ案内](../docs/EDITOR_GUIDE.md)を参照してください。
 
 ## 資料
 

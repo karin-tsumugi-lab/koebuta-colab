@@ -8,6 +8,7 @@ from typing import Any
 
 from .ruby_core import (
     RubySyntaxError,
+    RubyParseResult,
     StandaloneSpanScorer,
     apply_ruby_selections,
     convert_ruby_text,
@@ -73,11 +74,32 @@ def check_notes(row):
 def _managed_ruby(row, mode, threshold, single_threshold, scorer):
     """Resolve authored readings, retaining unrelated edits and TTS boundaries."""
     def parse(text):
-        return parse_aozora_ruby(normalize_safe_ruby_formats(text), strict=True)
+        if normalize_safe_ruby_formats(text) != text or '《《' in text:
+            raise RubySyntaxError('読み上げ文のルビは青空文庫形式（｜親文字《読み》）に変換してください')
+        return parse_aozora_ruby(text, strict=True)
 
     original = row['text']
-    authored = parse(original)
-    raw_tts = row.get('tts_text') or original
+    source_format = row.get('text_format', 'aozora')
+    source_map = None
+    raw_tts = row.get('tts_text')
+    if source_format in ('narou', 'kakuyomu', 'pixiv'):
+        from .text_conversion import convert_with_map
+        from .text_map import mapped_boundary
+
+        if not raw_tts or not raw_tts.strip():
+            raise RubySyntaxError('原文を保持し、青空文庫形式に変換した読み上げ文を tts_text に指定してください')
+        if source_format == 'narou':
+            _, _, tts_map = convert_with_map(raw_tts, source_format)
+            if any(piece['operation'] == 'ruby' and '《' not in raw_tts[slice(*piece['source_span'])]
+                   for piece in tts_map):
+                raise RubySyntaxError('なろう形式のルビを青空文庫形式へ変換してください')
+        source_reading, issues, source_map = convert_with_map(original, source_format)
+        if issues:
+            raise RubySyntaxError('原文のルビを特定できません: ' + ' / '.join(issues))
+        authored = RubyParseResult(original, source_reading)
+    else:
+        authored = parse(original)
+    raw_tts = raw_tts or original
     if not raw_tts.strip():
         raw_tts = original
     resolved = parse(raw_tts)
@@ -129,9 +151,26 @@ def _managed_ruby(row, mode, threshold, single_threshold, scorer):
         if any(a < end and start < b for start, end in occupied):
             raise RubySyntaxError(f'追加ルビが重複しています: {surface}')
         occupied.append((a, b))
-        start = len(parse_aozora_ruby(
-            normalize_safe_ruby_formats(original[:a]), strict=False).plain_text)
-        end = start + len(surface)
+        if source_map is not None:
+            if any(piece['operation'] == 'ruby' and a < piece['source_span'][1]
+                   and piece['source_span'][0] < b for piece in source_map):
+                continue
+            def source_boundary(pos):
+                boundary = mapped_boundary(source_map, pos)
+                if boundary is not None:
+                    return boundary
+                for piece in source_map:
+                    left, right = piece['source_span']
+                    if piece['operation'] == 'emphasis' and left + 2 <= pos <= right - 2:
+                        return piece['tts_span'][0] + pos - left - 2
+                return None
+
+            start, end = source_boundary(a), source_boundary(b)
+            if start is None or end is None:
+                raise RubySyntaxError(f'追加ルビの対象位置を確認してください: {surface}')
+        else:
+            start = len(parse_aozora_ruby(original[:a], strict=False).plain_text)
+            end = start + len(surface)
         if authored.plain_text[start:end] != surface:
             raise RubySyntaxError(f'追加ルビの対象位置を確認してください: {surface}')
         if any(start < span.plain_end and span.plain_start < end for span in authored.spans):
@@ -168,16 +207,7 @@ def _managed_ruby(row, mode, threshold, single_threshold, scorer):
         return result
 
     if 'koebuta_tts_parts' in row:
-        _, parsed_parts = _validate_and_parse_parts(
-            normalize_safe_ruby_formats(raw_tts), row['koebuta_tts_parts'])
-        if parsed_parts is None:
-            raise RubySyntaxError('TTS片の形式を確認してください')
-        cursor, parts = 0, []
-        for part in parsed_parts:
-            next_cursor = cursor + len(part.plain_text)
-            parts.append(render(cursor, next_cursor))
-            cursor = next_cursor
-        row['koebuta_tts_parts'] = parts
+        raise RubySyntaxError('v3ではTTS片を作成できません。発話IDを分けたシナリオを使用してください')
     row['tts_text'] = render(0, len(plain))
     return dict(segment_id=row.get('id'), plain_text=plain,
                 tts_text=row['tts_text'], decisions=decisions)
@@ -235,7 +265,7 @@ def apply_ruby_to_scenario(
         reports = []
         for row in updated['segments']:
             if (not isinstance(row, dict) or row.get('segment_type') == 'separator'
-                    or not isinstance(row.get('text'), str)
+                    or 'koebuta_added_ruby' not in row or not isinstance(row.get('text'), str)
                     or (row.get('tts_text') is not None and not isinstance(row['tts_text'], str))):
                 continue
             if selected_segment_ids is not None and row.get('id') not in selected_segment_ids:

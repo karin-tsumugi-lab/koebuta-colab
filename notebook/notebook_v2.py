@@ -98,29 +98,16 @@ def find_project(folder):
     return found[0].parent
 
 
-def load_project(folder, normalize, validate, settings, resolve_wavs, *, legacy_identity=None):
+def load_project(folder, normalize, validate, settings, resolve_wavs):
     root = find_project(folder)
     path = root / 'scenario.json'
     if path.stat().st_size > 16 * 1024 * 1024:
         raise ValueError('シナリオJSONが16MiBを超えています')
     raw = path.read_bytes()
-    if legacy_identity is not None:
-        legacy_identity['scenario_sha256'] = hashlib.sha256(raw).hexdigest()
     data = json.loads(raw)
     if not isinstance(data, dict):
         raise ValueError('JSONのルートはオブジェクトが必要です')
     project = normalize(data)
-    for segment in data.get('segments', []):
-        if isinstance(segment, dict) and 'notes' in segment:
-            notes = segment['notes']
-            if not isinstance(notes, list) or any(not isinstance(note, str) for note in notes):
-                raise ValueError('notes は文字列の配列で指定してください')
-    audio_identity = dict(data)
-    audio_identity['segments'] = [
-        {k: v for k, v in segment.items() if k != 'notes'} if isinstance(segment, dict) else segment
-        for segment in data.get('segments', [])
-    ]
-    identity_bytes = json.dumps(audio_identity, ensure_ascii=False, sort_keys=True).encode()
     for segment in data.get('segments', []):
         for key in ('pause_after_ms', 'blank_line_pause_ms'):
             if key in segment and (type(segment[key]) is not int or not 0 <= segment[key] <= 60000):
@@ -128,7 +115,7 @@ def load_project(folder, normalize, validate, settings, resolve_wavs, *, legacy_
     validate(project)
     config = settings(project)
     voices, warnings = resolve_wavs(project, root)
-    return project, config, voices, warnings, hashlib.sha256(identity_bytes).hexdigest()
+    return project, config, voices, warnings, hashlib.sha256(raw).hexdigest()
 
 
 def valid_wav(path):
@@ -145,11 +132,10 @@ class CandidateStore:
     The synthesizer writes a WAV to its supplied path. A group is published only
     after every synthesis succeeds and every WAV is validated.
     """
-    def __init__(self, workspace, identity, *, legacy_identity=None):
+    def __init__(self, workspace, identity):
         self.root = Path(workspace)
         self.root.mkdir(parents=True, exist_ok=True)
         self.identity = dict(identity)
-        self.legacy_identity = legacy_identity
         self.accepted, self.candidates, self.cache, self.references = {}, {}, {}, {}
         self.session_settings = {}
         self.history = []
@@ -256,14 +242,11 @@ class CandidateStore:
     def restore(self):
         with self.lock:
             state = json.loads((self.root / 'state.json').read_bytes())
-            saved_identity = state.get('identity')
-            if state.get('version') != 2 or (saved_identity != self.identity and
-                    (not self.legacy_identity or saved_identity != self.legacy_identity)):
+            if state.get('version') != 2 or state.get('identity') != self.identity:
                 raise ValueError('保存状態のモデル識別情報が一致しません')
             groups = [state['accepted'], state['candidates']]
             if any(not self._valid(r) for group in groups for r in group.values()):
                 raise ValueError('保存状態の音声が欠落または破損しています')
-            self.identity = saved_identity
             self.accepted, self.candidates = groups
             self.session_settings = state.get('session_settings', {})
             history = state.get('history', [])

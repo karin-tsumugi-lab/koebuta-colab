@@ -4,10 +4,11 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+import zipfile
 
 from irodori_cli.faithful import PlanError
 from irodori_cli.faithful_worker import _resolve_ruby_plan
-from irodori_generate import load_inputs, main
+from irodori_generate import load_inputs, main, write_segment_archive
 
 
 class V3ScenarioTests(unittest.TestCase):
@@ -66,3 +67,58 @@ class V3ScenarioTests(unittest.TestCase):
         self.save()
         with self.assertRaisesRegex(PlanError, 't0001'):
             load_inputs(self.source, self.settings)
+
+    def test_unrelated_legacy_rows_keep_their_declared_formats(self):
+        self.scenario['segments'] += [
+            dict(id='n1', speaker_id='n', emotion='neutral', text_format='narou',
+                 text='先ほど冷気(れいき)が窓から入ってきました。'),
+            dict(id='k1', speaker_id='n', emotion='neutral', text_format='kakuyomu',
+                 text='先ほど《《冷気》》が窓から入ってきました。'),
+        ]
+        self.save()
+        document, voices, requests = load_inputs(self.source, self.settings)
+        plan, _ = _resolve_ruby_plan(document, {'requests': requests}, voices, lambda *a: 0.99)
+        self.assertEqual([r['request']['text'] for r in plan['requests'][1:]], [
+            '先ほどれいきが窓から入ってきました。',
+            '先ほど冷気が窓から入ってきました。',
+        ])
+
+    def test_v3_uses_canonical_tts_annotations_with_legacy_source_offsets(self):
+        for fmt, source in (
+            ('narou', '冷気(れいき)と冷い風が窓から入ってきました。'),
+            ('kakuyomu', '｜冷気《れいき》と《《冷い風》》が窓から入ってきました。'),
+            ('pixiv', '[[rb:冷気 > れいき]]と冷い風が窓から入ってきました。'),
+        ):
+            with self.subTest(fmt=fmt):
+                row = self.scenario['segments'][0]
+                row.update(text=source, text_format=fmt,
+                           tts_text='｜冷気《れいき》と冷い風が窓から入ってきました。')
+                start = row['text'].index('冷い')
+                row['koebuta_added_ruby'] = [dict(start=start,end=start+2,surface='冷い',
+                                                   reading='つめたい',selection='kana')]
+                self.save()
+                document, _, requests = load_inputs(self.source, self.settings)
+                self.assertEqual(requests[0]['request']['text'], 'れいきとつめたい風が窓から入ってきました。')
+                self.assertEqual(document['scenario']['segments'][0]['text'], row['text'])
+                del row['tts_text']
+                self.save()
+                with self.assertRaisesRegex(PlanError,'青空文庫形式'):
+                    load_inputs(self.source, self.settings)
+
+    def test_v3_rows_use_utterances_instead_of_tts_parts(self):
+        row = self.scenario['segments'][0]
+        row['tts_text'] = row['text']
+        row['koebuta_tts_parts'] = [row['text'][:9],row['text'][9:]]
+        self.save()
+        with self.assertRaisesRegex(PlanError,'発話ID'):
+            load_inputs(self.source,self.settings)
+
+    def test_legacy_parent_wavs_have_distinct_windows_paths(self):
+        source = self.root / 'audio.wav'
+        source.write_bytes(b'fixture')
+        path = self.root / 'segments.zip'
+        parents = {sid:{'file':source.name} for sid in ('T1','t1','t1__1','CON')}
+        write_segment_archive(path,self.root,{'combined':{'take_files':[]},'parent_audio':parents})
+        with zipfile.ZipFile(path) as archive:
+            self.assertEqual(archive.namelist(), [
+                'utterances/T1.wav','utterances/t1__2.wav','utterances/t1__1.wav','utterances/CON__1.wav'])

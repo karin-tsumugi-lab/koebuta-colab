@@ -98,7 +98,7 @@ dry-runを確認後、実行時には `--dry-run` を外します。毎回新し
 | ファイル | 内容 |
 | --- | --- |
 | `result.wav` | 入力順に結合した全体／選択範囲の音声 |
-| `segments.zip` | 生成単位のWAVと、全片が揃った親の `utterances/ID.wav` |
+| `segments.zip` | 生成単位のWAVと、旧データで全片が揃った親発話WAV。大文字と小文字が違うIDも別名で展開できるようにします |
 | `generated_project.json` | 元シナリオ・設定と実行契約を含む回収記録（シナリオ単体ではない） |
 | `pipeline.json` | 完了状態、検証結果、保存先、停止結果 |
 | `plan.json` | 生成要求・親ID／片番号・範囲・実効設定・診断 |
@@ -127,4 +127,4 @@ dry-runを確認後、実行時には `--dry-run` を外します。毎回新し
 
 ### v3のシナリオ項目
 
-発話の `notes` は自由記述の編集指示です。追加ルビと個別WAVの命名は [v3詳細仕様](../docs/V3_SCENARIO_SPEC.md) を参照してください。旧版へ確定済みの読みを渡すには、通常の `--scenario` と `--settings` に `--export-compatible legacy.json` を指定します。
+v3のルビは青空文庫形式に揃え、生成単位は発話です。発話の `notes` は自由記述の編集指示です。追加ルビと個別WAVの命名は [v3詳細仕様](../docs/V3_SCENARIO_SPEC.md) を参照してください。旧版へ確定済みの読みを渡すには、通常の `--scenario` と `--settings` に `--export-compatible legacy.json` を指定します。

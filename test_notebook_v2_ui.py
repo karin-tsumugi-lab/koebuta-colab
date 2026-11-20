@@ -4,14 +4,12 @@ import sys
 from pathlib import Path
 import unittest
 import tempfile
-import zipfile
 import json
 import numpy as np
 from unittest.mock import MagicMock, patch
 from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).parent / 'notebook'))
-sys.path.insert(0, str(Path(__file__).parent / 'cli'))
 from notebook_v2_ui import create_v2_ui
 
 
@@ -31,10 +29,7 @@ class UiSmoke(unittest.TestCase):
             wav(project / 'ref.wav')
             raw = json.dumps({'schema_version': 1, 'speakers': {'a': {'name': 'A', 'kind': 'character', 'reference_wav': 'ref.wav'}},
                 'segments': [{'id': 't010', 'speaker_id': 'a', 'text': 'こんにちは。お元気ですか。', 'tts_text': 'こんにちは。お元気ですか。',
-                              'koebuta_tts_parts': ['こんにちは。', 'お元気ですか。'],
-                              'notes': ['[編集] この発話の直後に水音'],
-                              'koebuta_added_ruby': [{'start': 7, 'end': 9, 'surface': '元気',
-                                                      'reading': 'げんき', 'selection': 'kana'}]}],
+                              'koebuta_tts_parts': ['こんにちは。', 'お元気ですか。']}],
                 'koebuta_settings': {'reading_mode': 'cast'}}).encode()
             (project / 'scenario.json').write_bytes(raw)
             demo = create_v2_ui(api)
@@ -42,8 +37,6 @@ class UiSmoke(unittest.TestCase):
             loaded = callbacks['load'](None, None, str(project))
             state = loaded[-1]
             self.assertEqual([row[0] for row in loaded[-3]], ['t010#1', 't010#2'])
-            self.assertIn('おげんきですか。', callbacks['details'](state, 't010#2')[0])
-            self.assertIn('[編集] この発話の直後に水音', callbacks['details'](state, 't010#2')[0])
             self.assertIn('声設定 有', callbacks['role_info'](state, 'a')[1]['choices'][0][0])
             callbacks['edit_caption'](state, 'a', '穏やかで低い声')
             self.assertEqual(callbacks['role_info'](state, 'a')[0], '穏やかで低い声')
@@ -79,15 +72,9 @@ class UiSmoke(unittest.TestCase):
             exported = callbacks['output'](state, '', *settings)
             self.assertTrue(Path(exported[0]).is_file())
             self.assertTrue(Path(exported[2]).is_file())
-            with zipfile.ZipFile(exported[2]) as archive:
-                self.assertEqual(archive.namelist(), ['t010_part1_0001_a.wav', 't010_part2_0002_a.wav'])
             self.assertIn('_完成_', Path(exported[0]).name)
             callbacks['save_state'](state, str(saved_folder), *settings)
-            changed_notes = json.loads(raw)
-            changed_notes['segments'][0]['notes'] = ['[編集] 別の素材を使う']
-            (project / 'scenario.json').write_text(json.dumps(changed_notes), encoding='utf8')
             mixed = callbacks['load'](None, None, str(project))[-1]
-            (project / 'scenario.json').write_bytes(raw)
             callbacks['restore'](mixed, str(saved_folder))
             self.assertEqual(mixed['store'].accepted['t010#1']['unit']['seed'], 999)
             self.assertEqual(mixed['store'].accepted['t010#2']['unit']['seed'], 314)

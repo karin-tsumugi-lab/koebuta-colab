@@ -104,6 +104,27 @@ def load_inputs(
     return document, plan['voices'], plan['requests']
 
 
+def write_segment_archive(destination, job, manifest):
+    """Keep take names and avoid collisions when extracting on Windows."""
+    devices = {'CON', 'PRN', 'AUX', 'NUL'} | {f'{port}{i}' for port in ('COM', 'LPT') for i in range(1, 10)}
+    parents = manifest.get('parent_audio', {})
+    reserved = {f'{sid}.wav'.casefold() for sid in parents}
+    used = set()
+    with zipfile.ZipFile(destination, 'w', zipfile.ZIP_DEFLATED) as archive:
+        for relative in dict.fromkeys(manifest['combined']['take_files']):
+            archive.write(inside(job, relative), relative)
+        for sid, record in parents.items():
+            name = f'{sid}.wav'
+            if name.casefold() in used or sid.upper() in devices:
+                serial = 1
+                name = f'{sid}__{serial}.wav'
+                while name.casefold() in reserved or name.casefold() in used:
+                    serial += 1
+                    name = f'{sid}__{serial}.wav'
+            used.add(name.casefold())
+            archive.write(inside(job, record['file']), f'utterances/{name}')
+
+
 def verify_authored_recovery(recovered, document, requests):
     manifest = read_json(Path(recovered) / 'job/job.json')
     if (manifest.get('authored_plan_signature') != document['expected_plan']
@@ -335,11 +356,7 @@ def main(argv=None):
             manifest = verify_authored_recovery(recovered, project, requests)
             combined = manifest['combined']
             shutil.copyfile(inside(recovered / 'job', combined['file']), out / 'result.wav')
-            with zipfile.ZipFile(out / 'segments.zip', 'w', zipfile.ZIP_DEFLATED) as archive:
-                for relative in dict.fromkeys(combined['take_files']):
-                    archive.write(inside(recovered / 'job', relative), relative)
-                for sid, record in manifest.get('parent_audio', {}).items():
-                    archive.write(inside(recovered / 'job', record['file']), 'utterances/' + sid + '.wav')
+            write_segment_archive(out / 'segments.zip', recovered / 'job', manifest)
             shutil.copyfile(recovered / 'project.json', out / 'generated_project.json')
             summary = {'status': 'complete', 'session': args.session, 'job': args.job,
                        'audio': str(out / 'result.wav'), 'segments': str(out / 'segments.zip'),

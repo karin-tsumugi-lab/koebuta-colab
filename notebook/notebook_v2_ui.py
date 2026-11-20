@@ -148,8 +148,7 @@ def create_v2_ui(api):
             record = records.get(selected)
             return str(store.root / record['file']) if record and store._valid(record) else None
         return (f"{selected}\n話者: {segment['role']} / 感情: {segment['emotion']} / 休止: {unit['pause_after_ms']}ms\n"
-                f"読み上げ文: {unit['text']}\n演技・声質: {unit['caption'] or '指定なし'}"
-                + ''.join(f"\n編集指示: {note}" for note in segment.get('_extras', {}).get('notes', [])),
+                f"読み上げ文: {unit['text']}\n演技・声質: {unit['caption'] or '指定なし'}",
                 audio(store.accepted), audio(store.candidates))
 
     @guarded
@@ -164,38 +163,14 @@ def create_v2_ui(api):
             atomic_bytes(source / 'scenario.json', path.read_bytes())
         else:
             source = unpack_project(archive, state['root'] / uuid.uuid4().hex) if archive else folder
-        legacy = {}
         project, config, voices, warnings, digest = load_project(source,
-            api['normalize_scenario'], api['require_ready'], api['notebook_settings'], api['resolve_project_wavs'],
-            legacy_identity=legacy)
+            api['normalize_scenario'], api['require_ready'], api['notebook_settings'], api['resolve_project_wavs'])
         from notebook_v2 import find_project
-        if any('koebuta_added_ruby' in s.get('_extras', {}) for s in project['segments']):
-            from irodori_cli.ruby_bridge import apply_ruby_to_scenario
-            from irodori_cli.ruby_core import RuntimeSpanScorer
-
-            class LazyScorer:
-                @functools.cached_property
-                def encoder(self):
-                    return RuntimeSpanScorer(api['load_runtime']())
-
-                def score_span(self, *args):
-                    return self.encoder.score_span(*args)
-
-            resolved, _ = apply_ruby_to_scenario(
-                api['export_scenario'](project), mode='auto_select', scorer=LazyScorer())
-            planned = {s['id']: s for s in resolved['segments']}
-            for segment in project['segments']:
-                row = planned[segment['id']]
-                if 'tts_text' in row:
-                    segment['tts_text'] = row['tts_text']
-                if 'koebuta_tts_parts' in row:
-                    segment['_extras']['koebuta_tts_parts'] = row['koebuta_tts_parts']
         state.update(project=project, voices=voices, plan=[], source=find_project(source))
         identity = {k: api.get(k, 'unknown') for k in
                     ('MODEL_ID', 'MODEL_REVISION', 'CODEC_ID', 'CODEC_REVISION', 'IRODORI_RESOLVED_COMMIT')}
-        legacy = identity | legacy
         identity['scenario_sha256'] = digest
-        state['store'] = CandidateStore(state['root'] / uuid.uuid4().hex, identity, legacy_identity=legacy)
+        state['store'] = CandidateStore(state['root'] / uuid.uuid4().hex, identity)
         roles = ['shared'] if project.get('reading') == 'shared' else [r['id'] for r in project['roles']]
         role_choices = speaker_choices(state)
         units = plan(state, config.get('seed', 314), config.get('steps', 40), config.get('use_acting', False),
@@ -371,7 +346,7 @@ def create_v2_ui(api):
                 segment = next(s for s in state['project']['segments'] if s['id'] == unit['segment_id'])
                 label = re.sub(r'[^\w.-]', '_', unit['unit_id'].replace('#', '_part'))
                 speaker = re.sub(r'[^\w.-]', '_', segment['role'])
-                archive.write(path, f'{label}_{index + 1:04d}_{speaker}.wav')
+                archive.write(path, f'{index + 1:04d}_{label}_{speaker}.wav')
         message = '完成WAVと個別音声ZIPを作成しました'
         if destination.strip():
             progress(0.9, desc='Driveへ保存中（一時領域にも保持します）')
@@ -418,7 +393,7 @@ def create_v2_ui(api):
 
     @guarded
     def restore(state, folder):
-        source = CandidateStore(folder, state['store'].identity, legacy_identity=state['store'].legacy_identity)
+        source = CandidateStore(folder, state['store'].identity)
         source.restore()
         warning = source.persist(state['store'].root)
         if warning:
@@ -436,7 +411,7 @@ def create_v2_ui(api):
 
     with gr.Blocks() as demo:
         state = gr.State(None)
-        gr.Markdown('# Koebuta Notebook · v3シナリオ対応\nシナリオJSONは読み取り専用です。編集はHTML版で行ってください。')
+        gr.Markdown('# Koebuta Notebook v2\nシナリオJSONは読み取り専用です。編集はHTML版で行ってください。')
         with gr.Row():
           with gr.Column(scale=1, min_width=400):
             gr.Markdown('## 1. 作品の読み込み')
