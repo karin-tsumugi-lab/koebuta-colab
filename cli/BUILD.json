@@ -45,7 +45,7 @@
     "irodori_cli_examples/generate_settings.json": "c17ccaeb402e07831fea4b2144d72c8a538b29ec3233f80e37bb11e7d978b529",
     "irodori_colab_cli.py": "d4d227f4c8254e7af99e80277d96b80946364d2a2d590af967ff2cc7ac7b4c5f",
     "irodori_colab_entry.py": "2ec5c1b697a650c65f387dc570ac70c15e94282ba9b7baf5333dc2dc1a218e9f",
-    "irodori_generate.py": "4fd9a584564a40ce4e3cf762148cb2c672e7112f9f91ce71e8814923d4d76499",
+    "irodori_generate.py": "cfc86b043b8f8e09ef8051b1d84247c6d8d6346f379446ccf9c855c65fc47287",
     "irodori_local.py": "32fa51ba087e9136befdd0654664f9041d6366434b42e9b91b4679a022b2889f",
     "irodori_session_probe.py": "bda058266f2b4474b2f0a7569ea89799e702c102b67f5b5faa1245ff77e60b4e",
     "irodori_tts_release.py": "211709e462ad16f073367f5a5a67e15e3db49535ccb7fb31ce76a7a4d26db047",
@@ -61,9 +61,9 @@
     "irodori_cli/faithful_worker.py": "ed1360e9e7c3e292f638136c8eb2ee931c37386b077ac1310da9717f5fdfb8df",
     "irodori_cli/emoji_tags.py": "d9e161ee2c9bcdbefc73bf3fc0b4208b4695898f8d12bff700047d4afb224857",
     "test_faithful.py": "b89e7fe5c215b2ae9f69ec0c8601e88e6ba8d47c9a31d13890da3dd1fb960774",
-    "irodori_cli/ruby_bridge.py": "d415733d023a0bb7523775c9a9c17faa5c1ecb76880162c240428f3552e08420",
+    "irodori_cli/ruby_bridge.py": "f3631077d0120f9e706d37c1d7d6a953b769f3644e7cef87b1a30c26f01e614e",
     "irodori_cli/ruby_core.py": "14f2f5521d0c1f3d2c60f05c76468a558c45f5d09a9dd0439b430858a5fb5d7e",
-    "test_v3_scenario.py": "7cce5f9b4d0556f3b01f2ca3052dc12a762903ec6f41e6b3eff5fa483fb112d3"
+    "test_v3_scenario.py": "b92455cd8a53120a9439057adaad8faf05539ad4e8223b2fa588ef449b58df90"
   },
   "execution_contract": "koebuta-faithful-v1"
 }

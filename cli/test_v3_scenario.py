@@ -156,6 +156,40 @@ class V3ScenarioTests(unittest.TestCase):
         self.assertEqual(resolved['selected'], 'kana')
         self.assertIsNone(unresolved['selected'])
 
+    def test_mandatory_ruby_without_added_ruby_field(self):
+        row = self.scenario['segments'][0]
+        del row['koebuta_added_ruby']
+        for fmt, original in (
+            ('aozora', '｜明日《あす》'), ('narou', '明日(あす)'),
+            ('kakuyomu', '|明日《あす》'), ('pixiv', '[[rb:明日 > あす]]'),
+        ):
+            row.update(text=original + 'の朝に出発します。', text_format=fmt)
+            for working in ('明日', 'あす', '｜明日《あす》', '｜あす《あす》'):
+                with self.subTest(fmt=fmt, working=working):
+                    row['tts_text'] = working + 'の朝に出発します。'
+                    self.save()
+                    _, _, requests = load_inputs(self.source, self.settings)
+                    self.assertEqual(requests[0]['request']['text'], 'あすの朝に出発します。')
+            for working in ('｜明日《あした》', '｜あす《あした》'):
+                with self.subTest(fmt=fmt, conflict=working):
+                    row['tts_text'] = working + 'の朝に出発します。'
+                    self.save()
+                    with self.assertRaisesRegex(PlanError, 't0001.*あす.*あした'):
+                        load_inputs(self.source, self.settings)
+
+    def test_remote_plan_and_dry_run_expand_ruby_without_added_ruby_field(self):
+        self.scenario['segments'].append(dict(id='t0002', speaker_id='n', emotion='neutral',
+            text='｜明日《あす》の朝に出発します。', tts_text='明日の朝に出発します。'))
+        self.save()
+        document, voices, requests = load_inputs(self.source, self.settings)
+        resolved, _ = _resolve_ruby_plan(document, {'requests': requests}, voices, lambda *a: 0.99)
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(main(['--scenario', str(self.source), '--settings', str(self.settings),
+                                   '--dry-run']), 0)
+        for plan in (resolved, json.loads(output.getvalue())):
+            self.assertEqual(plan['requests'][1]['request']['text'], 'あすの朝に出発します。')
+
     def test_author_reading_survives_legacy_conversion_or_flags_conflict(self):
         for fmt, original in (
             ('narou', '冷気(れいき)が窓から入ってきました。'),

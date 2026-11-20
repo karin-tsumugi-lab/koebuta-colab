@@ -55,8 +55,27 @@ def _speech_rows(scenario):
                     and row.get('segment_type') != 'separator')
 
 
-def uses_added_ruby(scenario):
-    return any('koebuta_added_ruby' in row for row in _speech_rows(scenario))
+def _requires_ruby_resolution(row):
+    if 'koebuta_added_ruby' in row:
+        return True
+    original = row.get('text')
+    working = row.get('tts_text')
+    if not isinstance(original, str) or 'koebuta_tts_parts' in row:
+        return False
+    if isinstance(working, str) and '｜' in working and '《' in working:
+        return True
+    fmt = row.get('text_format', 'aozora')
+    if fmt in ('pixiv', 'narou', 'kakuyomu'):
+        if not isinstance(working, str) or not working.strip():
+            return False  # build_plan reads the original in its declared format.
+        from .text_conversion import convert_with_map
+        _, _, pieces = convert_with_map(original, fmt)
+        return any(piece['operation'] == 'ruby' for piece in pieces)
+    return '《' in original and bool(parse_aozora_ruby(original, strict=False).spans)
+
+
+def requires_ruby_resolution(scenario):
+    return any(_requires_ruby_resolution(row) for row in _speech_rows(scenario))
 
 
 def has_automatic_ruby(scenario):
@@ -149,24 +168,23 @@ def _managed_ruby(row, mode, threshold, single_threshold, scorer):
         if reading is not None and all(len(m) == 1 for m in mapped):
             left, right = (next(iter(m)) for m in mapped)
             if plain[left:right] == reading:
-                return None
+                return left, right
         for tag, a, b, c, d in edits:
             if (tag == 'equal' and a <= start < end <= b
                     and authored.plain_text.count(surface) == plain.count(surface) == 1):
                 return c + start - a, c + end - a
             if tag == 'replace' and (a, b) == (start, end) and plain[c:d] == reading:
-                return None  # Explicit TTS text already contains this reading.
+                return c, d
         raise RubySyntaxError(f'読み上げ文で対象「{surface}」を特定できません。要確認')
 
     for span in authored.spans:
         loc = locate(span.plain_start, span.plain_end, span.surface, span.reading)
-        if loc is not None:
-            existing = mandatory.get(loc)
-            if existing is not None and existing.reading != span.reading:
-                raise RubySyntaxError(
-                    f'原文ルビ「{span.surface}《{span.reading}》」と'
-                    f'読み上げ文のルビ「{existing.reading}」が一致しません。要確認')
-            mandatory[loc] = replace(span, plain_start=loc[0], plain_end=loc[1])
+        existing = mandatory.get(loc)
+        if existing is not None and existing.reading != span.reading:
+            raise RubySyntaxError(
+                f'原文ルビ「{span.surface}《{span.reading}》」と'
+                f'読み上げ文のルビ「{existing.reading}」が一致しません。要確認')
+        mandatory[loc] = replace(span, plain_start=loc[0], plain_end=loc[1])
     replacements = [(a, b, span.reading) for (a, b), span in mandatory.items()]
     entries = row.get('koebuta_added_ruby', [])
     if not isinstance(entries, list):
@@ -211,9 +229,9 @@ def _managed_ruby(row, mode, threshold, single_threshold, scorer):
         if any(start < span.plain_end and span.plain_start < end for span in authored.spans):
             continue
         loc = locate(start, end, surface, reading if selection == 'kana' else None)
-        if loc is None:
-            continue
         start, end = loc
+        if plain[start:end] != surface:  # A confirmed addition was already expanded.
+            continue
         if any(start < right and left < end for left, right in mandatory):
             continue
         use_kana = selection == 'kana'
@@ -260,7 +278,7 @@ def prepare_remote_ruby_scenario(
     (and `koebuta_tts_parts` when present) without stripping ruby tags.
     """
     updated = copy.deepcopy(scenario)
-    if uses_added_ruby(scenario):
+    if requires_ruby_resolution(scenario):
         apply_ruby_to_scenario(scenario)  # Validate attachments before starting a runtime.
         return updated
     segments = updated.get('segments')
@@ -295,13 +313,13 @@ def apply_ruby_to_scenario(
     selected_segment_ids: set[str] | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """Apply ruby conversion to scenario `tts_text` (and `koebuta_tts_parts` when present)."""
-    managed = uses_added_ruby(scenario)
+    managed = requires_ruby_resolution(scenario)
     if managed:
         updated = copy.deepcopy(scenario)
         reports = []
         for row in updated['segments']:
             if (not isinstance(row, dict) or row.get('segment_type') == 'separator'
-                    or 'koebuta_added_ruby' not in row or not isinstance(row.get('text'), str)
+                    or not _requires_ruby_resolution(row) or not isinstance(row.get('text'), str)
                     or (row.get('tts_text') is not None and not isinstance(row['tts_text'], str))):
                 continue
             if selected_segment_ids is not None and row.get('id') not in selected_segment_ids:

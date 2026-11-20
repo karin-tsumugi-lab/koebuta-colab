@@ -35,7 +35,7 @@ def load_inputs(
     ruby_scorer=None,
 ):
     from irodori_cli.faithful import build_plan, load_json, plan_signature, CONTRACT, PlanError
-    from irodori_cli.ruby_bridge import apply_ruby_to_scenario, prepare_remote_ruby_scenario, uses_added_ruby, has_automatic_ruby
+    from irodori_cli.ruby_bridge import apply_ruby_to_scenario, prepare_remote_ruby_scenario, requires_ruby_resolution, has_automatic_ruby
     try:
         scenario, settings = load_json(scenario_path), load_json(settings_path)
     except (ValueError, OSError) as exc:
@@ -49,7 +49,7 @@ def load_inputs(
         raise ValueError('--ruby-preflight は遠隔判定モードです。--ruby-device local とは併用できません')
     if ruby_preflight and ruby_mode == 'none':
         ruby_mode = 'auto_select'
-    if ruby_mode != 'none' or uses_added_ruby(scenario):
+    if ruby_mode != 'none' or requires_ruby_resolution(scenario):
         resolved_device = 'remote' if ruby_preflight else (
             ('remote' if ruby_mode == 'auto_select' else 'local') if ruby_device == 'auto' else ruby_device
         )
@@ -217,13 +217,13 @@ def main(argv=None):
             print(f"WARNING {item['code']} {item.get('segment_id') or '全体'}: {item['message']}", file=sys.stderr)
     if args.dry_run:
         from irodori_cli.faithful import build_plan
-        from irodori_cli.ruby_bridge import apply_ruby_to_scenario, uses_added_ruby
+        from irodori_cli.ruby_bridge import apply_ruby_to_scenario, requires_ruby_resolution
 
         ruby_decisions = project.get('ruby_decisions')
         diagnostics = project['diagnostics']
         pending = []
         ruby_filter = project.get('ruby_filter', {})
-        if ruby_filter and uses_added_ruby(project['scenario']):
+        if ruby_filter and requires_ruby_resolution(project['scenario']):
             preview, ruby_decisions = apply_ruby_to_scenario(
                 project['scenario'], mode='none',
                 selected_segment_ids={row['segment_id'] for row in requests})
