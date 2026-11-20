@@ -95,6 +95,7 @@ def _safe_boundary(text, offset):
 
 
 def build_plan(scenario, settings, *, base='.', voices=None, selected=None, ruby_deferred=False):
+    from .ruby_bridge import check_notes
     diagnostics = []
 
     def add(level, code, field, message, sid=None, part=None):
@@ -199,6 +200,10 @@ def build_plan(scenario, settings, *, base='.', voices=None, selected=None, ruby
             error('segment', 'オブジェクトが必要です')
             continue
         sid = row.get('id')
+        try:
+            check_notes(row)
+        except ValueError as exc:
+            error('notes', str(exc), sid)
         valid_id(sid, 'segment.id')
         if isinstance(sid, str):
             if sid in seen:

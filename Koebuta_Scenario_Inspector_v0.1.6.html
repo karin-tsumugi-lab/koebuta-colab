@@ -382,6 +382,8 @@ function forceMerge(project,start,end=start+1){
   if(rows.some(s=>!isObject(s)||(!nonEmptySpeech(s)&&s.segment_type!=='separator')))
     throw Error('発話と区切り以外の不正な行は強制結合できません');
   const speechRows=rows.filter(nonEmptySpeech);
+  if(rows.some(r=>r.notes?.length||r.koebuta_added_ruby?.length))
+    throw Error('編集指示または追加ルビのある発話です。結合する前に引き継ぎ先を確認してください');
   if(speechRows.length<2)throw Error('結合対象に発話が2件必要です');
   const warnings=[];
   for(const row of speechRows){
@@ -463,6 +465,8 @@ function nonEmptySpeech(s){return isObject(s)&&(!s.segment_type||s.segment_type=
 function manualMerge(project,index){
   const a=project.segments[index],b=project.segments[index+1];
   if(!nonEmptySpeech(a)||!nonEmptySpeech(b))throw Error('発話以外・空本文は結合できません');
+  if(a.notes?.length||b.notes?.length||a.koebuta_added_ruby?.length||b.koebuta_added_ruby?.length)
+    throw Error('編集指示または追加ルビの引き継ぎ先を確認してください');
   if(a.speaker_id!==b.speaker_id)throw Error('話者が異なります');
   const gap=sourceGap(project,index);
   if(gap===null||gap.trim())throw Error('原稿上で隣接していないか、間に文章があります');
@@ -513,12 +517,26 @@ function manualSplit(project,index,offset=null){
     if(whole.warnings.length||left.warnings.length||right.warnings.length||whole.value!==left.value+right.value)throw Error('分割するとルビの読みが変わるため中止しました');
   }
   const first=clone(s),second=clone(s);first.text=a;second.text=b;
+  delete second.notes;
+  const warnings=candidate.fallback?['自然な区切りが見つからず、文字数位置で分割しました']:[];
+  if(s.notes?.length){
+    warnings.push(`編集指示は元の発話ID「${s.id}」に残しました。配置を確認してください`);
+  }
+  if(Array.isArray(s.koebuta_added_ruby)){
+    if(rubyIssue(s))throw Error(rubyIssue(s));
+    const boundary=cplen(a);
+    if(s.koebuta_added_ruby.some(r=>r.start<boundary&&boundary<r.end))
+      throw Error('追加ルビの途中では分割できません');
+    first.koebuta_added_ruby=s.koebuta_added_ruby.filter(r=>r.end<=boundary);
+    second.koebuta_added_ruby=s.koebuta_added_ruby.filter(r=>r.start>=boundary)
+      .map(r=>({...r,start:r.start-boundary,end:r.end-boundary}));
+  }
   const used=new Set(project.segments.map(x=>x?.id));second.id=newPartId(used,String(s.id||'segment'));
   if(hasTTS){[first.tts_text,second.tts_text]=cut(s.tts_text,candidate.at);}
   delete first.pause_after_ms;delete first.blank_lines_after;delete first.blank_line_pause_ms;
-  meta(first,'manual_split',candidate.fallback);meta(second,'manual_split',candidate.fallback);
+  meta(first,'manual_split',candidate.fallback,!!s.notes?.length);meta(second,'manual_split',candidate.fallback);
   const result=clone(project);result.segments.splice(index,1,first,second);
-  return {project:result,warnings:candidate.fallback?['自然な区切りが見つからず、文字数位置で分割しました']:[]};
+  return {project:result,warnings};
 }
 /** Returns a reason when a short speech pair cannot be merged without changing its delivery. */
 function safeAutoMerge(proj,i,low,high){
@@ -526,6 +544,8 @@ function safeAutoMerge(proj,i,low,high){
   const reject=reason=>({ok:false,reason});
   if(!a||!b)return reject('隣接する発話がありません');
   if(!nonEmptySpeech(a)||!nonEmptySpeech(b))return reject('区切り行または空の本文があります');
+  if(a.notes?.length||b.notes?.length||a.koebuta_added_ruby?.length||b.koebuta_added_ruby?.length)
+    return reject('編集指示または追加ルビの引き継ぎ先を確認してください');
   if(a.speaker_id!==b.speaker_id)return reject('話者が異なります');
   if((a.emotion||'neutral')!==(b.emotion||'neutral'))return reject('感情が異なります');
   if((a.acting_description||'')!==(b.acting_description||''))return reject('演技指示が異なります');
@@ -610,6 +630,22 @@ function planAuto(project,low=12,high=140,indices=null,options={}){
   }
   return {project:result,logs,skips};
 }
+function rubyIssue(segment){
+  if(!Object.hasOwn(segment,'koebuta_added_ruby'))return '';
+  const entries=segment.koebuta_added_ruby;
+  if(!Array.isArray(entries))return '追加ルビは配列で指定してください';
+  const chars=Array.from(segment.text||''),ranges=[];
+  for(const r of entries){
+    if(!isObject(r)||!Number.isSafeInteger(r.start)||!Number.isSafeInteger(r.end)||
+       r.start<0||r.start>=r.end||r.end>chars.length||
+       chars.slice(r.start,r.end).join('')!==r.surface||
+       typeof r.reading!=='string'||!r.reading.trim()||!['auto','kana','surface'].includes(r.selection))
+      return '追加ルビの範囲・表記・読み・採用状態を確認してください';
+    if(ranges.some(([a,b])=>a<r.end&&r.start<b))return '追加ルビの対象範囲が重複しています';
+    ranges.push([r.start,r.end]);
+  }
+  return '';
+}
 function diagnostics(raw,low=12,high=140){
   const issues=[];const add=(level,index,message)=>issues.push({level,index,message});
   if(!isObject(raw)){add('error',null,'最上位がオブジェクトではありません');return issues;}
@@ -634,6 +670,9 @@ function diagnostics(raw,low=12,high=140){
         sourceMismatch=true;
       }else sourceCursor=found+s.text.length;
     }
+    if(Object.hasOwn(s,'notes')&&(!Array.isArray(s.notes)||s.notes.some(n=>typeof n!=='string')))
+      add('error',i,'notes は文字列の配列で指定してください');
+    const attachmentIssue=rubyIssue(s);if(attachmentIssue)add('error',i,attachmentIssue);
     if(s.segment_type==='separator')continue;
     if(s.segment_type!=null&&s.segment_type!=='speech'){add('error',i,`不明なsegment_type: ${s.segment_type}`);continue;}
     if(typeof s.speaker_id!=='string'||!Object.hasOwn(speakers,s.speaker_id))add('error',i,`話者IDが存在しません: ${s.speaker_id??'(なし)'}`);
@@ -758,11 +797,15 @@ function renderTable(){
       pause?.kind==='区切り'?'区切り有':pause?.hasBlank?'空行有':isSep?'区切り':'共通';
     const explicitPause=Object.hasOwn(s,'pause_after_ms')&&s.pause_after_ms!=null;
     const pauseCell=`<td class="pausecell"><div class="pauseEntry"><input type="number" min="0" step="1" aria-label="行${i+1}の発話後の間（ms）" title="数値を変更すると個別指定になります。表示だけではJSONに固定されません" data-field="pause_after_ms" data-idx="${i}" value="${html(pauseMs)}"><button type="button" class="pauseReset" data-pause-reset="${i}" ${explicitPause?'':'disabled'} title="自動計算に戻す">自動へ戻す</button></div><small>${html(pauseSource)}</small></td>`;
+    const notes=Array.isArray(s.notes)?s.notes:[];
+    const noteEditor=[...notes,''].map((note,j)=>`<textarea aria-label="編集指示" data-note="${i}:${j}" rows="2" placeholder="[効果音] この発話の直後に…">${html(note)}</textarea>`).join('');
+    const rubyEditor=Array.isArray(s.koebuta_added_ruby)?s.koebuta_added_ruby.map((r,j)=>isObject(r)?
+      `<label>🔖 ${html(r.surface)}《${html(r.reading)}》 <select aria-label="追加ルビの採用" data-ruby-choice="${i}:${j}">${Object.entries({auto:'自動',kana:'仮名',surface:'元表記'}).map(([key,label])=>`<option value="${key}" ${r.selection===key?'selected':''}>${label}</option>`).join('')}</select></label>`:'').join(''):'';
     const parentRow=`<tr data-index="${i}" class="${state.selected.has(i)?'selected ':''}${isSep?'separator ':''}${level}">
       <td class="index"><input type="checkbox" data-select="${i}" ${state.selected.has(i)?'checked':''} aria-label="行${i+1}を選択"><span>${i+1}</span><input class="idInput" aria-label="発話ID" data-field="id" data-idx="${i}" value="${html(s.id||'')}"></td>
       <td><select data-field="speaker_id" data-idx="${i}" ${isSep?'disabled':''}>${!Object.hasOwn(state.doc.speakers,s.speaker_id)?`<option selected value="${html(s.speaker_id||'')}">⚠ ${html(s.speaker_id||'未設定')}</option>`:''}${selectList.replace(`value="${html(s.speaker_id)}"`,`value="${html(s.speaker_id)}" selected`)}</select></td>
       <td class="textcell"><textarea data-field="text" data-idx="${i}" rows="2" placeholder="原文">${html(s.text||'')}</textarea></td>
-      <td class="textcell">${hasParts?`<div class="ttsPartNote">全文（${s.koebuta_tts_parts.length}片に分割済み）</div>`:''}<textarea data-field="tts_text" data-idx="${i}" rows="2" ${hasParts?'readonly title="分割片を下の行で編集してください"':''} placeholder="未指定（原文を使用）">${html(s.tts_text||'')}</textarea></td>
+      <td class="textcell">${hasParts?`<div class="ttsPartNote">全文（${s.koebuta_tts_parts.length}片に分割済み）</div>`:''}<textarea data-field="tts_text" data-idx="${i}" rows="2" ${hasParts?'readonly title="分割片を下の行で編集してください"':''} placeholder="未指定（原文を使用）">${html(s.tts_text||'')}</textarea>${rubyEditor}<details ${notes.length?'open':''}><summary>編集指示${notes.length?`（${notes.length}件）`:''}</summary>${noteEditor}</details></td>
       <td><textarea data-field="acting_description" data-idx="${i}" rows="2" placeholder="未指定">${html(s.acting_description||'')}</textarea></td>
       <td class="emotion"><select data-field="emotion" data-idx="${i}">${!Object.hasOwn(EMOTIONS,s.emotion)?`<option selected value="${html(s.emotion||'')}">❓ 不明</option>`:''}${Object.entries(EMOTIONS).map(([k,v])=>`<option value="${k}" ${s.emotion===k?'selected':''}>${v[1]} ${v[0]}</option>`).join('')}</select></td>
       ${pauseCell}
@@ -1195,6 +1238,16 @@ byId('rows').addEventListener('focusout',e=>{if(e.target.tagName==='TEXTAREA')e.
 let eventTarget=null;
 for(const name of ['focusin','input','keyup','mouseup','select'])byId('rows').addEventListener(name,e=>{
   const el=e.target;
+  if(el.dataset.note||el.dataset.rubyChoice){
+    const [i,j]=(el.dataset.note||el.dataset.rubyChoice).split(':').map(Number);
+    const next=clone(state.doc),row=next.segments[i];
+    if(el.dataset.note){
+      const notes=Array.isArray(row.notes)?row.notes:[];
+      if(el.value==='')notes.splice(j,1);else notes[j]=el.value;
+      if(notes.length)row.notes=notes;else delete row.notes;
+    }else row.koebuta_added_ruby[j].selection=el.value;
+    change(next,'発話の編集指示・追加ルビを更新');return;
+  }
   if(el.dataset.field==='tts_text'||el.dataset.ttsPartField)eventTarget={dataset:{...el.dataset},
     value:el.value,selectionStart:el.selectionStart,selectionEnd:el.selectionEnd,readOnly:el.readOnly};
 });

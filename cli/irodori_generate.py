@@ -27,7 +27,7 @@ def load_inputs(
     voice_items=(),
     selected=None,
     *,
-    ruby_mode='none',
+    ruby_mode=None,
     ruby_threshold=0.8327,
     ruby_single_threshold=0.65,
     ruby_device='auto',
@@ -35,24 +35,26 @@ def load_inputs(
     ruby_scorer=None,
 ):
     from irodori_cli.faithful import build_plan, load_json, plan_signature, CONTRACT, PlanError
-    from irodori_cli.ruby_bridge import apply_ruby_to_scenario, prepare_remote_ruby_scenario
+    from irodori_cli.ruby_bridge import apply_ruby_to_scenario, prepare_remote_ruby_scenario, uses_added_ruby, has_automatic_ruby
     try:
         scenario, settings = load_json(scenario_path), load_json(settings_path)
     except (ValueError, OSError) as exc:
         raise PlanError([dict(level='error', code='E_STRUCTURE', segment_id=None,
                               field='input', message=str(exc))]) from exc
+    if ruby_mode is None:
+        ruby_mode = 'auto_select' if has_automatic_ruby(scenario) else 'none'
     ruby_report = []
     ruby_filter = None
     if ruby_preflight and ruby_device == 'local':
         raise ValueError('--ruby-preflight は遠隔判定モードです。--ruby-device local とは併用できません')
     if ruby_preflight and ruby_mode == 'none':
         ruby_mode = 'auto_select'
-    if ruby_mode != 'none':
+    if ruby_mode != 'none' or uses_added_ruby(scenario):
         resolved_device = 'remote' if ruby_preflight else (
             ('remote' if ruby_mode == 'auto_select' else 'local') if ruby_device == 'auto' else ruby_device
         )
         try:
-            if resolved_device == 'remote':
+            if resolved_device == 'remote' and ruby_mode != 'none':
                 scenario = prepare_remote_ruby_scenario(scenario, strict=True)
                 ruby_filter = {
                     'mode': ruby_mode,
@@ -142,9 +144,9 @@ def main(argv=None):
     parser.add_argument('--timeout', type=int, default=7200, help='工程ごとの待機上限秒（既定7200）。切断時は遠隔状態を確認')
     parser.add_argument('--dry-run', action='store_true', help='ローカル検査と生成計画のみ。Colabに接続しない')
     parser.add_argument('--no-usage', action='store_true', help='CU残量の照会を省略する')
-    parser.add_argument('--ruby-mode', default='none',
+    parser.add_argument('--ruby-mode',
                         choices=['none', 'original', 'partial_kana', 'auto_select'],
-                        help='tts_text（未指定時はtext）の青空文庫ルビ変換モード（既定: none）')
+                        help='tts_text（未指定時はtext）のルビ変換モード（既定: 自動採用の追加ルビがあれば auto_select、それ以外は none）')
     parser.add_argument('--ruby-threshold', type=float, default=0.8327,
                         help='auto_select時の複数トークン語閾値（既定: 0.8327）')
     parser.add_argument('--ruby-single-threshold', type=float, default=0.65,
@@ -154,9 +156,13 @@ def main(argv=None):
                         help='ルビ選択の実行先（既定: auto = auto_selectはColab GPU、他はローカル）')
     parser.add_argument('--ruby-preflight', action='store_true',
                         help='音声生成を行わず、Colab GPUでauto_selectの事前判定と要確認語リスト(ruby_review.json)のみ回収する')
+    parser.add_argument('--export-compatible', type=Path, metavar='JSON',
+                        help='確定した読みを旧版向けJSONへ書き出す（音声生成なし）')
     parser.add_argument('--version', action='version', version='Koebuta CLI 2.0.0-dev (faithful-v1)')
     args = parser.parse_args(argv)
-    if args.dry_run:
+    if args.export_compatible and (args.ids or args.ruby_preflight or args.new):
+        parser.error('--export-compatible は作品全体の書き出し専用です')
+    if args.dry_run or args.export_compatible:
         args.session = args.session or 'dry-run'
         args.job = args.job or 'dry-run'
     elif not args.session or not args.job or args.out is None:
@@ -170,12 +176,20 @@ def main(argv=None):
         args.settings,
         args.voice,
         args.ids,
-        ruby_mode=args.ruby_mode,
+        ruby_mode='none' if args.export_compatible else args.ruby_mode,
         ruby_threshold=args.ruby_threshold,
         ruby_single_threshold=args.ruby_single_threshold,
         ruby_device=args.ruby_device,
         ruby_preflight=args.ruby_preflight,
     )
+    if args.export_compatible:
+        exported = project['scenario']
+        for row in exported['segments']:
+            row.pop('koebuta_added_ruby', None)
+        with args.export_compatible.open('x', encoding='utf-8', newline='\n') as stream:
+            json.dump(exported, stream, ensure_ascii=False, indent=2)
+            stream.write('\n')
+        return 0
     cfg = project['effective_settings']
     for item in project['diagnostics']:
         if item['level'] == 'warning':

@@ -45,6 +45,11 @@ def build():
     cells[0] = dict(cell_type='markdown', metadata={}, source=(ROOT / 'notebook/NOTEBOOK_V2_GUIDE.md').read_text(encoding='utf-8').splitlines(True))
     cells[7]['source'] = ['## 4. 画面（WebUI）\n', '\n', 'モデルをGPUへ読み込んでから、認証付きのGradio共有リンクを表示します。準備中はセルの出力をご確認ください。\n']
     source = "print('Irodori-TTSモデルをGPUへ読み込み中です。完了後にWebUIを公開します。')\nload_runtime()\nprint('モデルの準備が完了しました。WebUIを構築します。')\nimport sys, types\n"
+    source += "_koebuta_package = types.ModuleType('irodori_cli')\n_koebuta_package.__path__ = []\nsys.modules['irodori_cli'] = _koebuta_package\n"
+    for name in ('ruby_core', 'ruby_bridge'):
+        content = (ROOT / 'cli' / 'irodori_cli' / (name + '.py')).read_text(encoding='utf-8')
+        module = 'irodori_cli.' + name
+        source += f"_module = types.ModuleType({module!r})\nsys.modules[{module!r}] = _module\nexec({content!r}, _module.__dict__)\n"
     for module in ('notebook_v2', 'notebook_v2_ui'):
         content = (ROOT / 'notebook' / (module + '.py')).read_text(encoding='utf-8')
         source += f"_module = types.ModuleType({module!r})\nsys.modules[{module!r}] = _module\nexec({content!r}, _module.__dict__)\n"

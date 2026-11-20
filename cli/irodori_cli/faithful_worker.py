@@ -66,9 +66,8 @@ def execute(document, voices, job, infer, engine=None, ruby_scorer=None):
         for row, eff_row in zip(rows, effective_plan['requests']):
             row['request']['text'] = eff_row['request']['text']
             row['fingerprint'] = digest(dict(
-                authored=row['fingerprint'],
+                effective=eff_row['fingerprint'],
                 engine=engine or {},
-                ruby_filter=ruby_filter,
             ))
     else:
         for row in rows:
