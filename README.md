@@ -6,8 +6,8 @@ Koebutaは、原稿を話者・読み・感情・演技指示付きのシナリ�
 
 1. **AIで原稿をシナリオJSONにする**（`works/my_book/scenario.json`）
 2. **HTMLエディタで内容を確認・調整する(任意)**
-4. **CLIで朗読音声を検査・生成する**（`works/my_book/settings.json` → `result.wav`）
-5. **試聴して保存・必要なら部分再生成する**
+3. **CLIで朗読音声を検査・生成する**（`works/my_book/settings.json` → `result.wav`）
+4. **試聴して保存・必要なら部分再生成する**
 
 > **AIエージェントへ制作をまとめて委託する場合**  
 > [AIエージェント向け制作手順](docs/AGENT_WORKFLOW.md) の依頼欄を埋め、原稿と一緒にエージェント（Claude Code / Codex 等）へ渡してください。声の試作からシナリオ作成、CLIでの音声生成・回収までを一貫して案内しています。
