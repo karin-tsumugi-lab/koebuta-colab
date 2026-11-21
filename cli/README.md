@@ -217,6 +217,21 @@ python3 cli/irodori_generate.py \
 
 ※ 部分生成の `result.wav` は選択した発話のみを結合した音声です。全編の完成音声への自動差し替えは行わないため、個別WAV（`segments.zip`）を使って編集ソフト等で差し替えるか、修正が固まってから全編を通しで生成してください。
 
+### 長編は章ごとに生成・回収する
+
+元のシナリオと生成設定を共通で使い、章ごとの連続した発話IDを `--ids` に指定します。章ごとに別の `--job` と `--out` を用意し、各章の回収が完了したことを `pipeline.json` の `status: "complete"` と出力WAVで確認してから次へ進みます。
+
+全章の回収が済んだら、元のシナリオと章別の出力フォルダーをシナリオ順に指定し、新しいWAVに書き出します。
+
+```bash
+python3 cli/irodori_concat.py \
+  --scenario works/my_book/scenario.json \
+  --out works/my_book/result_joined.wav \
+  works/my_book/ch01 works/my_book/ch02 works/my_book/ch03
+```
+
+結合はローカルで行い、章の順番や発話の抜け・重複を検査します。章間の間は前章の `plan.json` の最後の生成要求にある `pause_after_ms` を一度だけ足します。入力には同じシナリオと設定から `--ids` で生成した各章の `result.wav` を使います。効果音をミックス済みの章は、境界の間も含めて音声編集ソフトで結合してください。
+
 ---
 
 ## 7. 出力ファイルと確認項目
@@ -239,7 +254,8 @@ python3 cli/irodori_generate.py \
 
 ## 8. トラブル時の対処
 
-- **接続が切れた／Ctrl+Cで中断した**: ローカル監視が止まってもColab側で生成が続いている場合があります。すぐに同じ生成を再送せず、`pipeline.json` と `recovery_command.json` を確認してください。`recovery_command.json` が生成されていれば、表示された回収コマンドで再生成せずに成果物を回収できます。
+- **接続が切れた／Ctrl+Cで中断した** — ローカル監視が止まっても、Colab側のセッションが残っていれば生成が続いている場合があります。まず `colab sessions` と `pipeline.json` で状態を確認し、セッションが残っていて `recovery_command.json` があれば記録された回収コマンドを使います。
+- **Colabセッションが消えた** — 検証に使った Colab CLI 0.7.5 でも、長時間の生成ではセッションが消えて未回収の成果物を回収できなくなる場合があります。セッション一覧の取得に失敗した場合は、接続や認証が復旧してからもう一度確認してください。消失が確認できたら、回収済みの章は手元に残し、未回収の章を `--new` と新しい `--job`・`--out` で生成し直します。
 - **ランタイム停止だけ失敗した（`SESSION_STOP_FAILED`）**: 音声の回収自体は完了しています。`colab sessions` で稼働状況を確認し、不要なら `colab stop -s <セッション名>` で手動停止してください。
 - **旧版互換JSONの書き出し**: 確定済みの読みを `tts_text` へ展開し `koebuta_added_ruby` を除去した旧版互換JSONを書き出す場合は、`python3 cli/irodori_generate.py --scenario works/my_book/scenario.json --settings works/my_book/settings.json --export-compatible works/my_book/legacy_scenario.json` を使用します。
 
