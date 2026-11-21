@@ -4,6 +4,7 @@ on:
     paths:
       - 'cli/**'
       - 'voice_kit/**'
+      - 'audio_mix/**'
       - 'Koebuta_Scenario_Inspector_v3.html'
       - '.github/workflows/cli_faithful.yml'
   workflow_dispatch:
@@ -19,6 +20,8 @@ jobs:
         working-directory: cli
       - run: python -m unittest -v test_voice_kit
         working-directory: voice_kit
+      - run: python -m unittest -v test_audio_mix
+        working-directory: audio_mix
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
