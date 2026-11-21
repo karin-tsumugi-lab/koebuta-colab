@@ -8,6 +8,7 @@
 - `d3be8df` の実生成で参照音声候補2件と、採用WAVを使ったCLIの個別・結合WAVの生成と回収を確認。マージ後のGPU再試験は未実施。V2の『山月記』の手元のシナリオは、外字注記直後のルビでV3の `--dry-run` が構文エラーになる。旧作の移行可否は作品ごとに検査する。
 - [PR #10](https://github.com/karin-tsumugi-lab/koebuta-colab/pull/10) を `e0e9bd8` でマージ。公開CLIガイドからColab CLIの公式導入手順とローカルGPUへの移植案内にたどれることを確認した。[CPU CI](https://github.com/karin-tsumugi-lab/koebuta-colab/actions/runs/44747592423) は成功。ローカルGPUでの連続生成の実機検証は未実施。
 - [PR #11](https://github.com/karin-tsumugi-lab/koebuta-colab/pull/11) を `690b37b` でマージ。公開READMEから `audio_mix/` のガイドにたどれることを確認。単体テスト5件と [CPU CI](https://github.com/karin-tsumugi-lab/koebuta-colab/actions/runs/44843080122) は成功。V3の実生成出力から発話 `t0010` のメモを計画に引き継ぎ、48 kHz・16 bitステレオWAVへ書き出せることを確認した。長編は章単位の処理を案内している。
+- [PR #12](https://github.com/karin-tsumugi-lab/koebuta-colab/pull/12) を `a3dfa4e` でマージ。章別WAVをシナリオ順に結合し、章間の休止を復元するローカルCLIを追加。模擬音声の章別結合は一括生成とバイト単位で一致した。ローカルのCLI 76件、ミキシング5件、voice_kit 7件、Inspectorテスト、配布マニフェスト64件のハッシュ確認と [CPU CI](https://github.com/karin-tsumugi-lab/koebuta-colab/actions/runs/44915183265) は成功。Colabの長時間接続は実機未検証。
 
 ## 2026-11-16のmain（履歴）
 
