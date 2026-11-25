@@ -1,0 +1,45 @@
+{
+  "schema_version": 2,
+  "speakers": {
+    "narrator": {
+      "name": "語り手",
+      "kind": "narrator",
+      "voice_caption": "落ち着いた明瞭な声の成人女性。静かな部屋で丁寧に朗読している。"
+    }
+  },
+  "segments": [
+    {
+      "id": "t0010",
+      "speaker_id": "narrator",
+      "text": "深夜の図書館は静かで、ページをめくる音だけが規則正しく響いていた。",
+      "scene_caption": "静かな図書館。",
+      "pause_after_ms": 450
+    },
+    {
+      "id": "t0020",
+      "speaker_id": "narrator",
+      "text": "「ねえ、少しだけ声を落として。誰にも聞こえないように、今の話を続けよう」",
+      "tts_text": "[耳元で][囁き]ねえ、少しだけ声を落として。[吐息]誰にも聞こえないように、今の話を続けよう。",
+      "scene_caption": "耳元に近い距離感。",
+      "acting_description": "親密な相手に優しく語りかけるように",
+      "pause_after_ms": 500
+    },
+    {
+      "id": "t0030",
+      "speaker_id": "narrator",
+      "text": "窓の外では冷い雨が降り続いていた。",
+      "koebuta_added_ruby": [
+        {"start": 5, "end": 7, "surface": "冷い", "reading": "つめたい", "selection": "kana"}
+      ],
+      "pause_after_ms": 350
+    },
+    {
+      "id": "t0040",
+      "speaker_id": "narrator",
+      "text": "「ふふっ、明日には晴れるといいですね」",
+      "tts_text": "[笑いながら]明日には晴れるといいですね。",
+      "acting_description": "穏やかに微笑みながら",
+      "pause_after_ms": 300
+    }
+  ]
+}

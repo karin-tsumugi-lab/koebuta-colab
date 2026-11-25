@@ -1,0 +1,33 @@
+{
+  "title": "Yomibuta 本番設定（A100/G4 公式非量子化）",
+  "ttsEngine": "drama3",
+  "ttsModel": "Aratako/Drama-3-Japanese",
+  "backend": "official",
+  "quant": "none",
+  "sampleRate": 44100,
+  "normalizeRmsDb": -18.0,
+  "reading": "shared",
+  "voiceMode": "clone",
+  "cloneCaption": false,
+  "voices": {
+    "narrator": [
+      {
+        "wav": "voices/ref_narrator.wav",
+        "transcript": "ねえ、そんなに急がないで。ちゃんと、こっち見ててね。"
+      }
+    ]
+  },
+  "acting": true,
+  "emotion": true,
+  "narratorEmotion": true,
+  "seed": 42,
+  "pause": 0.28,
+  "engineOptions": {
+    "temperature": 0.8,
+    "top_p": 0.85,
+    "top_k": 30,
+    "max_seconds": 47.55,
+    "max_pause_frames": 36,
+    "experts_on_cpu": false
+  }
+}

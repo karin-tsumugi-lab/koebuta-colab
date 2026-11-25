@@ -1,0 +1,128 @@
+{
+  "contract": "yomibuta-drama3-v1",
+  "schema_version": 2,
+  "settings": {
+    "title": "Yomibuta Phase 1 MVP クローン検証",
+    "ttsEngine": "drama3",
+    "ttsModel": "Aratako/Drama-3-Japanese",
+    "backend": "speech_cpp_gguf",
+    "quant": "IQ3_XXS",
+    "sampleRate": 44100,
+    "normalizeRmsDb": -18.0,
+    "reading": "shared",
+    "voiceMode": "clone",
+    "cloneCaption": false,
+    "seed": 42,
+    "pause": 0.28,
+    "engineOptions": {
+      "temperature": 0.8,
+      "top_p": 0.85,
+      "top_k": 30,
+      "max_seconds": 47.55,
+      "max_pause_frames": 18,
+      "experts_on_cpu": false
+    }
+  },
+  "voices": {
+    "narrator": [
+      {
+        "wav": "/mnt/c/Users/abeko/OneDrive/ドキュメント/Alice/Yomibuta-colab/examples/voices/ref_narrator.wav",
+        "wav_rel": "voices/ref_narrator.wav",
+        "wav_sha256": "726700f9d11cd5b5ff0c7c9afd4a0322fd1f28430d660ed746b28a8c2d072129",
+        "transcript": "ねえ、そんなに急がないで。ちゃんと、こっち見ててね。"
+      }
+    ]
+  },
+  "requests": [
+    {
+      "segment_id": "t0010",
+      "speaker_id": "narrator",
+      "pause_after_ms": 450,
+      "spoken_chars": 33,
+      "request": {
+        "prompt": "深夜の図書館は静かで、ページをめくる音だけが規則正しく響いていた。",
+        "spoken_text": "深夜の図書館は静かで、ページをめくる音だけが規則正しく響いていた。",
+        "caption": "",
+        "voice_profile": "narrator",
+        "seed": 42,
+        "engine_options": {
+          "temperature": 0.8,
+          "top_p": 0.85,
+          "top_k": 30,
+          "max_seconds": 47.55,
+          "max_pause_frames": 18,
+          "experts_on_cpu": false
+        }
+      },
+      "fingerprint": "67bac95d4efc7b5459c9e797983d5f7b081cb890ffd8e7dada6141baea24ce5b"
+    },
+    {
+      "segment_id": "t0020",
+      "speaker_id": "narrator",
+      "pause_after_ms": 500,
+      "spoken_chars": 35,
+      "request": {
+        "prompt": "[耳元で][囁き]ねえ、少しだけ声を落として。[吐息]誰にも聞こえないように、今の話を続けよう。",
+        "spoken_text": "[耳元で][囁き]ねえ、少しだけ声を落として。[吐息]誰にも聞こえないように、今の話を続けよう。",
+        "caption": "",
+        "voice_profile": "narrator",
+        "seed": 42,
+        "engine_options": {
+          "temperature": 0.8,
+          "top_p": 0.85,
+          "top_k": 30,
+          "max_seconds": 47.55,
+          "max_pause_frames": 18,
+          "experts_on_cpu": false
+        }
+      },
+      "fingerprint": "e415bb0e70e3d882977c99666993cd9de81f050c8d461c21b248d0dd8c9d2bad"
+    },
+    {
+      "segment_id": "t0030",
+      "speaker_id": "narrator",
+      "pause_after_ms": 350,
+      "spoken_chars": 19,
+      "request": {
+        "prompt": "窓の外ではつめたい雨が降り続いていた。",
+        "spoken_text": "窓の外ではつめたい雨が降り続いていた。",
+        "caption": "",
+        "voice_profile": "narrator",
+        "seed": 42,
+        "engine_options": {
+          "temperature": 0.8,
+          "top_p": 0.85,
+          "top_k": 30,
+          "max_seconds": 47.55,
+          "max_pause_frames": 18,
+          "experts_on_cpu": false
+        }
+      },
+      "fingerprint": "4bf036067f2cd79b5425be11cc32d67dd6a780ab7f9da3f7729652a59bc9f5ed"
+    },
+    {
+      "segment_id": "t0040",
+      "speaker_id": "narrator",
+      "pause_after_ms": 300,
+      "spoken_chars": 14,
+      "request": {
+        "prompt": "[笑いながら]明日には晴れるといいですね。",
+        "spoken_text": "[笑いながら]明日には晴れるといいですね。",
+        "caption": "",
+        "voice_profile": "narrator",
+        "seed": 42,
+        "engine_options": {
+          "temperature": 0.8,
+          "top_p": 0.85,
+          "top_k": 30,
+          "max_seconds": 47.55,
+          "max_pause_frames": 18,
+          "experts_on_cpu": false
+        }
+      },
+      "fingerprint": "c1fc30909f29825ef6ffa86b5a2958cdc6cc46e0e5b376600a10b1f29f1b25ab"
+    }
+  ],
+  "diagnostics": [],
+  "plan_signature": "808fb843f1a5d055afefc38bea5eb7942117743957a39bca0d2851c4524dd6e2"
+}

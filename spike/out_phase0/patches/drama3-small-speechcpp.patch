@@ -1,0 +1,519 @@
+diff --git a/src/common/qwen35-decoder.cpp b/src/common/qwen35-decoder.cpp
+index 6a5d684..e52314d 100644
+--- a/src/common/qwen35-decoder.cpp
++++ b/src/common/qwen35-decoder.cpp
+@@ -198,7 +198,7 @@ ggml_tensor * Qwen35Decoder::experts(Graph & g, int l, ggml_tensor * x, ggml_ten
+     *router = mul_mat(c, m_.tensor(p + "ffn_gate_inp"), x);
+     ggml_tensor * probabilities = ggml_soft_max(c, *router);
+     ggml_tensor * chosen = ggml_top_k(c, probabilities, used_);
+-    ggml_tensor * weights = ggml_get_rows(c, ggml_reshape_3d(c, probabilities, 1, experts_, n), chosen);
++    ggml_tensor * weights = ggml_get_rows(c, ggml_reshape_3d(c, probabilities, 1, (*router)->ne[0], n), chosen);
+     if (norm_topk_) weights = ggml_div(c, weights, ggml_reshape_3d(c, ggml_sum_rows(c, ggml_reshape_2d(c, weights, used_, n)), 1, 1, n));
+     ggml_tensor * rows = ggml_reshape_3d(c, x, h_, 1, n);
+     ggml_tensor * gate = mul_mat_id(c, m_.tensor(p + "ffn_gate_exps"), rows, chosen);
+diff --git a/src/common/storage.cpp b/src/common/storage.cpp
+index 27e4fbb..aefa76c 100644
+--- a/src/common/storage.cpp
++++ b/src/common/storage.cpp
+@@ -33,7 +33,7 @@ const std::vector<WeightType> & weight_types() {
+     static const std::vector<WeightType> types = {
+         {0, GGML_TYPE_F32, kFirstLayoutRelease}, {1, GGML_TYPE_F16, kFirstLayoutRelease}, {7, GGML_TYPE_Q8_0, kFirstLayoutRelease},
+         {18, GGML_TYPE_Q6_K, "0.8.0"},           {16, GGML_TYPE_Q5_K, "0.8.0"},           {14, GGML_TYPE_Q4_K, "0.8.0"},
+-        {25, GGML_TYPE_IQ4_NL, "0.9.1"},
++        {25, GGML_TYPE_IQ4_NL, "0.9.1"},         {23, GGML_TYPE_IQ3_XXS, "0.11.2"},
+     };
+     return types;
+ }
+@@ -60,6 +60,7 @@ Storage quantized_storage(std::vector<Since> since) {
+         {GGML_TYPE_Q5_K, {GGML_TYPE_Q5_K, GGML_TYPE_Q8_0, GGML_TYPE_F16}},
+         {GGML_TYPE_Q4_K, {GGML_TYPE_Q4_K, GGML_TYPE_Q8_0, GGML_TYPE_F16}},
+         {GGML_TYPE_IQ4_NL, {GGML_TYPE_IQ4_NL, GGML_TYPE_F16}},
++        {GGML_TYPE_IQ3_XXS, {GGML_TYPE_IQ3_XXS, GGML_TYPE_Q8_0, GGML_TYPE_F16}},
+     };
+     std::vector<Storage::Choice> choices;
+     for (const Storage::Choice & c : every) {
+diff --git a/src/families/drama3/layout.cpp b/src/families/drama3/layout.cpp
+index dcf803a..5f39f85 100644
+--- a/src/families/drama3/layout.cpp
++++ b/src/families/drama3/layout.cpp
+@@ -26,6 +26,13 @@ const Storage kMatrix = quantized_storage({{GGML_TYPE_F32, "0.8.8"},
+                                            {GGML_TYPE_Q6_K, "0.8.8"},
+                                            {GGML_TYPE_Q5_K, "0.8.8"},
+                                            {GGML_TYPE_Q4_K, "0.8.8"}});
++const Storage kExpertMatrix = quantized_storage({{GGML_TYPE_F32, "0.8.8"},
++                                                 {GGML_TYPE_F16, "0.8.8"},
++                                                 {GGML_TYPE_Q8_0, "0.8.8"},
++                                                 {GGML_TYPE_Q6_K, "0.8.8"},
++                                                 {GGML_TYPE_Q5_K, "0.8.8"},
++                                                 {GGML_TYPE_Q4_K, "0.8.8"},
++                                                 {GGML_TYPE_IQ3_XXS, "0.11.2"}});
+ const Storage kCodec = half_storage();
+ const Storage kF32 = float32_storage();
+ 
+@@ -184,6 +191,14 @@ std::vector<TensorSpec> tensors(const ModelFile & m) {
+     const int64_t conv_width = m.size(x + "linear_conv_kernel_dim"), conv = 2 * nk * dk + nv * dv;
+     const int64_t experts = m.size(x + "num_experts"), used = m.size(x + "num_experts_per_tok");
+     require(used <= experts, m, "drama3.text.num_experts_per_tok is more than the experts");
++    const std::vector<int32_t> experts_per_layer =
++        m.has(x + "num_experts_per_layer") ? m.i32_array(x + "num_experts_per_layer") : std::vector<int32_t>{};
++    if (!experts_per_layer.empty()) {
++        require((int) experts_per_layer.size() == layers, m, "drama3.text.num_experts_per_layer does not match num_hidden_layers");
++        for (int32_t n_exp : experts_per_layer) {
++            require(n_exp >= used && n_exp <= experts, m, "drama3.text.num_experts_per_layer has a count outside [num_experts_per_tok, num_experts]");
++        }
++    }
+     const int64_t ffn = m.size(x + "moe_intermediate_size"), shared = m.size(x + "shared_expert_intermediate_size");
+     m.size(x + "max_position_embeddings");
+     m.boolean(x + "norm_topk_prob");
+@@ -260,8 +275,9 @@ std::vector<TensorSpec> tensors(const ModelFile & m) {
+                              {"ssm_a_log", {nv}, kF32},              {"ssm_norm", {dv}, kF32},
+                              {"ssm_out", {nv * dv, h}, kMatrix}});
+         }
+-        add_block(t, o, {{"ffn_gate_inp", {h, experts}, kF32},      {"ffn_gate_exps", {h, ffn, experts}, kMatrix},
+-                         {"ffn_up_exps", {h, ffn, experts}, kMatrix}, {"ffn_down_exps", {ffn, h, experts}, kMatrix},
++        const int64_t layer_experts = experts_per_layer.empty() ? experts : (int64_t) experts_per_layer[(size_t) i];
++        add_block(t, o, {{"ffn_gate_inp", {h, layer_experts}, kF32},      {"ffn_gate_exps", {h, ffn, layer_experts}, kExpertMatrix},
++                         {"ffn_up_exps", {h, ffn, layer_experts}, kExpertMatrix}, {"ffn_down_exps", {ffn, h, layer_experts}, kExpertMatrix},
+                          {"ffn_gate_shexp", {h, shared}, kMatrix},  {"ffn_up_shexp", {h, shared}, kMatrix},
+                          {"ffn_down_shexp", {shared, h}, kMatrix},  {"ffn_gate_inp_shexp", {h, 1}, kF32}});
+     }
+diff --git a/src/families/drama3/sampler.cpp b/src/families/drama3/sampler.cpp
+index 970b746..46d95b4 100644
+--- a/src/families/drama3/sampler.cpp
++++ b/src/families/drama3/sampler.cpp
+@@ -1,8 +1,15 @@
+ #include "sampler.h"
+ 
+ #include <algorithm>
++#include <cctype>
++#include <cerrno>
+ #include <cmath>
++#include <cstdlib>
++#include <filesystem>
++#include <fstream>
++#include <limits>
+ #include <numeric>
++#include <sstream>
+ 
+ #include "error.h"
+ 
+@@ -13,6 +20,39 @@ namespace {
+ /** The temperature below which sample_top_k_top_p() takes 1e-5, so that a temperature of 0 divides by no zero. */
+ constexpr float kMinTemperature = 1e-5f;
+ 
++std::string trim_ascii(const char * raw) {
++    if (!raw) return {};
++    std::string s(raw);
++    auto is_ws = [](unsigned char ch) { return std::isspace(ch) != 0; };
++    while (!s.empty() && is_ws((unsigned char) s.front())) s.erase(s.begin());
++    while (!s.empty() && is_ws((unsigned char) s.back())) s.pop_back();
++    return s;
++}
++
++int64_t parse_env_i64(const char * name, const char * raw) {
++    const std::string s = trim_ascii(raw);
++    if (s.empty()) return 0;
++    errno = 0;
++    char * end = nullptr;
++    const long long parsed = std::strtoll(s.c_str(), &end, 10);
++    if (errno == ERANGE || end == s.c_str() || *end != '\0') {
++        throw Error(Fault::InvalidArgument, std::string(name) + " must be a base-10 integer");
++    }
++    return (int64_t) parsed;
++}
++
++double parse_env_pos_double(const char * name, const char * raw, double fallback) {
++    const std::string s = trim_ascii(raw);
++    if (s.empty()) return fallback;
++    errno = 0;
++    char * end = nullptr;
++    const double v = std::strtod(s.c_str(), &end);
++    if (errno != 0 || end == s.c_str() || *end != '\0' || !std::isfinite(v) || v <= 0.0 || v > 1e6) {
++        throw Error(Fault::InvalidArgument, std::string(name) + " must be a finite positive number <= 1e6");
++    }
++    return v;
++}
++
+ Sampling read_sampling(const ModelFile & m, const std::string & prefix) {
+     Sampling s;
+     s.temperature = m.f32(prefix + "temperature");
+@@ -21,6 +61,35 @@ Sampling read_sampling(const ModelFile & m, const std::string & prefix) {
+     return s;
+ }
+ 
++std::vector<int32_t> parse_silence_spec(const std::string & spec) {
++    std::string text;
++    if (std::ifstream f(std::filesystem::u8path(spec)); f) {
++        text.assign((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
++    } else {
++        text = spec;
++    }
++    for (char & c : text) {
++        if (c >= '0' && c <= '9') continue;
++        if (c == ',' || c == '[' || c == ']' || c == ' ' || c == '\t' || c == '\r' || c == '\n') {
++            c = ' ';
++            continue;
++        }
++        throw Error(Fault::InvalidArgument, "SPEECH_DRAMA3_SILENCE_CODES must point to a readable numeric JSON/list file or inline non-negative integer list");
++    }
++    std::istringstream iss(text);
++    std::vector<int32_t> codes;
++    for (std::string tok; iss >> tok;) {
++        errno = 0;
++        char * end = nullptr;
++        const long long v = std::strtoll(tok.c_str(), &end, 10);
++        if (errno != 0 || end == tok.c_str() || *end != '\0' || v < 0 || v > std::numeric_limits<int32_t>::max()) {
++            throw Error(Fault::InvalidArgument, "SPEECH_DRAMA3_SILENCE_CODES contains an out-of-range code");
++        }
++        codes.push_back((int32_t) v);
++    }
++    return codes;
++}
++
+ }  // namespace
+ 
+ Sampling file_sampling(const ModelFile & m) {
+@@ -65,12 +134,54 @@ FrameSampler::FrameSampler(const ModelFile & m, const Sampling & request)
+       window_((int) m.u32("drama3.repeat.window")),
+       semantic_begin_((int32_t) m.u32("drama3.semantic_start_token_id")),
+       semantic_end_((int32_t) m.u32("drama3.semantic_end_token_id")),
+-      token_ids_(m.i32_array("drama3.output.token_ids")) {}
++      token_ids_(m.i32_array("drama3.output.token_ids")) {
++    if (const char * env_frames = std::getenv("SPEECH_DRAMA3_MAX_PAUSE_FRAMES")) {
++        const int64_t parsed = parse_env_i64("SPEECH_DRAMA3_MAX_PAUSE_FRAMES", env_frames);
++        if (parsed > 0) max_pause_frames_ = parsed;
++    }
++    if (max_pause_frames_ <= 0) return;
++    if (const char * env_end = std::getenv("SPEECH_DRAMA3_END_RATIO")) {
++        pause_end_ratio_ = parse_env_pos_double("SPEECH_DRAMA3_END_RATIO", env_end, pause_end_ratio_);
++    }
++    if (const char * env_cap = std::getenv("SPEECH_DRAMA3_CAP_RATIO")) {
++        pause_cap_ratio_ = parse_env_pos_double("SPEECH_DRAMA3_CAP_RATIO", env_cap, pause_cap_ratio_);
++    }
++    std::vector<int32_t> raw_codes;
++    if (const char * env_codes = std::getenv("SPEECH_DRAMA3_SILENCE_CODES"); env_codes && *env_codes) {
++        raw_codes = parse_silence_spec(env_codes);
++        if (raw_codes.empty()) throw Error(Fault::InvalidArgument, "SPEECH_DRAMA3_SILENCE_CODES is empty");
++    } else if (m.has("drama3.small.silence_codes")) {
++        raw_codes = m.i32_array("drama3.small.silence_codes");
++        if (raw_codes.empty()) throw Error(Fault::File, "drama3.small.silence_codes is empty");
++    } else {
++        throw Error(Fault::InvalidArgument, "Drama 3 pause clamp requires SPEECH_DRAMA3_SILENCE_CODES or drama3.small.silence_codes");
++    }
++    const int32_t span = semantic_end_ - semantic_begin_;
++    for (int32_t c : raw_codes) {
++        if (c >= 0 && c <= span) silence_token_ids_.insert(semantic_begin_ + c);
++    }
++    for (size_t i = 0; i < token_ids_.size(); i++) {
++        if (silence_token_ids_.count(token_ids_[i])) silence_logit_indices_.push_back(i);
++    }
++    if (silence_logit_indices_.empty()) {
++        throw Error(Fault::InvalidArgument, "Drama 3 pause clamp matched no valid silence codes in model vocabulary");
++    }
++}
+ 
+-int32_t FrameSampler::main(const std::vector<float> & logits, const std::vector<int32_t> & history, double first, double again) const {
+-    const Candidates drawn = candidates(logits, request_);
++int32_t FrameSampler::main(const std::vector<float> & logits, const std::vector<int32_t> & history, double first, double again,
++                           bool suppress_silence) const {
++    std::vector<float> masked;
++    if (suppress_silence && !silence_logit_indices_.empty()) {
++        masked = logits;
++        // Keep masked logits finite because candidates() rejects non-finite values.
++        for (size_t idx : silence_logit_indices_) {
++            if (idx < masked.size() && std::isfinite(masked[idx])) masked[idx] = -1e9f;
++        }
++    }
++    const std::vector<float> & pool = masked.empty() ? logits : masked;
++    const Candidates drawn = candidates(pool, request_);
+     const int32_t id = token_ids_[(size_t) drawn.tokens[(size_t) pick(drawn.weights, first)]];
+-    const Candidates redrawn = candidates(logits, repeat_);
++    const Candidates redrawn = candidates(pool, repeat_);
+     const int32_t other = token_ids_[(size_t) redrawn.tokens[(size_t) pick(redrawn.weights, again)]];
+     // A semantic id alone is drawn again: the window begins with prompt rows, whose text holds the end id of the user's
+     // turn, and an end of speech is never drawn again.
+@@ -83,4 +194,41 @@ int32_t FrameSampler::code(const std::vector<float> & logits, double u) const {
+     return c.tokens[(size_t) pick(c.weights, u)];
+ }
+ 
++double expected_frames(const std::string & text) {
++    std::string spoken = text;
++    if (spoken.rfind("Direction:", 0) == 0) {
++        const size_t line = spoken.find("\nLine:");
++        if (line != std::string::npos) spoken = spoken.substr(line + 6);
++    }
++    double cjk = 0, latin = 0, spans = 0;
++    int depth_square = 0, depth_angle = 0;
++    for (size_t i = 0; i < spoken.size();) {
++        const unsigned char c = (unsigned char) spoken[i];
++        uint32_t cp = c;
++        size_t len = 1;
++        if (c >= 0xF0 && i + 3 < spoken.size()) {
++            cp = ((c & 0x07u) << 18) | (((unsigned char) spoken[i + 1] & 0x3Fu) << 12) |
++                 (((unsigned char) spoken[i + 2] & 0x3Fu) << 6) | ((unsigned char) spoken[i + 3] & 0x3Fu);
++            len = 4;
++        } else if (c >= 0xE0 && i + 2 < spoken.size()) {
++            cp = ((c & 0x0Fu) << 12) | (((unsigned char) spoken[i + 1] & 0x3Fu) << 6) | ((unsigned char) spoken[i + 2] & 0x3Fu);
++            len = 3;
++        } else if (c >= 0xC0 && i + 1 < spoken.size()) {
++            cp = ((c & 0x1Fu) << 6) | ((unsigned char) spoken[i + 1] & 0x3Fu);
++            len = 2;
++        }
++        i += len;
++        if (cp == '[') { ++depth_square; ++spans; continue; }
++        if (cp == ']') { if (depth_square > 0) --depth_square; continue; }
++        if (cp == '<') { ++depth_angle; ++spans; continue; }
++        if (cp == '>') { if (depth_angle > 0) --depth_angle; continue; }
++        if (depth_square > 0 || depth_angle > 0) continue;
++        const bool cjk_punct = cp == 0x3002 || cp == 0x3001 || cp == 0xFF01 || cp == 0xFF1F || cp == 0x300C ||
++                               cp == 0x300D || cp == 0x2026 || cp == 0x30FB || cp == 0xFF08 || cp == 0xFF09;
++        if (cp >= 0x3000 && !cjk_punct) cjk += 1.0;
++        else if (cp < 0x80 && std::isalnum((int) cp)) latin += 1.0;
++    }
++    return 3.88 * cjk + 2.00 * latin + 23.9 * spans + 8.5;
++}
++
+ }  // namespace drama3
+diff --git a/src/families/drama3/sampler.h b/src/families/drama3/sampler.h
+index 6e6b6af..6b20d94 100644
+--- a/src/families/drama3/sampler.h
++++ b/src/families/drama3/sampler.h
+@@ -1,6 +1,8 @@
+ #pragma once
+ 
+ #include <cstdint>
++#include <string>
++#include <unordered_set>
+ #include <vector>
+ 
+ #include "model-file.h"
+@@ -46,18 +48,31 @@ public:
+      * rows included, drawn again with the redraw's settings by `again`. Both numbers come from uniform(), and the
+      * official sampler draws both for every frame.
+      */
+-    int32_t main(const std::vector<float> & logits, const std::vector<int32_t> & history, double first, double again) const;
++    int32_t main(const std::vector<float> & logits, const std::vector<int32_t> & history, double first, double again,
++                 bool suppress_silence = false) const;
+ 
+     /** A code of a frame's residual codebooks from its head's `logits`, drawn with the request's settings by `u`. */
+     int32_t code(const std::vector<float> & logits, double u) const;
+ 
+     bool semantic(int32_t id) const { return id >= semantic_begin_ && id <= semantic_end_; }
++    bool is_silence(int32_t id) const { return silence_token_ids_.count(id) > 0; }
++    int64_t max_pause_frames() const { return max_pause_frames_; }
++    double pause_end_ratio() const { return pause_end_ratio_; }
++    double pause_cap_ratio() const { return pause_cap_ratio_; }
+ 
+ private:
+     Sampling request_, repeat_;
+     int window_ = 0;
+     int32_t semantic_begin_ = 0, semantic_end_ = 0;
+     std::vector<int32_t> token_ids_;
++    int64_t max_pause_frames_ = 0;
++    double pause_end_ratio_ = 2.0;
++    double pause_cap_ratio_ = 3.0;
++    std::unordered_set<int32_t> silence_token_ids_;
++    std::vector<size_t> silence_logit_indices_;
+ };
+ 
++/** Expected output frames (21.5 fps) estimated from spoken text length and control tags. */
++double expected_frames(const std::string & text);
++
+ }  // namespace drama3
+diff --git a/src/families/drama3/synthesizer.cpp b/src/families/drama3/synthesizer.cpp
+index c6bd7df..fa3d5fa 100644
+--- a/src/families/drama3/synthesizer.cpp
++++ b/src/families/drama3/synthesizer.cpp
+@@ -1,6 +1,7 @@
+ #include "synthesizer.h"
+ 
+ #include <algorithm>
++#include <cmath>
+ #include <deque>
+ #include <optional>
+ 
+@@ -17,6 +18,13 @@ int64_t window_frames(int i) {
+     return int64_t(4) << std::min(i, 5);
+ }
+ 
++int64_t clamp_frame_budget(double ratio, double expected, int64_t limit) {
++    const double scaled = ratio * expected;
++    if (!std::isfinite(scaled) || scaled <= 0.0) return 0;
++    if (scaled >= (double) limit) return limit;
++    return (int64_t) scaled;
++}
++
+ }  // namespace
+ 
+ /** What a chunk spoke: its codes, [codebooks, frames] with the frame fastest, and how it ended. */
+@@ -65,70 +73,88 @@ std::vector<float> Synthesizer::run_head(const std::vector<int32_t> & rows, int6
+     return held_last_;
+ }
+ 
+-Synthesizer::Chunk Synthesizer::speak(const std::vector<int32_t> & rows, int64_t head, const Request & r, const FrameSampler & sampler,
+-                                      std::mt19937_64 & rng, const AudioSink & sink) {
++Synthesizer::Chunk Synthesizer::speak(const std::vector<int32_t> & rows, int64_t head, const std::string & text, const Request & r,
++                                      const FrameSampler & sampler, std::mt19937_64 & rng, const AudioSink & sink) {
+     const int width = prompt_.width(), codebooks = width - 1, h = text_.hidden();
+     const int64_t n = (int64_t) rows.size() / width;
+     if (head < 1 || head >= n || n + r.max_frames > rows_most_) throw std::invalid_argument("a chunk's prompt and speech outgrow the model's sequences");
+-    // The head is run apart from the rest even where it is run first, so that a request speaks the same whether the
+-    // models still hold it or not.
+-    std::vector<float> hidden = run_head(rows, head);
+-    const std::vector<float> rest = text_.run(text_.embed(std::vector<int32_t>(rows.begin() + head * width, rows.end()), n - head), n - head);
+-    hidden.insert(hidden.end(), rest.begin(), rest.end());
+-    // The audio decoder runs the head's last row and the rest but the last, each with the frame after it, which the
+-    // prompt's last row has yet to draw.
+-    decoder_.prefill(std::vector<float>(hidden.begin(), hidden.end() - h), std::vector<int32_t>(rows.begin() + (head - 1) * width, rows.end()),
+-                     n - head);
+-    std::vector<float> last(hidden.end() - h, hidden.end());
+-    std::vector<int32_t> frame(rows.end() - width, rows.end()), mains;
+-    for (int64_t i = 0; i < n; i++) mains.push_back(rows[(size_t) (i * width)]);
++    try {
++        // The head is run apart from the rest even where it is run first, so that a request speaks the same whether the
++        // models still hold it or not.
++        std::vector<float> hidden = run_head(rows, head);
++        const std::vector<float> rest = text_.run(text_.embed(std::vector<int32_t>(rows.begin() + head * width, rows.end()), n - head), n - head);
++        hidden.insert(hidden.end(), rest.begin(), rest.end());
++        // The audio decoder runs the head's last row and the rest but the last, each with the frame after it, which the
++        // prompt's last row has yet to draw.
++        decoder_.prefill(std::vector<float>(hidden.begin(), hidden.end() - h), std::vector<int32_t>(rows.begin() + (head - 1) * width, rows.end()),
++                         n - head);
++        std::vector<float> last(hidden.end() - h, hidden.end());
++        std::vector<int32_t> frame(rows.end() - width, rows.end()), mains;
++        for (int64_t i = 0; i < n; i++) mains.push_back(rows[(size_t) (i * width)]);
+ 
+-    Chunk chunk;
+-    std::vector<std::vector<int32_t>> drawn;
+-    int64_t sent = 0;
+-    int windows = 0;
+-    codec_.start_decoding();
+-    const auto pass = [&](int64_t until) {
+-        if (until <= sent) return true;
+-        const int64_t count = until - sent;
+-        std::vector<int32_t> codes((size_t) (codebooks * count));
+-        for (int64_t f = 0; f < count; f++)
+-            for (int b = 0; b < codebooks; b++) codes[(size_t) (b * count + f)] = drawn[(size_t) (sent + f)][(size_t) b];
+-        const std::vector<float> audio = codec_.decode_more(codes, count);
+-        sent = until;
+-        windows++;
+-        return sink(audio.data(), audio.size());
+-    };
+-    for (int64_t step = 0; step < r.max_frames; step++) {
+-        // A cancel stops the chunk between frames, rather than at the next window of audio.
+-        if (r.stopped && r.stopped()) {
+-            chunk.stopped = true;
+-            return chunk;
+-        }
+-        const int32_t main = sampler.main(text_.logits(last), mains, uniform(rng), uniform(rng));
+-        if (main == eos_) {
+-            chunk.ended = true;
+-            break;
+-        }
+-        const std::vector<int32_t> codes = decoder_.step(last, frame, main, [&](int, const std::vector<float> & logits) {
+-            return sampler.code(logits, uniform(rng));
+-        });
+-        frame.assign(1, main);
+-        frame.insert(frame.end(), codes.begin(), codes.end());
+-        mains.push_back(main);
+-        drawn.push_back(codes);
+-        if ((int64_t) drawn.size() - sent >= window_frames(windows) && !pass((int64_t) drawn.size())) {
+-            chunk.stopped = true;
+-            return chunk;
++        Chunk chunk;
++        std::vector<std::vector<int32_t>> drawn;
++        int64_t sent = 0;
++        int windows = 0;
++        const int64_t max_pause = sampler.max_pause_frames();
++        const double expected = expected_frames(text);
++        const int64_t end_frames = clamp_frame_budget(sampler.pause_end_ratio(), expected, r.max_frames);
++        const int64_t cap_frames = clamp_frame_budget(sampler.pause_cap_ratio(), expected, r.max_frames);
++        int64_t silent_run = 0;
++        codec_.start_decoding();
++        const auto pass = [&](int64_t until) {
++            if (until <= sent) return true;
++            const int64_t count = until - sent;
++            std::vector<int32_t> codes((size_t) (codebooks * count));
++            for (int64_t f = 0; f < count; f++)
++                for (int b = 0; b < codebooks; b++) codes[(size_t) (b * count + f)] = drawn[(size_t) (sent + f)][(size_t) b];
++            const std::vector<float> audio = codec_.decode_more(codes, count);
++            sent = until;
++            windows++;
++            return sink(audio.data(), audio.size());
++        };
++        for (int64_t step = 0; step < r.max_frames; step++) {
++            // A cancel stops the chunk between frames, rather than at the next window of audio.
++            if (r.stopped && r.stopped()) {
++                chunk.stopped = true;
++                return chunk;
++            }
++            if (max_pause > 0 && (step >= cap_frames || (silent_run >= max_pause && step >= end_frames))) {
++                chunk.ended = true;
++                break;
++            }
++            const bool suppress_silence = max_pause > 0 && silent_run >= max_pause;
++            const int32_t main = sampler.main(text_.logits(last), mains, uniform(rng), uniform(rng), suppress_silence);
++            if (main == eos_) {
++                chunk.ended = true;
++                break;
++            }
++            silent_run = sampler.is_silence(main) ? silent_run + 1 : 0;
++            const std::vector<int32_t> codes = decoder_.step(last, frame, main, [&](int, const std::vector<float> & logits) {
++                return sampler.code(logits, uniform(rng));
++            });
++            frame.assign(1, main);
++            frame.insert(frame.end(), codes.begin(), codes.end());
++            mains.push_back(main);
++            drawn.push_back(codes);
++            if ((int64_t) drawn.size() - sent >= window_frames(windows) && !pass((int64_t) drawn.size())) {
++                chunk.stopped = true;
++                return chunk;
++            }
++            if (step + 1 < r.max_frames) last = text_.run(text_.embed(frame, 1), 1);
+         }
+-        if (step + 1 < r.max_frames) last = text_.run(text_.embed(frame, 1), 1);
++        if (!pass((int64_t) drawn.size())) chunk.stopped = true;
++        chunk.frames = (int64_t) drawn.size();
++        chunk.codes.resize((size_t) (codebooks * chunk.frames));
++        for (int64_t f = 0; f < chunk.frames; f++)
++            for (int b = 0; b < codebooks; b++) chunk.codes[(size_t) (b * chunk.frames + f)] = drawn[(size_t) f][(size_t) b];
++        return chunk;
++    } catch (...) {
++        // Discard cached prefix state on failure so the next request clears KV memory instead of reusing stale tail slots.
++        held_head_.clear();
++        held_last_.clear();
++        throw;
+     }
+-    if (!pass((int64_t) drawn.size())) chunk.stopped = true;
+-    chunk.frames = (int64_t) drawn.size();
+-    chunk.codes.resize((size_t) (codebooks * chunk.frames));
+-    for (int64_t f = 0; f < chunk.frames; f++)
+-        for (int b = 0; b < codebooks; b++) chunk.codes[(size_t) (b * chunk.frames + f)] = drawn[(size_t) f][(size_t) b];
+-    return chunk;
+ }
+ 
+ Ending Synthesizer::synthesize(const Request & r, const Voice & voice, const AudioSink & sink) {
+@@ -169,7 +195,7 @@ Ending Synthesizer::synthesize(const Request & r, const Voice & voice, const Aud
+                 if (e.fault() != Fault::OutOfRange || i + 1 == histories.size()) throw;
+             }
+         }
+-        const Chunk chunk = speak(rows, head, r, sampler, rng, sink);
++        const Chunk chunk = speak(rows, head, text, r, sampler, rng, sink);
+         if (chunk.stopped) return Ending::Stopped;
+         if (!chunk.ended) ending = Ending::MaxFrames;
+         if (chunk.frames == 0) continue;
+diff --git a/src/families/drama3/synthesizer.h b/src/families/drama3/synthesizer.h
+index 353ab63..82ebfd4 100644
+--- a/src/families/drama3/synthesizer.h
++++ b/src/families/drama3/synthesizer.h
+@@ -72,8 +72,8 @@ private:
+      * the end of speech or `r.max_frames`, passing their audio to `sink` as it goes, and returns their codes and how the
+      * chunk ended.
+      */
+-    Chunk speak(const std::vector<int32_t> & rows, int64_t head, const Request & r, const FrameSampler & sampler, std::mt19937_64 & rng,
+-                const AudioSink & sink);
++    Chunk speak(const std::vector<int32_t> & rows, int64_t head, const std::string & text, const Request & r, const FrameSampler & sampler,
++                std::mt19937_64 & rng, const AudioSink & sink);
+ 
+     /**
+      * Runs the first `head` rows of `rows` in the text model and the audio decoder, from the start of a sequence, or

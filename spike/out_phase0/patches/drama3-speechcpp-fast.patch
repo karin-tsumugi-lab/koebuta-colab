@@ -1,0 +1,1277 @@
+diff --git a/src/common/keys-values.cpp b/src/common/keys-values.cpp
+index 0dde731..9be0872 100644
+--- a/src/common/keys-values.cpp
++++ b/src/common/keys-values.cpp
+@@ -1,24 +1,56 @@
+ #include "keys-values.h"
+ 
+ #include <cmath>
++#include <memory>
+ #include <numeric>
+ #include <string>
+ 
+ #include "error.h"
+ 
+-KeysValues::KeysValues(ggml_backend_t backend, int layers, int head_dim, int kv_heads, int64_t rows) : capacity_(rows) {
++namespace {
++
++bool supports_flash_attention(ggml_backend_t backend, int head_dim, int kv_heads, int heads) {
++    if (ggml_backend_dev_type(ggml_backend_get_device(backend)) == GGML_BACKEND_DEVICE_TYPE_CPU) return false;
++    if (heads < 1 || kv_heads < 1 || heads % kv_heads != 0) return false;
++    ggml_init_params params = {ggml_tensor_overhead() * 12, nullptr, true};
++    std::unique_ptr<ggml_context, decltype(&ggml_free)> ctx(ggml_init(params), ggml_free);
++    if (!ctx) return false;
++    ggml_tensor * q = ggml_new_tensor_3d(ctx.get(), GGML_TYPE_F32, head_dim, 1, heads);
++    ggml_tensor * k = ggml_new_tensor_3d(ctx.get(), GGML_TYPE_F16, head_dim, KeysValues::kFlashBlock, kv_heads);
++    ggml_tensor * v = ggml_new_tensor_3d(ctx.get(), GGML_TYPE_F16, head_dim, KeysValues::kFlashBlock, kv_heads);
++    ggml_tensor * mask = ggml_new_tensor_2d(ctx.get(), GGML_TYPE_F16, KeysValues::kFlashBlock, 1);
++    ggml_tensor * attention = ggml_flash_attn_ext(ctx.get(), q, k, v, mask, 1.0f, 0.0f, 0.0f);
++    ggml_prec_set_acc(attention, GGML_PREC_F32);
++    ggml_tensor * cache = ggml_new_tensor_2d(ctx.get(), GGML_TYPE_F16, (int64_t) head_dim * kv_heads, KeysValues::kFlashBlock);
++    ggml_tensor * row = ggml_new_tensor_2d(ctx.get(), GGML_TYPE_F32, (int64_t) head_dim * kv_heads, 1);
++    ggml_tensor * pos = ggml_new_tensor_1d(ctx.get(), GGML_TYPE_I32, 1);
++    ggml_tensor * write = ggml_set_rows(ctx.get(), cache, row, pos);
++    return ggml_backend_supports_op(backend, attention) && ggml_backend_supports_op(backend, write);
++}
++
++}  // namespace
++
++KeysValues::KeysValues(ggml_backend_t backend, int layers, int head_dim, int kv_heads, int64_t rows, int heads, bool allow_flash)
++    : flash_(allow_flash && supports_flash_attention(backend, head_dim, kv_heads, heads)) {
++    capacity_ = flash_ ? flash_block_len(rows) : rows;
+     ggml_init_params params = {ggml_tensor_overhead() * (size_t) (2 * layers), nullptr, true};
+     ctx_ = ggml_init(params);
+     if (!ctx_) throw Error(Fault::OutOfMemory, "cannot create a ggml context");
+     for (int l = 0; l < layers; l++) {
+-        k_.push_back(ggml_new_tensor_3d(ctx_, GGML_TYPE_F32, head_dim, rows, kv_heads));
+-        v_.push_back(ggml_new_tensor_3d(ctx_, GGML_TYPE_F32, rows, head_dim, kv_heads));
++        if (flash_) {
++            k_.push_back(ggml_new_tensor_2d(ctx_, GGML_TYPE_F16, (int64_t) head_dim * kv_heads, capacity_));
++            v_.push_back(ggml_new_tensor_2d(ctx_, GGML_TYPE_F16, (int64_t) head_dim * kv_heads, capacity_));
++        } else {
++            k_.push_back(ggml_new_tensor_3d(ctx_, GGML_TYPE_F32, head_dim, capacity_, kv_heads));
++            v_.push_back(ggml_new_tensor_3d(ctx_, GGML_TYPE_F32, capacity_, head_dim, kv_heads));
++        }
+     }
+     buffer_ = ggml_backend_alloc_ctx_tensors(ctx_, backend);
+     if (!buffer_) {
+         ggml_free(ctx_);
+-        throw Error(Fault::OutOfMemory, "cannot allocate the keys and values of " + std::to_string(rows) + " rows");
++        throw Error(Fault::OutOfMemory, "cannot allocate the keys and values of " + std::to_string(capacity_) + " rows");
+     }
++    clear();
+ }
+ 
+ KeysValues::~KeysValues() {
+@@ -26,6 +58,10 @@ KeysValues::~KeysValues() {
+     ggml_free(ctx_);
+ }
+ 
++void KeysValues::clear() {
++    if (buffer_) ggml_backend_buffer_clear(buffer_, 0);
++}
++
+ ggml_tensor * KeysValues::attend(Graph & g, int l, ggml_tensor * q, ggml_tensor * k, ggml_tensor * v, int64_t first, ggml_tensor * mask) const {
+     ggml_context * c = g.ctx();
+     const int64_t head_dim = q->ne[0], heads = q->ne[1], kv_heads = k->ne[1], n = q->ne[2], total = first + n;
+@@ -41,6 +77,27 @@ ggml_tensor * KeysValues::attend(Graph & g, int l, ggml_tensor * q, ggml_tensor
+     return ggml_reshape_2d(c, o, head_dim * heads, n);
+ }
+ 
++ggml_tensor * KeysValues::attend_flash(Graph & g, int l, ggml_tensor * q, ggml_tensor * k, ggml_tensor * v,
++                                       ggml_tensor * pos, int64_t n_kv, ggml_tensor * mask) const {
++    ggml_context * c = g.ctx();
++    const int64_t head_dim = q->ne[0], heads = q->ne[1], kv_heads = k->ne[1], n = q->ne[2];
++    const int64_t kv_dim = head_dim * kv_heads;
++    ggml_tensor * kc = k_[(size_t) l];
++    ggml_tensor * vc = v_[(size_t) l];
++    ggml_tensor * k_src = ggml_is_contiguous(k) ? k : ggml_cont(c, k);
++    ggml_tensor * v_src = ggml_is_contiguous(v) ? v : ggml_cont(c, v);
++    g.expand(ggml_set_rows(c, kc, ggml_reshape_2d(c, k_src, kv_dim, n), pos));
++    g.expand(ggml_set_rows(c, vc, ggml_reshape_2d(c, v_src, kv_dim, n), pos));
++    ggml_tensor * keys = ggml_view_3d(c, kc, head_dim, kv_heads, n_kv, ggml_row_size(kc->type, head_dim), kc->nb[1], 0);
++    ggml_tensor * values = ggml_view_3d(c, vc, head_dim, kv_heads, n_kv, ggml_row_size(vc->type, head_dim), vc->nb[1], 0);
++    ggml_tensor * qh = ggml_permute(c, q, 0, 2, 1, 3);
++    ggml_tensor * kh = ggml_permute(c, keys, 0, 2, 1, 3);
++    ggml_tensor * vh = ggml_permute(c, values, 0, 2, 1, 3);
++    ggml_tensor * o = ggml_flash_attn_ext(c, qh, kh, vh, mask, 1.0f / std::sqrt((float) head_dim), 0.0f, 0.0f);
++    ggml_prec_set_acc(o, GGML_PREC_F32);
++    return ggml_reshape_2d(c, o, head_dim * heads, n);
++}
++
+ ggml_tensor * causal_mask(Graph & g, int64_t first, int64_t n) {
+     if (n == 1) return nullptr;
+     const int64_t total = first + n;
+@@ -50,6 +107,13 @@ ggml_tensor * causal_mask(Graph & g, int64_t first, int64_t n) {
+     return g.input(mask, total, n);
+ }
+ 
++std::vector<float> causal_mask_values(int64_t first, int64_t n, int64_t n_kv) {
++    std::vector<float> mask((size_t) (n_kv * n));
++    for (int64_t i = 0; i < n; i++)
++        for (int64_t j = 0; j < n_kv; j++) mask[(size_t) (i * n_kv + j)] = j <= first + i ? 0.0f : -INFINITY;
++    return mask;
++}
++
+ ggml_tensor * positions(Graph & g, int64_t first, int64_t n) {
+     std::vector<int32_t> p((size_t) n);
+     std::iota(p.begin(), p.end(), (int32_t) first);
+diff --git a/src/common/keys-values.h b/src/common/keys-values.h
+index e4d9988..339ceb1 100644
+--- a/src/common/keys-values.h
++++ b/src/common/keys-values.h
+@@ -12,12 +12,20 @@
+  */
+ class KeysValues {
+ public:
+-    KeysValues(ggml_backend_t backend, int layers, int head_dim, int kv_heads, int64_t rows);
++    static constexpr int64_t kFlashBlock = 256;
++
++    KeysValues(ggml_backend_t backend, int layers, int head_dim, int kv_heads, int64_t rows, int heads = 0, bool allow_flash = false);
+     ~KeysValues();
+     KeysValues(const KeysValues &) = delete;
+     KeysValues & operator=(const KeysValues &) = delete;
+ 
+     int64_t capacity() const { return capacity_; }
++    bool flash() const { return flash_; }
++    void clear();
++
++    static int64_t flash_block_len(int64_t total_rows) {
++        return (total_rows + kFlashBlock - 1) / kFlashBlock * kFlashBlock;
++    }
+ 
+     /**
+      * Writes `k` and `v`, [head_dim, kv heads, n], to layer `l` at rows [first, first + n) and builds the attention of
+@@ -26,11 +34,19 @@ public:
+      */
+     ggml_tensor * attend(Graph & g, int l, ggml_tensor * q, ggml_tensor * k, ggml_tensor * v, int64_t first, ggml_tensor * mask) const;
+ 
++    /**
++     * F16 FlashAttention path: writes `k` and `v`, [head_dim, kv heads, n], into the F16 cache at positions `pos`
++     * (`I32 [n]`) via ggml_set_rows() and attends `q` over [0, n_kv) under `mask` (`F16 [n_kv, n]`).
++     */
++    ggml_tensor * attend_flash(Graph & g, int l, ggml_tensor * q, ggml_tensor * k, ggml_tensor * v,
++                               ggml_tensor * pos, int64_t n_kv, ggml_tensor * mask) const;
++
+ private:
+     ggml_context * ctx_ = nullptr;
+     ggml_backend_buffer_t buffer_ = nullptr;
+     std::vector<ggml_tensor *> k_, v_;
+     int64_t capacity_ = 0;
++    bool flash_ = false;
+ };
+ 
+ /**
+@@ -39,5 +55,8 @@ private:
+  */
+ ggml_tensor * causal_mask(Graph & g, int64_t first, int64_t n);
+ 
++/** Causal mask values for FlashAttention over `n_kv` key/value positions (`[n_kv, n]`). */
++std::vector<float> causal_mask_values(int64_t first, int64_t n, int64_t n_kv);
++
+ /** The positions of `n` rows after `first`, I32 [n], as RoPE takes them. */
+ ggml_tensor * positions(Graph & g, int64_t first, int64_t n);
+diff --git a/src/common/qwen35-decoder.cpp b/src/common/qwen35-decoder.cpp
+index 6a5d684..a276323 100644
+--- a/src/common/qwen35-decoder.cpp
++++ b/src/common/qwen35-decoder.cpp
+@@ -100,9 +100,13 @@ Qwen35Decoder::~Qwen35Decoder() {
+ 
+ void Qwen35Decoder::start(int64_t rows) {
+     const int attention_layers = (int) std::count(types_.begin() + first_, types_.begin() + last_, true);
+-    if (attention_layers > 0 && (!keys_values_ || keys_values_->capacity() < rows)) {
+-        keys_values_.reset();
+-        keys_values_ = std::make_unique<KeysValues>(backend_, attention_layers, head_dim_, kv_heads_, rows);
++    if (attention_layers > 0) {
++        if (!keys_values_ || keys_values_->capacity() < rows) {
++            keys_values_.reset();
++            keys_values_ = std::make_unique<KeysValues>(backend_, attention_layers, head_dim_, kv_heads_, rows, heads_, true);
++        } else {
++            keys_values_->clear();
++        }
+     }
+     if (states_->buffer) ggml_backend_buffer_clear(states_->buffer, 0);
+     capacity_ = rows;
+@@ -127,7 +131,7 @@ void Qwen35Decoder::rewind(int64_t rows) {
+     n_past_ = rows;
+ }
+ 
+-ggml_tensor * Qwen35Decoder::attention_mixer(Graph & g, int l, ggml_tensor * x, int64_t first, ggml_tensor * pos, ggml_tensor * mask) {
++ggml_tensor * Qwen35Decoder::attention_mixer(Graph & g, int l, ggml_tensor * x, int64_t first, ggml_tensor * pos, int64_t n_kv, ggml_tensor * mask) {
+     ggml_context * c = g.ctx();
+     const std::string p = layer_name(l);
+     const int64_t n = x->ne[1];
+@@ -136,10 +140,17 @@ ggml_tensor * Qwen35Decoder::attention_mixer(Graph & g, int l, ggml_tensor * x,
+     ggml_tensor * k = ggml_reshape_3d(c, mul_mat(c, m_.tensor(p + "attn_k"), x), head_dim_, kv_heads_, n);
+     ggml_tensor * v = ggml_reshape_3d(c, mul_mat(c, m_.tensor(p + "attn_v"), x), head_dim_, kv_heads_, n);
+     ggml_tensor * gate = ggml_sigmoid(c, mul_mat(c, m_.tensor(p + "attn_gate"), x));
++    g.expand(q);
++    g.expand(k);
++    g.expand(v);
+     // RoPE turns the first rotary_dim channels of each head in two halves, ggml's NeoX mode.
+     q = ggml_rope_ext(c, norm(q, "attn_q_norm"), pos, nullptr, rotary_dim_, GGML_ROPE_TYPE_NEOX, 0, rope_theta_, 1.0f, 0.0f, 1.0f, 0.0f, 0.0f);
+     k = ggml_rope_ext(c, norm(k, "attn_k_norm"), pos, nullptr, rotary_dim_, GGML_ROPE_TYPE_NEOX, 0, rope_theta_, 1.0f, 0.0f, 1.0f, 0.0f, 0.0f);
+-    ggml_tensor * o = ggml_mul(c, keys_values_->attend(g, slot_[(size_t) l], q, k, v, first, mask), gate);
++    g.expand(q);
++    ggml_tensor * attn = keys_values_->flash()
++        ? keys_values_->attend_flash(g, slot_[(size_t) l], q, k, v, pos, n_kv, mask)
++        : keys_values_->attend(g, slot_[(size_t) l], q, k, v, first, mask);
++    ggml_tensor * o = ggml_mul(c, attn, gate);
+     return mul_mat(c, m_.tensor(p + "attn_output"), o);
+ }
+ 
+@@ -198,20 +209,21 @@ ggml_tensor * Qwen35Decoder::experts(Graph & g, int l, ggml_tensor * x, ggml_ten
+     *router = mul_mat(c, m_.tensor(p + "ffn_gate_inp"), x);
+     ggml_tensor * probabilities = ggml_soft_max(c, *router);
+     ggml_tensor * chosen = ggml_top_k(c, probabilities, used_);
+-    ggml_tensor * weights = ggml_get_rows(c, ggml_reshape_3d(c, probabilities, 1, experts_, n), chosen);
++    ggml_tensor * weights = ggml_get_rows(c, ggml_reshape_3d(c, probabilities, 1, (*router)->ne[0], n), chosen);
+     if (norm_topk_) weights = ggml_div(c, weights, ggml_reshape_3d(c, ggml_sum_rows(c, ggml_reshape_2d(c, weights, used_, n)), 1, 1, n));
+     ggml_tensor * rows = ggml_reshape_3d(c, x, h_, 1, n);
+     ggml_tensor * gate = mul_mat_id(c, m_.tensor(p + "ffn_gate_exps"), rows, chosen);
+     ggml_tensor * up = mul_mat_id(c, m_.tensor(p + "ffn_up_exps"), rows, chosen);
+-    ggml_tensor * down = mul_mat_id(c, m_.tensor(p + "ffn_down_exps"), ggml_mul(c, ggml_silu(c, gate), up), chosen);
++    ggml_tensor * down = mul_mat_id(c, m_.tensor(p + "ffn_down_exps"), ggml_swiglu_split(c, gate, up), chosen);
+     down = ggml_mul(c, down, weights);
+     ggml_tensor * sum = nullptr;
+     for (int e = 0; e < used_; e++) {
+         ggml_tensor * one = ggml_view_2d(c, down, h_, n, down->nb[2], (size_t) e * down->nb[1]);
+         sum = sum ? ggml_add(c, sum, one) : one;
+     }
+-    ggml_tensor * shared = mul_mat(c, m_.tensor(p + "ffn_down_shexp"),
+-                                   ggml_mul(c, ggml_silu(c, mul_mat(c, m_.tensor(p + "ffn_gate_shexp"), x)), mul_mat(c, m_.tensor(p + "ffn_up_shexp"), x)));
++    ggml_tensor * shared_gate = mul_mat(c, m_.tensor(p + "ffn_gate_shexp"), x);
++    ggml_tensor * shared_up = mul_mat(c, m_.tensor(p + "ffn_up_shexp"), x);
++    ggml_tensor * shared = mul_mat(c, m_.tensor(p + "ffn_down_shexp"), ggml_swiglu_split(c, shared_gate, shared_up));
+     shared = ggml_mul(c, shared, ggml_sigmoid(c, mul_mat(c, m_.tensor(p + "ffn_gate_inp_shexp"), x)));
+     return ggml_add(c, sum, shared);
+ }
+@@ -219,7 +231,9 @@ ggml_tensor * Qwen35Decoder::experts(Graph & g, int l, ggml_tensor * x, ggml_ten
+ ggml_tensor * Qwen35Decoder::dense(Graph & g, int l, ggml_tensor * x) {
+     ggml_context * c = g.ctx();
+     const std::string p = layer_name(l);
+-    return mul_mat(c, m_.tensor(p + "ffn_down"), ggml_mul(c, ggml_silu(c, mul_mat(c, m_.tensor(p + "ffn_gate"), x)), mul_mat(c, m_.tensor(p + "ffn_up"), x)));
++    ggml_tensor * gate = mul_mat(c, m_.tensor(p + "ffn_gate"), x);
++    ggml_tensor * up = mul_mat(c, m_.tensor(p + "ffn_up"), x);
++    return mul_mat(c, m_.tensor(p + "ffn_down"), ggml_swiglu_split(c, gate, up));
+ }
+ 
+ std::vector<float> Qwen35Decoder::run(const std::vector<float> & input, int64_t n, Qwen35Stages * stages) {
+@@ -257,17 +271,13 @@ std::vector<float> Qwen35Decoder::run(const std::vector<float> & input, int64_t
+     return out;
+ }
+ 
+-ggml_tensor * Qwen35Decoder::build_rows(Graph & g, ggml_tensor * x, std::vector<std::vector<ggml_tensor *>> * kept) {
++ggml_tensor * Qwen35Decoder::build_layers(Graph & g, ggml_tensor * x, ggml_tensor * pos, int64_t n_kv, ggml_tensor * mask,
++                                          std::vector<std::vector<ggml_tensor *>> * kept) {
+     ggml_context * c = g.ctx();
+-    const int64_t rows = x->ne[1];
+-    // A graph holds only the inputs its nodes read, and only attention reads the positions and the mask.
+-    const bool attends = std::count(types_.begin() + first_, types_.begin() + last_, true) > 0;
+-    ggml_tensor * pos = attends ? positions(g, n_past_, rows) : nullptr;
+-    ggml_tensor * mask = attends ? causal_mask(g, n_past_, rows) : nullptr;
+     for (int l = first_; l < last_; l++) {
+         const std::string p = layer_name(l);
+         ggml_tensor * h = ggml_mul(c, ggml_rms_norm(c, x, eps_), m_.tensor(p + "attn_norm"));
+-        ggml_tensor * mixer = attention(l) ? attention_mixer(g, l, h, n_past_, pos, mask) : delta_mixer(g, l, h);
++        ggml_tensor * mixer = attention(l) ? attention_mixer(g, l, h, n_past_, pos, n_kv, mask) : delta_mixer(g, l, h);
+         x = ggml_add(c, x, mixer);
+         ggml_tensor * router = nullptr;
+         ggml_tensor * normed = ggml_mul(c, ggml_rms_norm(c, x, eps_), m_.tensor(p + "post_attn_norm"));
+@@ -285,6 +295,24 @@ ggml_tensor * Qwen35Decoder::build_rows(Graph & g, ggml_tensor * x, std::vector<
+     return x;
+ }
+ 
++ggml_tensor * Qwen35Decoder::build_rows(Graph & g, ggml_tensor * x, std::vector<std::vector<ggml_tensor *>> * kept) {
++    const int64_t rows = x->ne[1];
++    // A graph holds only the inputs its nodes read, and only attention reads the positions and the mask.
++    const bool attends = std::count(types_.begin() + first_, types_.begin() + last_, true) > 0;
++    ggml_tensor * pos = attends ? positions(g, n_past_, rows) : nullptr;
++    const int64_t n_kv = (attends && keys_values_ && keys_values_->flash()) ? KeysValues::flash_block_len(n_past_ + rows) : n_past_ + rows;
++    ggml_tensor * mask = nullptr;
++    if (attends) {
++        if (keys_values_ && keys_values_->flash()) mask = g.half_input(causal_mask_values(n_past_, rows, n_kv), n_kv, rows);
++        else mask = causal_mask(g, n_past_, rows);
++    }
++    return build_layers(g, x, pos, n_kv, mask, kept);
++}
++
++ggml_tensor * Qwen35Decoder::build_step_rows(Graph & g, ggml_tensor * x, ggml_tensor * pos, ggml_tensor * mask, int64_t n_kv) {
++    return build_layers(g, x, pos, n_kv, mask, nullptr);
++}
++
+ void Qwen35Decoder::advance(int64_t n) {
+     if (n_past_ + n > capacity_) throw std::invalid_argument("the text model's rows outgrow the sequence it was started for");
+     n_past_ += n;
+diff --git a/src/common/qwen35-decoder.h b/src/common/qwen35-decoder.h
+index 1d87e39..9e64ddd 100644
+--- a/src/common/qwen35-decoder.h
++++ b/src/common/qwen35-decoder.h
+@@ -48,12 +48,18 @@ public:
+     bool attention(int l) const { return types_[(size_t) l]; }
+     /** The rows run so far. */
+     int64_t n_past() const { return n_past_; }
++    /** Maximum sequence rows the decoder was started for. */
++    int64_t capacity() const { return capacity_; }
+     /** The allocator of the layers' graphs on the model's device, which a caller's own graphs of the model share. */
+     ggml_gallocr_t allocator() const { return allocr_; }
+ 
+     /** Starts a sequence of at most `rows` rows: the attention layers get room for them, and every state starts at 0. */
+     void start(int64_t rows);
+ 
++    bool has_attention() const { return (bool) keys_values_; }
++    bool can_step_graph() const { return !sched_ && keys_values_ && keys_values_->flash(); }
++    int64_t flash_kv_len(int64_t extra_rows = 1) const { return KeysValues::flash_block_len(n_past_ + extra_rows); }
++
+     /** Keeps a copy of every Gated DeltaNet layer's state as it stands after n_past() rows, for rewind(). */
+     void keep_states();
+ 
+@@ -84,6 +90,9 @@ public:
+      */
+     ggml_tensor * build_rows(Graph & g, ggml_tensor * x, std::vector<std::vector<ggml_tensor *>> * kept = nullptr);
+ 
++    /** Builds a single-step decode pass into `g` using pre-bound persistent `pos` and `mask` inputs. */
++    ggml_tensor * build_step_rows(Graph & g, ggml_tensor * x, ggml_tensor * pos, ggml_tensor * mask, int64_t n_kv);
++
+     /** Counts `n` rows run by a caller's graph of build_rows(). */
+     void advance(int64_t n);
+ 
+@@ -98,7 +107,9 @@ public:
+ private:
+     struct States;
+ 
+-    ggml_tensor * attention_mixer(Graph & g, int l, ggml_tensor * x, int64_t first, ggml_tensor * pos, ggml_tensor * mask);
++    ggml_tensor * attention_mixer(Graph & g, int l, ggml_tensor * x, int64_t first, ggml_tensor * pos, int64_t n_kv, ggml_tensor * mask);
++    ggml_tensor * build_layers(Graph & g, ggml_tensor * x, ggml_tensor * pos, int64_t n_kv, ggml_tensor * mask,
++                               std::vector<std::vector<ggml_tensor *>> * kept);
+     ggml_tensor * delta_mixer(Graph & g, int l, ggml_tensor * x);
+     /** The experts and the shared expert on `x`, and the router's logits in `router`. */
+     ggml_tensor * experts(Graph & g, int l, ggml_tensor * x, ggml_tensor ** router);
+diff --git a/src/common/storage.cpp b/src/common/storage.cpp
+index 27e4fbb..aefa76c 100644
+--- a/src/common/storage.cpp
++++ b/src/common/storage.cpp
+@@ -33,7 +33,7 @@ const std::vector<WeightType> & weight_types() {
+     static const std::vector<WeightType> types = {
+         {0, GGML_TYPE_F32, kFirstLayoutRelease}, {1, GGML_TYPE_F16, kFirstLayoutRelease}, {7, GGML_TYPE_Q8_0, kFirstLayoutRelease},
+         {18, GGML_TYPE_Q6_K, "0.8.0"},           {16, GGML_TYPE_Q5_K, "0.8.0"},           {14, GGML_TYPE_Q4_K, "0.8.0"},
+-        {25, GGML_TYPE_IQ4_NL, "0.9.1"},
++        {25, GGML_TYPE_IQ4_NL, "0.9.1"},         {23, GGML_TYPE_IQ3_XXS, "0.11.2"},
+     };
+     return types;
+ }
+@@ -60,6 +60,7 @@ Storage quantized_storage(std::vector<Since> since) {
+         {GGML_TYPE_Q5_K, {GGML_TYPE_Q5_K, GGML_TYPE_Q8_0, GGML_TYPE_F16}},
+         {GGML_TYPE_Q4_K, {GGML_TYPE_Q4_K, GGML_TYPE_Q8_0, GGML_TYPE_F16}},
+         {GGML_TYPE_IQ4_NL, {GGML_TYPE_IQ4_NL, GGML_TYPE_F16}},
++        {GGML_TYPE_IQ3_XXS, {GGML_TYPE_IQ3_XXS, GGML_TYPE_Q8_0, GGML_TYPE_F16}},
+     };
+     std::vector<Storage::Choice> choices;
+     for (const Storage::Choice & c : every) {
+diff --git a/src/families/drama3/audio-decoder.cpp b/src/families/drama3/audio-decoder.cpp
+index b27dcc0..14c77a8 100644
+--- a/src/families/drama3/audio-decoder.cpp
++++ b/src/families/drama3/audio-decoder.cpp
+@@ -24,7 +24,7 @@ std::string layer_name(int l, int shared) {
+ 
+ /** What the layers of one graph read of its rows. */
+ struct AudioDecoder::Rows {
+-    int64_t first = 0, n = 0;
++    int64_t first = 0, n = 0, n_kv = 0;
+     ggml_tensor * positions = nullptr;
+     ggml_tensor * mask = nullptr;
+     /** 1 where the frame after the row is audio, whose codes the layers mix in, and 0 where it is text, [1, n]. */
+@@ -33,6 +33,29 @@ struct AudioDecoder::Rows {
+     ggml_tensor * unseen = nullptr;
+ };
+ 
++struct AudioDecoder::CodebookStep {
++    Graph graph{4096};
++    ggml_gallocr_t allocr = nullptr;
++    int64_t n_kv = 0;
++    ggml_tensor * state_in = nullptr;
++    ggml_tensor * code_in = nullptr;
++    ggml_tensor * audio = nullptr;
++    ggml_tensor * pos = nullptr;
++    ggml_tensor * mask = nullptr;
++    ggml_tensor * unseen_ids = nullptr;
++    ggml_tensor * own = nullptr;
++    ggml_tensor * state_out = nullptr;
++    ggml_tensor * logits_out = nullptr;
++
++    CodebookStep(ggml_backend_t backend, int64_t n_kv)
++        : allocr(ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend))), n_kv(n_kv) {}
++    ~CodebookStep() {
++        if (allocr) ggml_gallocr_free(allocr);
++    }
++    CodebookStep(const CodebookStep &) = delete;
++    CodebookStep & operator=(const CodebookStep &) = delete;
++};
++
+ AudioDecoder::AudioDecoder(const ModelFile & m, ggml_backend_t backend) : backend_(backend), m_(m) {
+     const std::string a = "drama3.audio_decoder.";
+     d_ = m.size(a + "dim");
+@@ -56,15 +79,19 @@ AudioDecoder::~AudioDecoder() {
+ }
+ 
+ void AudioDecoder::start(int64_t rows) {
++    steps_.clear();
+     if (!cache_ || cache_->capacity() < rows) {
+         cache_.reset();
+-        cache_ = std::make_unique<KeysValues>(backend_, layers(), head_dim_, kv_heads_, rows);
++        cache_ = std::make_unique<KeysValues>(backend_, layers(), head_dim_, kv_heads_, rows, heads_, true);
++    } else {
++        cache_->clear();
+     }
+     n_past_ = 0;
+ }
+ 
+ void AudioDecoder::rewind(int64_t rows) {
+     if (!cache_ || rows > n_past_) throw std::invalid_argument("the audio decoder rewinds only to rows it has run");
++    steps_.clear();
+     n_past_ = rows;
+ }
+ 
+@@ -86,12 +113,16 @@ ggml_tensor * AudioDecoder::layer(Graph & g, int l, ggml_tensor * hidden, ggml_t
+     // RoPE turns the first rotary_dim channels of each head in adjacent pairs, ggml's normal mode.
+     q = ggml_rope_ext(c, norm(q, "attn_q_norm"), r.positions, nullptr, rotary_dim_, GGML_ROPE_TYPE_NORMAL, 0, rope_base_, 1.0f, 0.0f, 1.0f, 0.0f, 0.0f);
+     k = ggml_rope_ext(c, norm(k, "attn_k_norm"), r.positions, nullptr, rotary_dim_, GGML_ROPE_TYPE_NORMAL, 0, rope_base_, 1.0f, 0.0f, 1.0f, 0.0f, 0.0f);
++    g.expand(q);
+ 
+-    ggml_tensor * o = ggml_mul(c, cache_->attend(g, l, q, k, v, r.first, r.mask), gate);
++    ggml_tensor * attn = cache_->flash()
++        ? cache_->attend_flash(g, l, q, k, v, r.positions, r.n_kv, r.mask)
++        : cache_->attend(g, l, q, k, v, r.first, r.mask);
++    ggml_tensor * o = ggml_mul(c, attn, gate);
+     x = ggml_add(c, x, mul_mat(c, m_.tensor(p + "attn_output"), o));
+ 
+     h = norm(x, "ffn_norm");
+-    h = ggml_mul(c, ggml_silu(c, mul_mat(c, m_.tensor(p + "ffn_gate"), h)), mul_mat(c, m_.tensor(p + "ffn_up"), h));
++    h = ggml_swiglu_split(c, mul_mat(c, m_.tensor(p + "ffn_gate"), h), mul_mat(c, m_.tensor(p + "ffn_up"), h));
+     x = ggml_add(c, x, mul_mat(c, m_.tensor(p + "ffn_down"), h));
+     return norm(x, "final_norm");
+ }
+@@ -101,7 +132,13 @@ AudioDecoder::Rows AudioDecoder::rows(Graph & g, int64_t n, const int32_t * fram
+     r.first = n_past_;
+     r.n = n;
+     r.positions = positions(g, r.first, n);
+-    r.mask = causal_mask(g, r.first, n);
++    if (cache_ && cache_->flash()) {
++        r.n_kv = KeysValues::flash_block_len(r.first + n);
++        r.mask = g.half_input(causal_mask_values(r.first, n, r.n_kv), r.n_kv, n);
++    } else {
++        r.n_kv = r.first + n;
++        r.mask = causal_mask(g, r.first, n);
++    }
+     r.audio = g.input(audio, 1, n);
+     if (!unseen) return r;
+ 
+@@ -202,6 +239,84 @@ std::vector<int32_t> AudioDecoder::step(const std::vector<float> & hidden, const
+     const std::vector<float> audio = {semantic(main) ? 1.0f : 0.0f};
+     std::vector<int32_t> codes = {std::clamp(main - semantic_begin_, 0, vocab_ - 1)};
+     std::vector<float> state = hidden;
++    if (!outputs && cache_->flash()) {
++        if ((int) steps_.size() != codebooks_ - 1) steps_.resize((size_t) (codebooks_ - 1));
++        const int64_t n_kv = KeysValues::flash_block_len(n_past_ + 1);
++        const std::vector<int32_t> pos_vec = {(int32_t) n_past_};
++        const std::vector<float> mask_vec = causal_mask_values(n_past_, 1, n_kv);
++        const bool has_unseen = 1 + seen_ < codebooks_;
++        std::vector<int32_t> unseen_ids;
++        float own_val = 0.0f;
++        if (has_unseen) {
++            own_val = semantic(frame[0]) ? 1.0f : 0.0f;
++            for (int b = 1 + seen_; b < codebooks_; b++) {
++                const int32_t c_val = frame[(size_t) (1 + b)];
++                if (c_val < 0 || c_val >= vocab_) throw std::invalid_argument("a frame's code is outside its codebook");
++                unseen_ids.push_back((b - 1) * vocab_ + c_val);
++            }
++        }
++        std::vector<float> step_logits;
++        for (int b = 0; b + 1 < codebooks_; b++) {
++            const int32_t prev_code = std::clamp(codes.back(), 0, vocab_ - 1);
++            std::unique_ptr<CodebookStep> & slot = steps_[(size_t) b];
++            if (slot && slot->n_kv == n_kv) {
++                slot->graph.set(slot->state_in, state);
++                slot->graph.set(slot->code_in, std::vector<int32_t>{prev_code});
++                slot->graph.set(slot->audio, audio);
++                slot->graph.set(slot->pos, pos_vec);
++                slot->graph.set(slot->mask, mask_vec);
++                if (b == 0 && has_unseen) {
++                    slot->graph.set(slot->unseen_ids, unseen_ids);
++                    slot->graph.set(slot->own, std::vector<float>{own_val});
++                }
++                slot->graph.compute_again(backend_);
++            } else {
++                slot.reset();
++                auto built = std::make_unique<CodebookStep>(backend_, n_kv);
++                CodebookStep * s = built.get();
++                ggml_context * c = s->graph.ctx();
++                s->state_in = s->graph.input(state, d_, 1);
++                s->code_in = s->graph.input(std::vector<int32_t>{prev_code}, 1);
++                s->audio = s->graph.input(audio, 1, 1);
++                s->pos = s->graph.input(pos_vec, 1);
++                s->mask = s->graph.half_input(mask_vec, n_kv, 1);
++                Rows r;
++                r.first = n_past_;
++                r.n = 1;
++                r.n_kv = n_kv;
++                r.positions = s->pos;
++                r.mask = s->mask;
++                r.audio = s->audio;
++                if (b == 0 && has_unseen) {
++                    s->unseen_ids = s->graph.input(unseen_ids, (int64_t) unseen_ids.size());
++                    s->own = s->graph.input(std::vector<float>{own_val}, 1, 1);
++                    ggml_tensor * e = ggml_get_rows(c, m_.tensor("ad.codebook_embd"), s->unseen_ids);
++                    ggml_tensor * sum = nullptr;
++                    for (int64_t j = 0; j < (int64_t) unseen_ids.size(); j++) {
++                        ggml_tensor * part = ggml_view_2d(c, e, d_, 1, e->nb[1], (size_t) j * e->nb[1]);
++                        sum = sum ? ggml_add(c, sum, part) : part;
++                    }
++                    r.unseen = ggml_mul(c, sum, s->own);
++                }
++                ggml_tensor * x = s->state_in;
++                for (int l = b == 0 ? 0 : shared_ + b; l <= shared_ + b; l++) {
++                    x = layer(s->graph, l, x, s->code_in, r);
++                }
++                ggml_tensor * logits = mul_mat(c, m_.tensor("ad.head." + std::to_string(b)), x);
++                s->state_out = x;
++                s->logits_out = logits;
++                s->graph.output(s->state_out);
++                s->graph.output(s->logits_out);
++                s->graph.compute(backend_, s->allocr);
++                slot = std::move(built);
++            }
++            Graph::read(slot->state_out, state);
++            Graph::read(slot->logits_out, step_logits);
++            codes.push_back(choose(b + 1, step_logits));
++        }
++        n_past_++;
++        return codes;
++    }
+     // A graph for each residual codebook's layer, the first with the shared layers before it, since each layer mixes in
+     // the code drawn from the head before it.
+     for (int b = 0; b + 1 < codebooks_; b++) {
+diff --git a/src/families/drama3/audio-decoder.h b/src/families/drama3/audio-decoder.h
+index 56b4b6f..755e9cf 100644
+--- a/src/families/drama3/audio-decoder.h
++++ b/src/families/drama3/audio-decoder.h
+@@ -76,6 +76,7 @@ private:
+      */
+     ggml_tensor * build_prefill(Graph & g, ggml_tensor * x, const int32_t * own, std::vector<ggml_tensor *> * kept);
+     struct Rows;
++    struct CodebookStep;
+ 
+     /**
+      * The inputs of the `n` rows after n_past(), whose own frames are `frames`, n frames of 1 + codebooks ids, and whose
+@@ -96,6 +97,7 @@ private:
+     float eps_ = 0, rope_base_ = 0;
+     int32_t semantic_begin_ = 0, semantic_end_ = 0;
+     std::unique_ptr<KeysValues> cache_;
++    std::vector<std::unique_ptr<CodebookStep>> steps_;
+     int64_t n_past_ = 0;
+ };
+ 
+diff --git a/src/families/drama3/layout.cpp b/src/families/drama3/layout.cpp
+index dcf803a..5f39f85 100644
+--- a/src/families/drama3/layout.cpp
++++ b/src/families/drama3/layout.cpp
+@@ -26,6 +26,13 @@ const Storage kMatrix = quantized_storage({{GGML_TYPE_F32, "0.8.8"},
+                                            {GGML_TYPE_Q6_K, "0.8.8"},
+                                            {GGML_TYPE_Q5_K, "0.8.8"},
+                                            {GGML_TYPE_Q4_K, "0.8.8"}});
++const Storage kExpertMatrix = quantized_storage({{GGML_TYPE_F32, "0.8.8"},
++                                                 {GGML_TYPE_F16, "0.8.8"},
++                                                 {GGML_TYPE_Q8_0, "0.8.8"},
++                                                 {GGML_TYPE_Q6_K, "0.8.8"},
++                                                 {GGML_TYPE_Q5_K, "0.8.8"},
++                                                 {GGML_TYPE_Q4_K, "0.8.8"},
++                                                 {GGML_TYPE_IQ3_XXS, "0.11.2"}});
+ const Storage kCodec = half_storage();
+ const Storage kF32 = float32_storage();
+ 
+@@ -184,6 +191,14 @@ std::vector<TensorSpec> tensors(const ModelFile & m) {
+     const int64_t conv_width = m.size(x + "linear_conv_kernel_dim"), conv = 2 * nk * dk + nv * dv;
+     const int64_t experts = m.size(x + "num_experts"), used = m.size(x + "num_experts_per_tok");
+     require(used <= experts, m, "drama3.text.num_experts_per_tok is more than the experts");
++    const std::vector<int32_t> experts_per_layer =
++        m.has(x + "num_experts_per_layer") ? m.i32_array(x + "num_experts_per_layer") : std::vector<int32_t>{};
++    if (!experts_per_layer.empty()) {
++        require((int) experts_per_layer.size() == layers, m, "drama3.text.num_experts_per_layer does not match num_hidden_layers");
++        for (int32_t n_exp : experts_per_layer) {
++            require(n_exp >= used && n_exp <= experts, m, "drama3.text.num_experts_per_layer has a count outside [num_experts_per_tok, num_experts]");
++        }
++    }
+     const int64_t ffn = m.size(x + "moe_intermediate_size"), shared = m.size(x + "shared_expert_intermediate_size");
+     m.size(x + "max_position_embeddings");
+     m.boolean(x + "norm_topk_prob");
+@@ -260,8 +275,9 @@ std::vector<TensorSpec> tensors(const ModelFile & m) {
+                              {"ssm_a_log", {nv}, kF32},              {"ssm_norm", {dv}, kF32},
+                              {"ssm_out", {nv * dv, h}, kMatrix}});
+         }
+-        add_block(t, o, {{"ffn_gate_inp", {h, experts}, kF32},      {"ffn_gate_exps", {h, ffn, experts}, kMatrix},
+-                         {"ffn_up_exps", {h, ffn, experts}, kMatrix}, {"ffn_down_exps", {ffn, h, experts}, kMatrix},
++        const int64_t layer_experts = experts_per_layer.empty() ? experts : (int64_t) experts_per_layer[(size_t) i];
++        add_block(t, o, {{"ffn_gate_inp", {h, layer_experts}, kF32},      {"ffn_gate_exps", {h, ffn, layer_experts}, kExpertMatrix},
++                         {"ffn_up_exps", {h, ffn, layer_experts}, kExpertMatrix}, {"ffn_down_exps", {ffn, h, layer_experts}, kExpertMatrix},
+                          {"ffn_gate_shexp", {h, shared}, kMatrix},  {"ffn_up_shexp", {h, shared}, kMatrix},
+                          {"ffn_down_shexp", {shared, h}, kMatrix},  {"ffn_gate_inp_shexp", {h, 1}, kF32}});
+     }
+diff --git a/src/families/drama3/sampler.cpp b/src/families/drama3/sampler.cpp
+index 970b746..46d95b4 100644
+--- a/src/families/drama3/sampler.cpp
++++ b/src/families/drama3/sampler.cpp
+@@ -1,8 +1,15 @@
+ #include "sampler.h"
+ 
+ #include <algorithm>
++#include <cctype>
++#include <cerrno>
+ #include <cmath>
++#include <cstdlib>
++#include <filesystem>
++#include <fstream>
++#include <limits>
+ #include <numeric>
++#include <sstream>
+ 
+ #include "error.h"
+ 
+@@ -13,6 +20,39 @@ namespace {
+ /** The temperature below which sample_top_k_top_p() takes 1e-5, so that a temperature of 0 divides by no zero. */
+ constexpr float kMinTemperature = 1e-5f;
+ 
++std::string trim_ascii(const char * raw) {
++    if (!raw) return {};
++    std::string s(raw);
++    auto is_ws = [](unsigned char ch) { return std::isspace(ch) != 0; };
++    while (!s.empty() && is_ws((unsigned char) s.front())) s.erase(s.begin());
++    while (!s.empty() && is_ws((unsigned char) s.back())) s.pop_back();
++    return s;
++}
++
++int64_t parse_env_i64(const char * name, const char * raw) {
++    const std::string s = trim_ascii(raw);
++    if (s.empty()) return 0;
++    errno = 0;
++    char * end = nullptr;
++    const long long parsed = std::strtoll(s.c_str(), &end, 10);
++    if (errno == ERANGE || end == s.c_str() || *end != '\0') {
++        throw Error(Fault::InvalidArgument, std::string(name) + " must be a base-10 integer");
++    }
++    return (int64_t) parsed;
++}
++
++double parse_env_pos_double(const char * name, const char * raw, double fallback) {
++    const std::string s = trim_ascii(raw);
++    if (s.empty()) return fallback;
++    errno = 0;
++    char * end = nullptr;
++    const double v = std::strtod(s.c_str(), &end);
++    if (errno != 0 || end == s.c_str() || *end != '\0' || !std::isfinite(v) || v <= 0.0 || v > 1e6) {
++        throw Error(Fault::InvalidArgument, std::string(name) + " must be a finite positive number <= 1e6");
++    }
++    return v;
++}
++
+ Sampling read_sampling(const ModelFile & m, const std::string & prefix) {
+     Sampling s;
+     s.temperature = m.f32(prefix + "temperature");
+@@ -21,6 +61,35 @@ Sampling read_sampling(const ModelFile & m, const std::string & prefix) {
+     return s;
+ }
+ 
++std::vector<int32_t> parse_silence_spec(const std::string & spec) {
++    std::string text;
++    if (std::ifstream f(std::filesystem::u8path(spec)); f) {
++        text.assign((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
++    } else {
++        text = spec;
++    }
++    for (char & c : text) {
++        if (c >= '0' && c <= '9') continue;
++        if (c == ',' || c == '[' || c == ']' || c == ' ' || c == '\t' || c == '\r' || c == '\n') {
++            c = ' ';
++            continue;
++        }
++        throw Error(Fault::InvalidArgument, "SPEECH_DRAMA3_SILENCE_CODES must point to a readable numeric JSON/list file or inline non-negative integer list");
++    }
++    std::istringstream iss(text);
++    std::vector<int32_t> codes;
++    for (std::string tok; iss >> tok;) {
++        errno = 0;
++        char * end = nullptr;
++        const long long v = std::strtoll(tok.c_str(), &end, 10);
++        if (errno != 0 || end == tok.c_str() || *end != '\0' || v < 0 || v > std::numeric_limits<int32_t>::max()) {
++            throw Error(Fault::InvalidArgument, "SPEECH_DRAMA3_SILENCE_CODES contains an out-of-range code");
++        }
++        codes.push_back((int32_t) v);
++    }
++    return codes;
++}
++
+ }  // namespace
+ 
+ Sampling file_sampling(const ModelFile & m) {
+@@ -65,12 +134,54 @@ FrameSampler::FrameSampler(const ModelFile & m, const Sampling & request)
+       window_((int) m.u32("drama3.repeat.window")),
+       semantic_begin_((int32_t) m.u32("drama3.semantic_start_token_id")),
+       semantic_end_((int32_t) m.u32("drama3.semantic_end_token_id")),
+-      token_ids_(m.i32_array("drama3.output.token_ids")) {}
++      token_ids_(m.i32_array("drama3.output.token_ids")) {
++    if (const char * env_frames = std::getenv("SPEECH_DRAMA3_MAX_PAUSE_FRAMES")) {
++        const int64_t parsed = parse_env_i64("SPEECH_DRAMA3_MAX_PAUSE_FRAMES", env_frames);
++        if (parsed > 0) max_pause_frames_ = parsed;
++    }
++    if (max_pause_frames_ <= 0) return;
++    if (const char * env_end = std::getenv("SPEECH_DRAMA3_END_RATIO")) {
++        pause_end_ratio_ = parse_env_pos_double("SPEECH_DRAMA3_END_RATIO", env_end, pause_end_ratio_);
++    }
++    if (const char * env_cap = std::getenv("SPEECH_DRAMA3_CAP_RATIO")) {
++        pause_cap_ratio_ = parse_env_pos_double("SPEECH_DRAMA3_CAP_RATIO", env_cap, pause_cap_ratio_);
++    }
++    std::vector<int32_t> raw_codes;
++    if (const char * env_codes = std::getenv("SPEECH_DRAMA3_SILENCE_CODES"); env_codes && *env_codes) {
++        raw_codes = parse_silence_spec(env_codes);
++        if (raw_codes.empty()) throw Error(Fault::InvalidArgument, "SPEECH_DRAMA3_SILENCE_CODES is empty");
++    } else if (m.has("drama3.small.silence_codes")) {
++        raw_codes = m.i32_array("drama3.small.silence_codes");
++        if (raw_codes.empty()) throw Error(Fault::File, "drama3.small.silence_codes is empty");
++    } else {
++        throw Error(Fault::InvalidArgument, "Drama 3 pause clamp requires SPEECH_DRAMA3_SILENCE_CODES or drama3.small.silence_codes");
++    }
++    const int32_t span = semantic_end_ - semantic_begin_;
++    for (int32_t c : raw_codes) {
++        if (c >= 0 && c <= span) silence_token_ids_.insert(semantic_begin_ + c);
++    }
++    for (size_t i = 0; i < token_ids_.size(); i++) {
++        if (silence_token_ids_.count(token_ids_[i])) silence_logit_indices_.push_back(i);
++    }
++    if (silence_logit_indices_.empty()) {
++        throw Error(Fault::InvalidArgument, "Drama 3 pause clamp matched no valid silence codes in model vocabulary");
++    }
++}
+ 
+-int32_t FrameSampler::main(const std::vector<float> & logits, const std::vector<int32_t> & history, double first, double again) const {
+-    const Candidates drawn = candidates(logits, request_);
++int32_t FrameSampler::main(const std::vector<float> & logits, const std::vector<int32_t> & history, double first, double again,
++                           bool suppress_silence) const {
++    std::vector<float> masked;
++    if (suppress_silence && !silence_logit_indices_.empty()) {
++        masked = logits;
++        // Keep masked logits finite because candidates() rejects non-finite values.
++        for (size_t idx : silence_logit_indices_) {
++            if (idx < masked.size() && std::isfinite(masked[idx])) masked[idx] = -1e9f;
++        }
++    }
++    const std::vector<float> & pool = masked.empty() ? logits : masked;
++    const Candidates drawn = candidates(pool, request_);
+     const int32_t id = token_ids_[(size_t) drawn.tokens[(size_t) pick(drawn.weights, first)]];
+-    const Candidates redrawn = candidates(logits, repeat_);
++    const Candidates redrawn = candidates(pool, repeat_);
+     const int32_t other = token_ids_[(size_t) redrawn.tokens[(size_t) pick(redrawn.weights, again)]];
+     // A semantic id alone is drawn again: the window begins with prompt rows, whose text holds the end id of the user's
+     // turn, and an end of speech is never drawn again.
+@@ -83,4 +194,41 @@ int32_t FrameSampler::code(const std::vector<float> & logits, double u) const {
+     return c.tokens[(size_t) pick(c.weights, u)];
+ }
+ 
++double expected_frames(const std::string & text) {
++    std::string spoken = text;
++    if (spoken.rfind("Direction:", 0) == 0) {
++        const size_t line = spoken.find("\nLine:");
++        if (line != std::string::npos) spoken = spoken.substr(line + 6);
++    }
++    double cjk = 0, latin = 0, spans = 0;
++    int depth_square = 0, depth_angle = 0;
++    for (size_t i = 0; i < spoken.size();) {
++        const unsigned char c = (unsigned char) spoken[i];
++        uint32_t cp = c;
++        size_t len = 1;
++        if (c >= 0xF0 && i + 3 < spoken.size()) {
++            cp = ((c & 0x07u) << 18) | (((unsigned char) spoken[i + 1] & 0x3Fu) << 12) |
++                 (((unsigned char) spoken[i + 2] & 0x3Fu) << 6) | ((unsigned char) spoken[i + 3] & 0x3Fu);
++            len = 4;
++        } else if (c >= 0xE0 && i + 2 < spoken.size()) {
++            cp = ((c & 0x0Fu) << 12) | (((unsigned char) spoken[i + 1] & 0x3Fu) << 6) | ((unsigned char) spoken[i + 2] & 0x3Fu);
++            len = 3;
++        } else if (c >= 0xC0 && i + 1 < spoken.size()) {
++            cp = ((c & 0x1Fu) << 6) | ((unsigned char) spoken[i + 1] & 0x3Fu);
++            len = 2;
++        }
++        i += len;
++        if (cp == '[') { ++depth_square; ++spans; continue; }
++        if (cp == ']') { if (depth_square > 0) --depth_square; continue; }
++        if (cp == '<') { ++depth_angle; ++spans; continue; }
++        if (cp == '>') { if (depth_angle > 0) --depth_angle; continue; }
++        if (depth_square > 0 || depth_angle > 0) continue;
++        const bool cjk_punct = cp == 0x3002 || cp == 0x3001 || cp == 0xFF01 || cp == 0xFF1F || cp == 0x300C ||
++                               cp == 0x300D || cp == 0x2026 || cp == 0x30FB || cp == 0xFF08 || cp == 0xFF09;
++        if (cp >= 0x3000 && !cjk_punct) cjk += 1.0;
++        else if (cp < 0x80 && std::isalnum((int) cp)) latin += 1.0;
++    }
++    return 3.88 * cjk + 2.00 * latin + 23.9 * spans + 8.5;
++}
++
+ }  // namespace drama3
+diff --git a/src/families/drama3/sampler.h b/src/families/drama3/sampler.h
+index 6e6b6af..6b20d94 100644
+--- a/src/families/drama3/sampler.h
++++ b/src/families/drama3/sampler.h
+@@ -1,6 +1,8 @@
+ #pragma once
+ 
+ #include <cstdint>
++#include <string>
++#include <unordered_set>
+ #include <vector>
+ 
+ #include "model-file.h"
+@@ -46,18 +48,31 @@ public:
+      * rows included, drawn again with the redraw's settings by `again`. Both numbers come from uniform(), and the
+      * official sampler draws both for every frame.
+      */
+-    int32_t main(const std::vector<float> & logits, const std::vector<int32_t> & history, double first, double again) const;
++    int32_t main(const std::vector<float> & logits, const std::vector<int32_t> & history, double first, double again,
++                 bool suppress_silence = false) const;
+ 
+     /** A code of a frame's residual codebooks from its head's `logits`, drawn with the request's settings by `u`. */
+     int32_t code(const std::vector<float> & logits, double u) const;
+ 
+     bool semantic(int32_t id) const { return id >= semantic_begin_ && id <= semantic_end_; }
++    bool is_silence(int32_t id) const { return silence_token_ids_.count(id) > 0; }
++    int64_t max_pause_frames() const { return max_pause_frames_; }
++    double pause_end_ratio() const { return pause_end_ratio_; }
++    double pause_cap_ratio() const { return pause_cap_ratio_; }
+ 
+ private:
+     Sampling request_, repeat_;
+     int window_ = 0;
+     int32_t semantic_begin_ = 0, semantic_end_ = 0;
+     std::vector<int32_t> token_ids_;
++    int64_t max_pause_frames_ = 0;
++    double pause_end_ratio_ = 2.0;
++    double pause_cap_ratio_ = 3.0;
++    std::unordered_set<int32_t> silence_token_ids_;
++    std::vector<size_t> silence_logit_indices_;
+ };
+ 
++/** Expected output frames (21.5 fps) estimated from spoken text length and control tags. */
++double expected_frames(const std::string & text);
++
+ }  // namespace drama3
+diff --git a/src/families/drama3/synthesizer.cpp b/src/families/drama3/synthesizer.cpp
+index c6bd7df..14321be 100644
+--- a/src/families/drama3/synthesizer.cpp
++++ b/src/families/drama3/synthesizer.cpp
+@@ -1,6 +1,10 @@
+ #include "synthesizer.h"
+ 
+ #include <algorithm>
++#include <chrono>
++#include <cmath>
++#include <cstdio>
++#include <cstdlib>
+ #include <deque>
+ #include <optional>
+ 
+@@ -17,6 +21,22 @@ int64_t window_frames(int i) {
+     return int64_t(4) << std::min(i, 5);
+ }
+ 
++bool profile_enabled() {
++    const char * v = std::getenv("SPEECH_DRAMA3_PROFILE");
++    return v && *v && *v != '0';
++}
++
++double elapsed_ms(std::chrono::steady_clock::time_point start) {
++    return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
++}
++
++int64_t clamp_frame_budget(double ratio, double expected, int64_t limit) {
++    const double scaled = ratio * expected;
++    if (!std::isfinite(scaled) || scaled <= 0.0) return 0;
++    if (scaled >= (double) limit) return limit;
++    return (int64_t) scaled;
++}
++
+ }  // namespace
+ 
+ /** What a chunk spoke: its codes, [codebooks, frames] with the frame fastest, and how it ended. */
+@@ -65,70 +85,111 @@ std::vector<float> Synthesizer::run_head(const std::vector<int32_t> & rows, int6
+     return held_last_;
+ }
+ 
+-Synthesizer::Chunk Synthesizer::speak(const std::vector<int32_t> & rows, int64_t head, const Request & r, const FrameSampler & sampler,
+-                                      std::mt19937_64 & rng, const AudioSink & sink) {
++Synthesizer::Chunk Synthesizer::speak(const std::vector<int32_t> & rows, int64_t head, const std::string & text, const Request & r,
++                                      const FrameSampler & sampler, std::mt19937_64 & rng, const AudioSink & sink) {
++    const bool do_profile = profile_enabled();
++    const auto t_prefill_start = std::chrono::steady_clock::now();
+     const int width = prompt_.width(), codebooks = width - 1, h = text_.hidden();
+     const int64_t n = (int64_t) rows.size() / width;
+     if (head < 1 || head >= n || n + r.max_frames > rows_most_) throw std::invalid_argument("a chunk's prompt and speech outgrow the model's sequences");
+-    // The head is run apart from the rest even where it is run first, so that a request speaks the same whether the
+-    // models still hold it or not.
+-    std::vector<float> hidden = run_head(rows, head);
+-    const std::vector<float> rest = text_.run(text_.embed(std::vector<int32_t>(rows.begin() + head * width, rows.end()), n - head), n - head);
+-    hidden.insert(hidden.end(), rest.begin(), rest.end());
+-    // The audio decoder runs the head's last row and the rest but the last, each with the frame after it, which the
+-    // prompt's last row has yet to draw.
+-    decoder_.prefill(std::vector<float>(hidden.begin(), hidden.end() - h), std::vector<int32_t>(rows.begin() + (head - 1) * width, rows.end()),
+-                     n - head);
+-    std::vector<float> last(hidden.end() - h, hidden.end());
+-    std::vector<int32_t> frame(rows.end() - width, rows.end()), mains;
+-    for (int64_t i = 0; i < n; i++) mains.push_back(rows[(size_t) (i * width)]);
+-
+-    Chunk chunk;
+-    std::vector<std::vector<int32_t>> drawn;
+-    int64_t sent = 0;
+-    int windows = 0;
+-    codec_.start_decoding();
+-    const auto pass = [&](int64_t until) {
+-        if (until <= sent) return true;
+-        const int64_t count = until - sent;
+-        std::vector<int32_t> codes((size_t) (codebooks * count));
+-        for (int64_t f = 0; f < count; f++)
+-            for (int b = 0; b < codebooks; b++) codes[(size_t) (b * count + f)] = drawn[(size_t) (sent + f)][(size_t) b];
+-        const std::vector<float> audio = codec_.decode_more(codes, count);
+-        sent = until;
+-        windows++;
+-        return sink(audio.data(), audio.size());
+-    };
+-    for (int64_t step = 0; step < r.max_frames; step++) {
+-        // A cancel stops the chunk between frames, rather than at the next window of audio.
+-        if (r.stopped && r.stopped()) {
+-            chunk.stopped = true;
+-            return chunk;
+-        }
+-        const int32_t main = sampler.main(text_.logits(last), mains, uniform(rng), uniform(rng));
+-        if (main == eos_) {
+-            chunk.ended = true;
+-            break;
++    try {
++        // The head is run apart from the rest even where it is run first, so that a request speaks the same whether the
++        // models still hold it or not.
++        std::vector<float> hidden = run_head(rows, head);
++        const std::vector<float> rest = text_.run(text_.embed(std::vector<int32_t>(rows.begin() + head * width, rows.end()), n - head), n - head);
++        hidden.insert(hidden.end(), rest.begin(), rest.end());
++        // The audio decoder runs the head's last row and the rest but the last, each with the frame after it, which the
++        // prompt's last row has yet to draw.
++        decoder_.prefill(std::vector<float>(hidden.begin(), hidden.end() - h), std::vector<int32_t>(rows.begin() + (head - 1) * width, rows.end()),
++                         n - head);
++        std::vector<float> last(hidden.end() - h, hidden.end());
++        std::vector<int32_t> frame(rows.end() - width, rows.end()), mains;
++        for (int64_t i = 0; i < n; i++) mains.push_back(rows[(size_t) (i * width)]);
++        std::vector<float> logits = text_.logits(last);
++        const double prefill_ms = do_profile ? elapsed_ms(t_prefill_start) : 0.0;
++        double text_step_ms = 0.0, audio_decoder_ms = 0.0, codec_ms = 0.0, sampling_ms = 0.0;
++
++        Chunk chunk;
++        std::vector<std::vector<int32_t>> drawn;
++        int64_t sent = 0;
++        int windows = 0;
++        const int64_t max_pause = sampler.max_pause_frames();
++        const double expected = expected_frames(text);
++        const int64_t end_frames = clamp_frame_budget(sampler.pause_end_ratio(), expected, r.max_frames);
++        const int64_t cap_frames = clamp_frame_budget(sampler.pause_cap_ratio(), expected, r.max_frames);
++        int64_t silent_run = 0;
++        codec_.start_decoding();
++        const auto pass = [&](int64_t until) {
++            if (until <= sent) return true;
++            const auto t_c0 = std::chrono::steady_clock::now();
++            const int64_t count = until - sent;
++            std::vector<int32_t> codes((size_t) (codebooks * count));
++            for (int64_t f = 0; f < count; f++)
++                for (int b = 0; b < codebooks; b++) codes[(size_t) (b * count + f)] = drawn[(size_t) (sent + f)][(size_t) b];
++            const std::vector<float> audio = codec_.decode_more(codes, count);
++            sent = until;
++            windows++;
++            if (do_profile) codec_ms += elapsed_ms(t_c0);
++            return sink(audio.data(), audio.size());
++        };
++        for (int64_t step = 0; step < r.max_frames; step++) {
++            // A cancel stops the chunk between frames, rather than at the next window of audio.
++            if (r.stopped && r.stopped()) {
++                chunk.stopped = true;
++                return chunk;
++            }
++            if (max_pause > 0 && (step >= cap_frames || (silent_run >= max_pause && step >= end_frames))) {
++                chunk.ended = true;
++                break;
++            }
++            const auto t_s0 = std::chrono::steady_clock::now();
++            const bool suppress_silence = max_pause > 0 && silent_run >= max_pause;
++            const int32_t main = sampler.main(logits, mains, uniform(rng), uniform(rng), suppress_silence);
++            if (do_profile) sampling_ms += elapsed_ms(t_s0);
++            if (main == eos_) {
++                chunk.ended = true;
++                break;
++            }
++            silent_run = sampler.is_silence(main) ? silent_run + 1 : 0;
++            const auto t_a0 = std::chrono::steady_clock::now();
++            const std::vector<int32_t> codes = decoder_.step(last, frame, main, [&](int, const std::vector<float> & cb_logits) {
++                const auto t_cs0 = std::chrono::steady_clock::now();
++                const int32_t c = sampler.code(cb_logits, uniform(rng));
++                if (do_profile) sampling_ms += elapsed_ms(t_cs0);
++                return c;
++            });
++            if (do_profile) audio_decoder_ms += elapsed_ms(t_a0);
++            frame.assign(1, main);
++            frame.insert(frame.end(), codes.begin(), codes.end());
++            mains.push_back(main);
++            drawn.push_back(codes);
++            if ((int64_t) drawn.size() - sent >= window_frames(windows) && !pass((int64_t) drawn.size())) {
++                chunk.stopped = true;
++                return chunk;
++            }
++            if (step + 1 < r.max_frames) {
++                const auto t_t0 = std::chrono::steady_clock::now();
++                text_.step_frame(frame, last, logits);
++                if (do_profile) text_step_ms += elapsed_ms(t_t0);
++            }
+         }
+-        const std::vector<int32_t> codes = decoder_.step(last, frame, main, [&](int, const std::vector<float> & logits) {
+-            return sampler.code(logits, uniform(rng));
+-        });
+-        frame.assign(1, main);
+-        frame.insert(frame.end(), codes.begin(), codes.end());
+-        mains.push_back(main);
+-        drawn.push_back(codes);
+-        if ((int64_t) drawn.size() - sent >= window_frames(windows) && !pass((int64_t) drawn.size())) {
+-            chunk.stopped = true;
+-            return chunk;
++        if (!pass((int64_t) drawn.size())) chunk.stopped = true;
++        chunk.frames = (int64_t) drawn.size();
++        chunk.codes.resize((size_t) (codebooks * chunk.frames));
++        for (int64_t f = 0; f < chunk.frames; f++)
++            for (int b = 0; b < codebooks; b++) chunk.codes[(size_t) (b * chunk.frames + f)] = drawn[(size_t) f][(size_t) b];
++        if (do_profile) {
++            std::fprintf(stderr,
++                         "[profile] frames=%lld prefill=%.1fms text_step=%.1fms audio_decoder=%.1fms codec=%.1fms sampling=%.1fms\n",
++                         (long long) chunk.frames, prefill_ms, text_step_ms, audio_decoder_ms, codec_ms, sampling_ms);
+         }
+-        if (step + 1 < r.max_frames) last = text_.run(text_.embed(frame, 1), 1);
++        return chunk;
++    } catch (...) {
++        // Discard cached prefix state on failure so the next request clears KV memory instead of reusing stale tail slots.
++        held_head_.clear();
++        held_last_.clear();
++        throw;
+     }
+-    if (!pass((int64_t) drawn.size())) chunk.stopped = true;
+-    chunk.frames = (int64_t) drawn.size();
+-    chunk.codes.resize((size_t) (codebooks * chunk.frames));
+-    for (int64_t f = 0; f < chunk.frames; f++)
+-        for (int b = 0; b < codebooks; b++) chunk.codes[(size_t) (b * chunk.frames + f)] = drawn[(size_t) f][(size_t) b];
+-    return chunk;
+ }
+ 
+ Ending Synthesizer::synthesize(const Request & r, const Voice & voice, const AudioSink & sink) {
+@@ -169,7 +230,7 @@ Ending Synthesizer::synthesize(const Request & r, const Voice & voice, const Aud
+                 if (e.fault() != Fault::OutOfRange || i + 1 == histories.size()) throw;
+             }
+         }
+-        const Chunk chunk = speak(rows, head, r, sampler, rng, sink);
++        const Chunk chunk = speak(rows, head, text, r, sampler, rng, sink);
+         if (chunk.stopped) return Ending::Stopped;
+         if (!chunk.ended) ending = Ending::MaxFrames;
+         if (chunk.frames == 0) continue;
+diff --git a/src/families/drama3/synthesizer.h b/src/families/drama3/synthesizer.h
+index 353ab63..82ebfd4 100644
+--- a/src/families/drama3/synthesizer.h
++++ b/src/families/drama3/synthesizer.h
+@@ -72,8 +72,8 @@ private:
+      * the end of speech or `r.max_frames`, passing their audio to `sink` as it goes, and returns their codes and how the
+      * chunk ended.
+      */
+-    Chunk speak(const std::vector<int32_t> & rows, int64_t head, const Request & r, const FrameSampler & sampler, std::mt19937_64 & rng,
+-                const AudioSink & sink);
++    Chunk speak(const std::vector<int32_t> & rows, int64_t head, const std::string & text, const Request & r, const FrameSampler & sampler,
++                std::mt19937_64 & rng, const AudioSink & sink);
+ 
+     /**
+      * Runs the first `head` rows of `rows` in the text model and the audio decoder, from the start of a sequence, or
+diff --git a/src/families/drama3/text-model.cpp b/src/families/drama3/text-model.cpp
+index 3d3c18f..aa218dc 100644
+--- a/src/families/drama3/text-model.cpp
++++ b/src/families/drama3/text-model.cpp
+@@ -7,6 +7,28 @@
+ 
+ namespace drama3 {
+ 
++struct TextModel::FrameStep {
++    Graph graph{32768};
++    ggml_gallocr_t allocr = nullptr;
++    int64_t n_kv = 0;
++    ggml_tensor * id = nullptr;
++    ggml_tensor * seen = nullptr;
++    ggml_tensor * audio = nullptr;
++    ggml_tensor * text = nullptr;
++    ggml_tensor * pos = nullptr;
++    ggml_tensor * mask = nullptr;
++    ggml_tensor * hidden = nullptr;
++    ggml_tensor * logits = nullptr;
++
++    FrameStep(ggml_backend_t backend, int64_t n_kv)
++        : allocr(ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend))), n_kv(n_kv) {}
++    ~FrameStep() {
++        if (allocr) ggml_gallocr_free(allocr);
++    }
++    FrameStep(const FrameStep &) = delete;
++    FrameStep & operator=(const FrameStep &) = delete;
++};
++
+ TextModel::TextModel(const ModelFile & m, ggml_backend_t backend, int first, int last, ggml_backend_t cpu)
+     : backend_(backend), m_(m), decoder_(m, "drama3.text.", backend, first, last, cpu) {
+     const std::string a = "drama3.audio_decoder.";
+@@ -18,6 +40,18 @@ TextModel::TextModel(const ModelFile & m, ggml_backend_t backend, int first, int
+     semantic_end_ = (int32_t) m.u32("drama3.semantic_end_token_id");
+ }
+ 
++TextModel::~TextModel() = default;
++
++void TextModel::start(int64_t rows) {
++    frame_step_.reset();
++    decoder_.start(rows);
++}
++
++void TextModel::rewind(int64_t rows) {
++    frame_step_.reset();
++    decoder_.rewind(rows);
++}
++
+ std::vector<float> TextModel::embed(const std::vector<int32_t> & frames, int64_t n) {
+     Graph g;
+     ggml_tensor * e = build_embed(g, frames, n);
+@@ -77,4 +111,75 @@ std::vector<float> TextModel::logits(const std::vector<float> & hidden) {
+     return Graph::read(l);
+ }
+ 
++void TextModel::step_frame(const std::vector<int32_t> & frame, std::vector<float> & hidden_out, std::vector<float> & logits_out) {
++    if (!decoder_.can_step_graph()) {
++        hidden_out = run(embed(frame, 1), 1);
++        logits_out = logits(hidden_out);
++        return;
++    }
++    const int width = 1 + codebooks_;
++    if ((int64_t) frame.size() != width) throw std::invalid_argument("the text model steps one frame at a time");
++    const int32_t main_id = frame[0];
++    ggml_tensor * table = m_.tensor("token_embd");
++    if (main_id < 0 || main_id >= table->ne[1]) throw std::invalid_argument("a frame's main token is outside the vocabulary");
++    const float is_audio = main_id >= semantic_begin_ && main_id <= semantic_end_ ? 1.0f : 0.0f;
++    const float is_text = 1.0f - is_audio;
++    std::vector<int32_t> seen_ids;
++    seen_ids.reserve((size_t) seen_);
++    for (int b = 1; b <= seen_; b++) {
++        const int32_t code = frame[(size_t) (1 + b)];
++        if (code < 0 || code >= codes_) throw std::invalid_argument("a frame's code is outside its codebook");
++        seen_ids.push_back((b - 1) * codes_ + code);
++    }
++
++    const int64_t past = decoder_.n_past();
++    if (past + 1 > decoder_.capacity()) {
++        throw std::invalid_argument("the text model's rows outgrow the sequence it was started for");
++    }
++    const int64_t n_kv = decoder_.flash_kv_len(1);
++    const std::vector<int32_t> pos_vec = {(int32_t) past};
++    const bool has_attn = decoder_.has_attention();
++    const std::vector<float> mask_vec = has_attn ? causal_mask_values(past, 1, n_kv) : std::vector<float>{};
++
++    FrameStep * s = frame_step_.get();
++    if (s && s->n_kv == n_kv) {
++        s->graph.set(s->id, std::vector<int32_t>{main_id});
++        if (seen_ > 0) {
++            s->graph.set(s->seen, seen_ids);
++            s->graph.set(s->audio, std::vector<float>{is_audio});
++            s->graph.set(s->text, std::vector<float>{is_text});
++        }
++        s->graph.set(s->pos, pos_vec);
++        if (has_attn) s->graph.set(s->mask, mask_vec);
++        s->graph.compute_again(backend_);
++    } else {
++        frame_step_.reset();
++        auto built = std::make_unique<FrameStep>(backend_, n_kv);
++        s = built.get();
++        ggml_context * c = s->graph.ctx();
++        s->id = s->graph.input(std::vector<int32_t>{main_id}, 1);
++        ggml_tensor * emb = ggml_get_rows(c, table, s->id);
++        if (seen_ > 0) {
++            s->seen = s->graph.input(seen_ids, (int64_t) seen_);
++            s->audio = s->graph.input(std::vector<float>{is_audio}, 1, 1);
++            s->text = s->graph.input(std::vector<float>{is_text}, 1, 1);
++            ggml_tensor * rows = ggml_get_rows(c, m_.tensor("ad.codebook_embd"), s->seen);
++            ggml_tensor * mixed = emb;
++            for (int b = 0; b < seen_; b++) mixed = ggml_add(c, mixed, ggml_view_2d(c, rows, h_, 1, rows->nb[1], (size_t) b * rows->nb[1]));
++            mixed = ggml_scale(c, mixed, 1.0f / std::sqrt((float) (1 + seen_)));
++            emb = ggml_add(c, ggml_mul(c, emb, s->text), ggml_mul(c, mixed, s->audio));
++        }
++        s->pos = s->graph.input(pos_vec, 1);
++        if (has_attn) s->mask = s->graph.half_input(mask_vec, n_kv, 1);
++        s->hidden = decoder_.build_step_rows(s->graph, emb, s->pos, s->mask, n_kv);
++        s->logits = mul_mat(c, m_.tensor("output"), s->hidden);
++        s->graph.output(s->logits);
++        s->graph.compute(backend_, s->allocr);
++        frame_step_ = std::move(built);
++    }
++    Graph::read(s->hidden, hidden_out);
++    Graph::read(s->logits, logits_out);
++    decoder_.advance(1);
++}
++
+ }  // namespace drama3
+diff --git a/src/families/drama3/text-model.h b/src/families/drama3/text-model.h
+index 6a9813f..894679a 100644
+--- a/src/families/drama3/text-model.h
++++ b/src/families/drama3/text-model.h
+@@ -33,6 +33,7 @@ public:
+      * the rest computing on `backend`.
+      */
+     TextModel(const ModelFile & m, ggml_backend_t backend, int first = 0, int last = -1, ggml_backend_t cpu = nullptr);
++    ~TextModel();
+ 
+     int hidden() const { return decoder_.hidden(); }
+     /** The layers of the model, whichever this one runs. */
+@@ -42,7 +43,7 @@ public:
+     int64_t n_past() const { return decoder_.n_past(); }
+ 
+     /** Starts a sequence of at most `rows` rows: the attention layers get room for them, and every state starts at 0. */
+-    void start(int64_t rows) { decoder_.start(rows); }
++    void start(int64_t rows);
+ 
+     /** Keeps a copy of every Gated DeltaNet layer's state as it stands after n_past() rows, for rewind(). */
+     void keep_states() { decoder_.keep_states(); }
+@@ -51,7 +52,7 @@ public:
+      * Goes back to the row after the first `rows` rows of the sequence, where keep_states() kept the states: the
+      * attention layers keep the keys and values of those rows, and the states return to the copy.
+      */
+-    void rewind(int64_t rows) { decoder_.rewind(rows); }
++    void rewind(int64_t rows);
+ 
+     /**
+      * Allocates now the memory of a sequence of `rows` rows whose prompt takes `prompt_rows`, which its largest graphs
+@@ -76,6 +77,12 @@ public:
+     /** The head's logits of `hidden`, [hidden] after the final norm, over drama3.output.token_ids. */
+     std::vector<float> logits(const std::vector<float> & hidden);
+ 
++    /**
++     * Runs one frame (embed -> 40 Qwen3.5 layers -> final norm -> head logits) in a single persistent decode graph
++     * when FlashAttention step graphs are active, writing `hidden_out` and `logits_out`.
++     */
++    void step_frame(const std::vector<int32_t> & frame, std::vector<float> & hidden_out, std::vector<float> & logits_out);
++
+     /**
+      * Gated DeltaNet layer `l`'s recurrent state, [key dim, value dim, value heads] with the key channel fastest, and the
+      * inputs of its convolution's last rows, [width - 1, channels] with the row fastest: what a check compares with the
+@@ -88,9 +95,12 @@ private:
+     /** The graph of the embeddings of `n` frames, which embed() computes. */
+     ggml_tensor * build_embed(Graph & g, const std::vector<int32_t> & frames, int64_t n);
+ 
++    struct FrameStep;
++
+     ggml_backend_t backend_;
+     const ModelFile & m_;
+     Qwen35Decoder decoder_;
++    std::unique_ptr<FrameStep> frame_step_;
+     int h_ = 0, codebooks_ = 0, codes_ = 0, seen_ = 0;
+     int32_t semantic_begin_ = 0, semantic_end_ = 0;
+ };

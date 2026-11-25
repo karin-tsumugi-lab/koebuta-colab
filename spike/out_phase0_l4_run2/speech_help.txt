@@ -1,0 +1,273 @@
+=== speech --help (rc=0) ===
+speech.cpp 0.11.2, speech synthesis, recognition and detection on ggml
+
+usage: speech <subcommand> [options]
+
+Speak and transcribe
+  tts       speak text into a WAVE file
+  asr       write the text of WAVE files, or of speech as it is said
+  vad       write where someone speaks in WAVE files
+  diarize   write who speaks where in WAVE files
+  enhance   remove noise and other degradations from WAVE files
+  talk      hold a conversation with a model that listens and speaks at once
+
+Serve
+  serve     serve models over HTTP with OpenAI's audio API, and a page to try them
+  worker    serve a model over JSON Lines on stdin and stdout (protocol 4)
+
+Models
+  models    list the models a NAME fetches, what is fetched, and which to start with
+  pull      fetch models ahead of their use
+  rm        remove fetched models, or the files of earlier releases
+  info      print a model file's information without loading it
+  voice     make a voice file from reference recordings, voice files or a speaker-inversion embedding
+  quantize  write a model file of F32 weights in another weight type
+
+This installation
+  devices   list the devices a model can run on
+  update    install the latest release of speech.cpp, or say whether one is out
+
+Try
+  speech tts qwen3-tts-0.6b --voice ryan -o hello.wav "Hello there."
+  speech asr qwen3-asr-0.6b hello.wav
+  speech serve --open
+
+  speech <subcommand> --help   the subcommand's usage and options
+  speech --version             the release and the version of the C API
+
+
+
+=== speech tts --help (rc=0) ===
+usage: speech tts MODEL -o FILE|- [options] [TEXT]
+
+Speaks TEXT, or without it each non-empty line of stdin as a text of its own, into one 16-bit mono WAVE at
+the model's rate, written as the audio comes; -o - writes it to stdout. A model whose request speaks less than
+a minute, such as Irodori-TTS, speaks a text of several sentences a sentence at a time, and a sentence it
+cannot speak at once at its commas or spaces. A seed applies to every text, and without one each text draws
+its own. A text that begins with - follows --. Exits with 3 when a text stopped at the longest speech the
+model makes.
+MODEL is a model file (.gguf), or the NAME[:TYPE] of one in `speech models`, fetched the first time it is used.
+
+  -o FILE                     the WAVE file to write, or - for stdout
+  --add-voice NAME=FILE       add a voice from a voice file or a WAVE file before the first request; repeatable
+  --device NAME               auto (the first GPU, or the CPU without one), gpu, cpu or a name `speech devices` lists
+  --threads N                 the CPU's threads, 1 or more; the machine's performance cores unless given
+  -v                          also report the model, and each text's seed and stop reason
+
+Request options, each the C API's option of the same name; the model refuses one it does not take,
+and `speech info MODEL` lists those it takes with their defaults and ranges:
+  --voice TEXT
+  --language TEXT
+  --seed INTEGER
+  --speed NUMBER
+  --seconds NUMBER
+  --duration-scale NUMBER
+  --steps INTEGER
+  --max-seconds NUMBER
+  --timestamps[=false]
+  --prompt TEXT
+  --decoding TEXT
+  --do-sample[=false]
+  --top-k INTEGER
+  --top-p NUMBER
+  --temperature NUMBER
+  --repetition-penalty NUMBER
+  --code-predictor-do-sample[=false]
+  --code-predictor-top-k INTEGER
+  --code-predictor-top-p NUMBER
+  --code-predictor-temperature NUMBER
+  --instructions TEXT
+  --cfg-scale-text NUMBER
+  --cfg-scale-speaker NUMBER
+  --cfg-guidance-mode TEXT
+  --cfg-min-t NUMBER
+  --cfg-max-t NUMBER
+  --truncation-factor NUMBER
+  --rescale-k NUMBER
+  --rescale-sigma NUMBER
+  --speaker-uncond-mode TEXT
+  --sway-coeff NUMBER
+  --keep-tail[=false]
+  --tail-window-size INTEGER
+  --tail-std-threshold NUMBER
+  --tail-mean-threshold NUMBER
+  --speaker-kv-scale NUMBER
+  --speaker-kv-min-t NUMBER
+  --speaker-kv-max-layers INTEGER
+  --cfg-scale-instructions NUMBER
+  --threshold NUMBER
+  --min-speech-duration-ms INTEGER
+  --min-silence-duration-ms INTEGER
+  --speech-pad-ms INTEGER
+  --max-speech-duration-s NUMBER
+  --decode-on-cpu[=false]
+  --draft TEXT
+  --experts-on-cpu[=false]
+  --streaming-mode TEXT
+  --spkcache-len INTEGER
+  --fifo-len INTEGER
+  --chunk-len INTEGER
+  --chunk-right-context INTEGER
+  --spkcache-update-period INTEGER
+  --onset NUMBER
+  --offset NUMBER
+  --pad-onset NUMBER
+  --pad-offset NUMBER
+  --min-duration-on NUMBER
+  --min-duration-off NUMBER
+  --speakers[=false]
+  --keywords TEXT
+  --keywords-alpha NUMBER
+  --keywords-guard[=false]
+  --chunk-size-in-seconds NUMBER
+  --hop-length-portion NUMBER
+  --bwe INTEGER
+  --persona TEXT
+  --name TEXT
+  --gender TEXT
+  --backchannel TEXT
+  --other-name TEXT
+  --relationship TEXT
+  --situation TEXT
+  --guidance-scale NUMBER
+  --eop-bias NUMBER
+  --speak-first[=false]
+
+
+
+=== speech voice --help (rc=0) ===
+usage: speech voice MODEL ((REFERENCE.wav | VOICE.gguf)... | EMBEDDING.speaker.safetensors) OUT.gguf [options]
+
+Makes a voice file from one or more reference recordings in WAVE files at any rate, each encoded on its own and
+joined in order, reading only the codec's encoder from MODEL, for a model whose information says it takes voice
+files (Irodori-TTS). Each recording is brought to the model's loudness first, or to --lufs, or kept as it is with
+--keep-loudness. On the CPU, the default here, the voice's latent is the official encoder's to 99 dB SNR; a GPU
+computes it in less precision. A speaker-inversion embedding in a .speaker.safetensors file, as the official
+runtime saves one, makes a voice of its own for MODEL, which no other model takes.
+
+Drama 3 reads each recording's words beside it, given by --transcript in the order of the recordings, and gives
+each recording or voice file one of the speakers a text names, by --speaker in their order: a recording is
+speaker 0's and a voice file keeps its speakers unless one is given. A voice file of Drama 3 as an input adds its
+recordings as they are, so that a voice of several speakers is put together from voices made before.
+MODEL is a model file (.gguf), or the NAME[:TYPE] of one in `speech models`, fetched the first time it is used.
+
+  --lufs LUFS                 the loudness each recording is brought to, instead of the model's (-16)
+  --keep-loudness             keep each recording's loudness, scaling down a peak above 1
+  --transcript TEXT           Drama 3: the words of a recording, one for each in their order; repeatable
+  --speaker N                 Drama 3: the speaker of a recording or voice file, one for each in their order; repeatable
+  --device NAME               cpu (the default here), auto, gpu or a name `speech devices` lists
+  --threads N                 the CPU's threads, 1 or more; the machine's performance cores unless given
+  -v                          also report the release and the device
+
+
+
+=== speech serve --help (rc=0) ===
+usage: speech serve [MODEL...] [options]
+
+Loads each MODEL, one model of each task at most (synthesis, recognition, detection, diarization, enhancement
+and dialogue), warmed up unless --no-warmup, adds the voices of --add-voice to the synthesis and the dialogue
+model, and serves them over HTTP: POST /v1/audio/speech, POST /v1/audio/transcriptions, which with
+chunking_strategy recognizes the regions where the detection model finds speech and with response_format
+diarized_json gives each its speakers, POST /v1/audio/enhancements, speech.cpp's own, which enhances a WAV file,
+GET /v1/models, GET /health, OpenAI's Realtime transcription over a WebSocket at /v1/realtime, which transcribes
+each buffer the client commits, or with server_vad each region of the detection model, and the text agreed so
+far while it is said, and with session.audio.input.diarization gives each utterance its speakers, and a
+conversation with the dialogue model over speech.cpp's own WebSocket at /v1/dialogue. It has no authentication
+and no TLS, and refuses a request that a web page at another origin than --cors-origin's sends. On 127.0.0.1,
+::1 or localhost it also serves a page on which to pick models of the catalog, fetch them and try them, at the
+address it prints; --open opens it, and starts the server without a model if none is given. A request option
+given as a flag is the default, in place of the model's own, of every request that does not set it on each MODEL
+that takes it; a model the page loads keeps its own defaults.
+MODEL is a model file (.gguf), or the NAME[:TYPE] of one in `speech models`, fetched the first time it is used.
+
+  --host ADDRESS              the address to listen on, 127.0.0.1 unless given
+  --port N                    the port, 8080 unless given; 0 for any free one
+  --open                      open the page in the browser once the server listens
+  --cors-origin ORIGIN|*      an origin a web page may call the server from, or * for any; repeatable
+  --add-voice NAME=FILE       add a voice from a voice file or a WAVE file before the first request; repeatable
+  --device NAME               auto (the first GPU, or the CPU without one), gpu, cpu or a name `speech devices` lists; a detection model runs on the CPU
+  --threads N                 the CPU's threads, 1 or more; the machine's performance cores unless given
+  --no-warmup                 skip the short request that compiles a GPU's kernels before the first one
+
+Request options, each the C API's option of the same name; the model refuses one it does not take,
+and `speech info MODEL` lists those it takes with their defaults and ranges:
+  --voice TEXT
+  --language TEXT
+  --seed INTEGER
+  --speed NUMBER
+  --seconds NUMBER
+  --duration-scale NUMBER
+  --steps INTEGER
+  --max-seconds NUMBER
+  --timestamps[=false]
+  --prompt TEXT
+  --decoding TEXT
+  --do-sample[=false]
+  --top-k INTEGER
+  --top-p NUMBER
+  --temperature NUMBER
+  --repetition-penalty NUMBER
+  --code-predictor-do-sample[=false]
+  --code-predictor-top-k INTEGER
+  --code-predictor-top-p NUMBER
+  --code-predictor-temperature NUMBER
+  --instructions TEXT
+  --cfg-scale-text NUMBER
+  --cfg-scale-speaker NUMBER
+  --cfg-guidance-mode TEXT
+  --cfg-min-t NUMBER
+  --cfg-max-t NUMBER
+  --truncation-factor NUMBER
+  --rescale-k NUMBER
+  --rescale-sigma NUMBER
+  --speaker-uncond-mode TEXT
+  --sway-coeff NUMBER
+  --keep-tail[=false]
+  --tail-window-size INTEGER
+  --tail-std-threshold NUMBER
+  --tail-mean-threshold NUMBER
+  --speaker-kv-scale NUMBER
+  --speaker-kv-min-t NUMBER
+  --speaker-kv-max-layers INTEGER
+  --cfg-scale-instructions NUMBER
+  --threshold NUMBER
+  --min-speech-duration-ms INTEGER
+  --min-silence-duration-ms INTEGER
+  --speech-pad-ms INTEGER
+  --max-speech-duration-s NUMBER
+  --decode-on-cpu[=false]
+  --draft TEXT
+  --experts-on-cpu[=false]
+  --streaming-mode TEXT
+  --spkcache-len INTEGER
+  --fifo-len INTEGER
+  --chunk-len INTEGER
+  --chunk-right-context INTEGER
+  --spkcache-update-period INTEGER
+  --onset NUMBER
+  --offset NUMBER
+  --pad-onset NUMBER
+  --pad-offset NUMBER
+  --min-duration-on NUMBER
+  --min-duration-off NUMBER
+  --speakers[=false]
+  --keywords TEXT
+  --keywords-alpha NUMBER
+  --keywords-guard[=false]
+  --chunk-size-in-seconds NUMBER
+  --hop-length-portion NUMBER
+  --bwe INTEGER
+  --persona TEXT
+  --name TEXT
+  --gender TEXT
+  --backchannel TEXT
+  --other-name TEXT
+  --relationship TEXT
+  --situation TEXT
+  --guidance-scale NUMBER
+  --eop-bias NUMBER
+  --speak-first[=false]
+Each also after tts., asr., vad. or diarize. (--asr.language), for the synthesis, recognition, detection or diarization
+model alone.
+
+

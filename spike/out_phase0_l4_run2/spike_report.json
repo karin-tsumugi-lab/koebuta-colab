@@ -1,0 +1,122 @@
+{
+  "status": "complete",
+  "speech_repo": "https://github.com/nyosegawa/speech.cpp.git",
+  "speech_tag": "v0.11.2",
+  "gguf_repo": "StudioYebisu-ship-it/Drama-3-Japanese-speech-cpp-gguf",
+  "gguf_file": "Drama-35B-A3B-Japanese-v3-small-IQ3_XXS.gguf",
+  "patch_file": "drama3-speechcpp-fast.patch",
+  "steps": {
+    "env": {
+      "nvidia_smi": "NVIDIA L4, 23034 MiB, 22564 MiB, 580.82.07",
+      "nproc": "12",
+      "disk_df": "Filesystem      Size  Used Avail Use% Mounted on\noverlay         236G   83M  236G   1% /"
+    },
+    "git_clone": {
+      "returncode": 0,
+      "elapsed_sec": 9.846
+    },
+    "patch_apply": {
+      "file": "drama3-speechcpp-fast.patch",
+      "returncode": 0,
+      "stderr": ""
+    },
+    "cmake_configure": {
+      "returncode": 0,
+      "elapsed_sec": 5.672,
+      "cuda_archs": "75;89",
+      "tail_stderr": ""
+    },
+    "cmake_build": {
+      "returncode": 0,
+      "elapsed_sec": 893.192,
+      "nproc": "12",
+      "tail_stdout": "speech-cli.dir/tools/common/sentences.cpp.o\n[ 95%] Building CXX object CMakeFiles/speech-cli.dir/tools/common/spelling.cpp.o\n[ 95%] Building CXX object CMakeFiles/speech-cli.dir/tools/common/terminal.cpp.o\n[ 95%] Building CXX object CMakeFiles/speech-cli.dir/tools/common/transcript.cpp.o\n[ 95%] Building CXX object CMakeFiles/speech-cli.dir/tools/common/utterances.cpp.o\n[ 96%] Building CXX object CMakeFiles/speech-cli.dir/tools/worker/worker.cpp.o\n[ 96%] Building CXX object CMakeFiles/speech-cli.dir/tools/worker/inbox.cpp.o\n[ 96%] Building CXX object CMakeFiles/speech-cli.dir/tools/server/server.cpp.o\n[ 96%] Building CXX object CMakeFiles/speech-cli.dir/tools/server/audio-speech.cpp.o\n[ 96%] Building CXX object CMakeFiles/speech-cli.dir/tools/server/audio-enhancements.cpp.o\n[ 96%] Building CXX object CMakeFiles/speech-cli.dir/tools/server/audio-stream.cpp.o\n[ 98%] Building CXX object CMakeFiles/speech-cli.dir/tools/server/openai-api.cpp.o\n[ 98%] Building CXX object CMakeFiles/speech-cli.dir/tools/server/served-models.cpp.o\n[ 98%] Building CXX object CMakeFiles/speech-cli.dir/tools/server/log.cpp.o\n[ 98%] Building CXX object CMakeFiles/speech-cli.dir/tools/server/access.cpp.o\n[ 98%] Building CXX object CMakeFiles/speech-cli.dir/tools/server/page.cpp.o\n[ 98%] Building CXX object CMakeFiles/speech-cli.dir/tools/server/realtime.cpp.o\n[100%] Building CXX object CMakeFiles/speech-cli.dir/tools/server/dialogue.cpp.o\n[100%] Linking CXX executable speech\n[100%] Built target speech-cli\n",
+      "tail_stderr": "/content/yomibuta_phase0/speech.cpp/src/common/model-file.cpp: In function ‘{anonymous}::Gguf {anonymous}::open_gguf(const std::string&, ggml_context**)’:\n/content/yomibuta_phase0/speech.cpp/src/common/model-file.cpp:40:49: warning: ignoring attributes on template argument ‘int (*)(FILE*)’ [-Wignored-attributes]\n   40 |     std::unique_ptr<FILE, decltype(&std::fclose)> f(ggml_fopen(path.c_str(), \"rb\"), &std::fclose);\n      |                                                 ^\n/content/yomibuta_phase0/speech.cpp/src/common/quantize.cpp:28:58: warning: ignoring attributes on template argument ‘int (*)(FILE*)’ [-Wignored-attributes]\n   28 | using File = std::unique_ptr<FILE, decltype(&std::fclose)>;\n      |                                                          ^\n/content/yomibuta_phase0/speech.cpp/src/common/model-file.cpp: In member function ‘void ModelFile::load()’:\n/content/yomibuta_phase0/speech.cpp/src/common/model-file.cpp:265:49: warning: ignoring attributes on template argument ‘int (*)(FILE*)’ [-Wignored-attributes]\n  265 |     std::unique_ptr<FILE, decltype(&std::fclose)> f(ggml_fopen(path_.c_str(), \"rb\"), &std::fclose);\n      |                                                 ^\n"
+    },
+    "speech_binary": "/content/yomibuta_phase0/speech.cpp/build/speech",
+    "prebuilt_package": {
+      "archive": "speech_prebuilt_cuda13_sm75_89.tar.gz",
+      "bytes": 162181720,
+      "files": [
+        "bin/speech",
+        "lib/libspeech.so",
+        "lib/libspeech.so.4"
+      ],
+      "ldd": "\tlinux-vdso.so.1 (0x00007ffd0b13f000)\n\tlibgomp.so.1 => /lib/x86_64-linux-gnu/libgomp.so.1 (0x00007b336ad88000)\n\tlibcudart.so.13 => /usr/local/cuda-13.0/targets/x86_64-linux/lib/libcudart.so.13 (0x00007b336aa00000)\n\tlibcublas.so.13 => /usr/local/cuda-13.0/targets/x86_64-linux/lib/libcublas.so.13 (0x00007b3367400000)\n\tlibcuda.so.1 => /usr/lib64-nvidia/libcuda.so.1 (0x00007b3361600000)\n\tlibnccl.so.2 => /lib/x86_64-linux-gnu/libnccl.so.2 (0x00007b33560ea000)\n\tlibm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x00007b3367317000)\n\tlibc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x00007b3355ed7000)\n\t/lib64/ld-linux-x86-64.so.2 (0x00007b33715ad000)\n\tlibdl.so.2 => /lib/x86_64-linux-gnu/libdl.so.2 (0x00007b336ad81000)\n\tlibpthread.so.0 => /lib/x86_64-linux-gnu/libpthread.so.0 (0x00007b336ad7c000)\n\tlibrt.so.1 => /lib/x86_64-linux-gnu/librt.so.1 (0x00007b336ad77000)\n\tlibcublasLt.so.13 => /usr/local/cuda-13.0/targets/x86_64-linux/lib/libcublasLt.so.13 (0x00007b3330000000)\n\tlibgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x00007b336ad47000)\n\tlibstdc++.so.6 => /lib/x86_64-linux-gnu/libstdc++.so.6 (0x00007b332fd82000)\n"
+    },
+    "gguf_download": {
+      "filename": "Drama-35B-A3B-Japanese-v3-small-IQ3_XXS.gguf",
+      "bytes": 9762406560,
+      "elapsed_sec": 34.492
+    },
+    "tts_test_1": {
+      "cmd": [
+        "/content/yomibuta_phase0/speech.cpp/build/speech",
+        "tts",
+        "/content/yomibuta_phase0/models/Drama-35B-A3B-Japanese-v3-small-IQ3_XXS.gguf",
+        "--experts-on-cpu=false",
+        "--voice",
+        "none",
+        "--seed",
+        "42",
+        "-o",
+        "/content/yomibuta_phase0/spike_sample_01_design.wav",
+        "[落ち着いた25歳の女性。親密な相手に耳元で優しく囁く。] [囁き]ねえ、そんなに急がないで。[吐息]ちゃんと、こっち見ててね。"
+      ],
+      "returncode": 0,
+      "elapsed_sec": 9.925,
+      "peak_vram_mb": 10964,
+      "tail_stdout": "",
+      "tail_stderr": "Loaded Drama-3-Japanese on CUDA0 in 4.68 s\n/content/yomibuta_phase0/spike_sample_01_design.wav: 8.82 s of audio in 4.652 s, RTFx 1.9, time to first audio 0.456 s\n",
+      "wav": {
+        "path": "/content/yomibuta_phase0/spike_sample_01_design.wav",
+        "bytes": 778284,
+        "channels": 1,
+        "sampwidth": 2,
+        "sample_rate": 44100,
+        "frames": 389120,
+        "duration_sec": 8.824,
+        "sha256": "726700f9d11cd5b5ff0c7c9afd4a0322fd1f28430d660ed746b28a8c2d072129",
+        "peak_dbfs": -2.72,
+        "rms_all_dbfs": -19.18,
+        "rms_active_dbfs": -14.23,
+        "rtfx": 0.889
+      }
+    },
+    "voice_extract": {
+      "cmd": [
+        "/content/yomibuta_phase0/speech.cpp/build/speech",
+        "voice",
+        "/content/yomibuta_phase0/models/Drama-35B-A3B-Japanese-v3-small-IQ3_XXS.gguf",
+        "/content/yomibuta_phase0/spike_sample_01_design.wav",
+        "--transcript",
+        "ねえ、そんなに急がないで。ちゃんと、こっち見ててね。",
+        "/content/yomibuta_phase0/speaker.voice.gguf"
+      ],
+      "returncode": 0,
+      "elapsed_sec": 12.033,
+      "peak_vram_mb": 3,
+      "tail_stderr": "Wrote /content/yomibuta_phase0/speaker.voice.gguf in 11.89 s\n"
+    },
+    "tts_test_2_clone": {
+      "cmd": [
+        "/content/yomibuta_phase0/speech.cpp/build/speech",
+        "tts",
+        "/content/yomibuta_phase0/models/Drama-35B-A3B-Japanese-v3-small-IQ3_XXS.gguf",
+        "--experts-on-cpu=false",
+        "--voice",
+        "/content/yomibuta_phase0/speaker.voice.gguf",
+        "--seed",
+        "42",
+        "-o",
+        "/content/yomibuta_phase0/spike_sample_02_clone.wav",
+        "窓の外では静かに雨が降り続いていた。[笑いながら]ねえ、これからどこへ向かうつもりなの？"
+      ],
+      "returncode": 1,
+      "elapsed_sec": 5.7,
+      "peak_vram_mb": 9496,
+      "tail_stdout": "",
+      "tail_stderr": "Loaded Drama-3-Japanese on CUDA0 in 5.12 s\nspeech: out_of_range (voice): Drama-3-Japanese has no voice named \"/content/yomibuta_phase0/speaker.voice.gguf\"; its voices are none\n"
+    }
+  }
+}

@@ -1,0 +1,121 @@
+{
+  "contract": "yomibuta-drama3-v1",
+  "status": "complete",
+  "takes": [
+    {
+      "segment_id": "t0010",
+      "filename": "t0010_67bac95d4efc.wav",
+      "pause_after_ms": 450,
+      "mode": "serve",
+      "attempts": 1,
+      "elapsed_sec": 2.613,
+      "rtfx": 1.066,
+      "bytes": 245804,
+      "channels": 1,
+      "sampwidth": 2,
+      "sample_rate": 44100,
+      "frames": 122880,
+      "seconds": 2.786,
+      "sha256": "770c1f470e245c0ccbbc1830fe7d2da34cba67e63e5a2e5cd4a31d0340d4b42c",
+      "peak_dbfs": -5.57,
+      "rms_active_dbfs": -17.06
+    },
+    {
+      "segment_id": "t0020",
+      "filename": "t0020_e415bb0e70e3.wav",
+      "pause_after_ms": 500,
+      "mode": "cli",
+      "attempts": 2,
+      "elapsed_sec": 45.516,
+      "rtfx": 0.228,
+      "bytes": 913452,
+      "channels": 1,
+      "sampwidth": 2,
+      "sample_rate": 44100,
+      "frames": 456704,
+      "seconds": 10.356,
+      "sha256": "d244b851df77fe87aff837bf0a4f40bf3ab0296cbaa3bf3d829316115fe2314f",
+      "peak_dbfs": -2.93,
+      "rms_active_dbfs": -13.5
+    },
+    {
+      "segment_id": "t0030",
+      "filename": "t0030_4bf036067f2c.wav",
+      "pause_after_ms": 350,
+      "mode": "serve",
+      "attempts": 1,
+      "elapsed_sec": 3.711,
+      "rtfx": 1.126,
+      "bytes": 368684,
+      "channels": 1,
+      "sampwidth": 2,
+      "sample_rate": 44100,
+      "frames": 184320,
+      "seconds": 4.18,
+      "sha256": "68e4b7accf6f36c0c717d3ab4156234f63943e31db850d6d2694258de9b48ff3",
+      "peak_dbfs": -2.79,
+      "rms_active_dbfs": -14.11
+    },
+    {
+      "segment_id": "t0040",
+      "filename": "t0040_c1fc30909f29.wav",
+      "pause_after_ms": 300,
+      "mode": "serve",
+      "attempts": 1,
+      "elapsed_sec": 1.993,
+      "rtfx": 1.398,
+      "bytes": 245804,
+      "channels": 1,
+      "sampwidth": 2,
+      "sample_rate": 44100,
+      "frames": 122880,
+      "seconds": 2.786,
+      "sha256": "ec590c2ed4b554188913a8f32ec05296f05f1b6f3351c11f9b4dd0aec4e186d6",
+      "peak_dbfs": -2.34,
+      "rms_active_dbfs": -14.07
+    }
+  ],
+  "errors": [],
+  "download_chunks": {
+    "result.wav": [
+      {
+        "remote": "/content/yomibuta_mvp03_result.part000",
+        "bytes": 1888272,
+        "sha256": "7d1e62aba47c71f71afa3b62bf25934755c487ab386dae7ddcc976183aa06592"
+      }
+    ],
+    "segments.zip": [
+      {
+        "remote": "/content/yomibuta_mvp03_segments.part000",
+        "bytes": 1012727,
+        "sha256": "49ae58114875d5fce46d4a5b8c1b1a6c94a3570c759bc0f96905bb993a0f4b89"
+      }
+    ]
+  },
+  "plan_signature": "808fb843f1a5d055afefc38bea5eb7942117743957a39bca0d2851c4524dd6e2",
+  "combined": {
+    "file": "result.wav",
+    "bytes": 1888272,
+    "channels": 1,
+    "sampwidth": 2,
+    "sample_rate": 44100,
+    "frames": 944114,
+    "seconds": 21.408,
+    "sha256": "7d1e62aba47c71f71afa3b62bf25934755c487ab386dae7ddcc976183aa06592",
+    "peak_dbfs": -6.27,
+    "rms_active_dbfs": -17.83,
+    "normalize_rms_db": -18.0,
+    "applied_gains_db": {
+      "t0010": -0.94,
+      "t0020": -4.5,
+      "t0030": -3.89,
+      "t0040": -3.93
+    }
+  },
+  "segments_zip": {
+    "file": "segments.zip",
+    "bytes": 1012727,
+    "sha256": "49ae58114875d5fce46d4a5b8c1b1a6c94a3570c759bc0f96905bb993a0f4b89"
+  },
+  "elapsed_total_sec": 322.659
+}

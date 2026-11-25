@@ -1,0 +1,118 @@
+=== speech info ===
+Drama-3-Japanese
+organization   Aratako
+basename       Drama
+size label     35B-A3B-small
+finetune       Japanese
+version        v3
+license        LicenseRef-Fish-Audio-Community-License-1.0
+source         https://huggingface.co/Aratako/Drama-3-Japanese at e3762febfc794eaa1d08ee9931215365f92968a8
+weight type    IQ3_XXS
+architecture   drama3, layout 1
+task           synthesis at 44100 Hz, passing audio while it makes the rest
+languages      ja
+voices         none          speaks every speaker of the text in a voice of the model's choosing
+voice files    yes, of the codec 2cf2ec268a087bd2ad91bfbb6796b0429fb03a73cdb8fd07f445d503e9a14d37; made with speech voice
+text           at most 8192 tokens
+options        voice           string, required, one of none; steers
+               language        string, default auto, one of ja (or auto, or a region or script of one); checked, not used
+               seed            int, from 0 to 9007199254740991; steers
+               max_seconds     float, default 47.55446712018141, above 0 to 95.10893424036281; steers
+               top_k           int, default 30, from 1 to 4097; steers
+               top_p           float, default 0.9, above 0 to 1; steers
+               temperature     float, default 1, above 0; steers
+               experts_on_cpu  bool, default true; steers
+size           9.76 GB file, 9.75 GB of weights
+
+=== speech worker --help ===
+usage: speech worker MODEL [options]
+
+Loads MODEL, warmed up unless --no-warmup, adds the voices of --add-voice, and serves it over the worker protocol
+4: one JSON object per line on stdin and on stdout, and nothing else on stdout. speech.cpp's
+docs/worker.md gives the messages. A request option given as a flag is the default of every request that does not
+set it, in place of the model's own.
+MODEL is a model file (.gguf), or the NAME[:TYPE] of one in `speech models`, fetched the first time it is used.
+
+  --add-voice NAME=FILE       add a voice from a voice file or a WAVE file before the first request; repeatable
+  --device NAME               auto (the first GPU, or the CPU without one), gpu, cpu or a name `speech devices` lists
+  --threads N                 the CPU's threads, 1 or more; the machine's performance cores unless given
+  --no-warmup                 skip the short request that compiles a GPU's kernels before the first one
+
+Request options, each the C API's option of the same name; the model refuses one it does not take,
+and `speech info MODEL` lists those it takes with their defaults and ranges:
+  --voice TEXT
+  --language TEXT
+  --seed INTEGER
+  --speed NUMBER
+  --seconds NUMBER
+  --duration-scale NUMBER
+  --steps INTEGER
+  --max-seconds NUMBER
+  --timestamps[=false]
+  --prompt TEXT
+  --decoding TEXT
+  --do-sample[=false]
+  --top-k INTEGER
+  --top-p NUMBER
+  --temperature NUMBER
+  --repetition-penalty NUMBER
+  --code-predictor-do-sample[=false]
+  --code-predictor-top-k INTEGER
+  --code-predictor-top-p NUMBER
+  --code-predictor-temperature NUMBER
+  --instructions TEXT
+  --cfg-scale-text NUMBER
+  --cfg-scale-speaker NUMBER
+  --cfg-guidance-mode TEXT
+  --cfg-min-t NUMBER
+  --cfg-max-t NUMBER
+  --truncation-factor NUMBER
+  --rescale-k NUMBER
+  --rescale-sigma NUMBER
+  --speaker-uncond-mode TEXT
+  --sway-coeff NUMBER
+  --keep-tail[=false]
+  --tail-window-size INTEGER
+  --tail-std-threshold NUMBER
+  --tail-mean-threshold NUMBER
+  --speaker-kv-scale NUMBER
+  --speaker-kv-min-t NUMBER
+  --speaker-kv-max-layers INTEGER
+  --cfg-scale-instructions NUMBER
+  --threshold NUMBER
+  --min-speech-duration-ms INTEGER
+  --min-silence-duration-ms INTEGER
+  --speech-pad-ms INTEGER
+  --max-speech-duration-s NUMBER
+  --decode-on-cpu[=false]
+  --draft TEXT
+  --experts-on-cpu[=false]
+  --streaming-mode TEXT
+  --spkcache-len INTEGER
+  --fifo-len INTEGER
+  --chunk-len INTEGER
+  --chunk-right-context INTEGER
+  --spkcache-update-period INTEGER
+  --onset NUMBER
+  --offset NUMBER
+  --pad-onset NUMBER
+  --pad-offset NUMBER
+  --min-duration-on NUMBER
+  --min-duration-off NUMBER
+  --speakers[=false]
+  --keywords TEXT
+  --keywords-alpha NUMBER
+  --keywords-guard[=false]
+  --chunk-size-in-seconds NUMBER
+  --hop-length-portion NUMBER
+  --bwe INTEGER
+  --persona TEXT
+  --name TEXT
+  --gender TEXT
+  --backchannel TEXT
+  --other-name TEXT
+  --relationship TEXT
+  --situation TEXT
+  --guidance-scale NUMBER
+  --eop-bias NUMBER
+  --speak-first[=false]

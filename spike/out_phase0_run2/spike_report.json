@@ -1,0 +1,31 @@
+{
+  "status": "error",
+  "speech_repo": "https://github.com/nyosegawa/speech.cpp.git",
+  "speech_tag": "v0.11.2",
+  "gguf_repo": "StudioYebisu-ship-it/Drama-3-Japanese-speech-cpp-gguf",
+  "gguf_file": "Drama-35B-A3B-Japanese-v3-small-IQ3_XXS.gguf",
+  "patch_file": "drama3-speechcpp-fast.patch",
+  "steps": {
+    "env": {
+      "nvidia_smi": "Tesla T4, 15360 MiB, 14913 MiB, 580.82.07",
+      "nproc": "2",
+      "disk_df": "Filesystem      Size  Used Avail Use% Mounted on\noverlay         236G   83M  236G   1% /"
+    },
+    "git_clone": {
+      "returncode": 0,
+      "elapsed_sec": 14.871
+    },
+    "patch_apply": {
+      "file": "drama3-speechcpp-fast.patch",
+      "returncode": 0,
+      "stderr": ""
+    },
+    "cmake_configure": {
+      "returncode": 0,
+      "elapsed_sec": 12.135,
+      "tail_stderr": ""
+    }
+  },
+  "error": "Command '['cmake', '--build', '/content/yomibuta_phase0/speech.cpp/build', '--target', 'speech', '--config', 'Release', '-j', '2']' timed out after 1500 seconds",
+  "traceback": "Traceback (most recent call last):\n  File \"/tmp/ipykernel_308/178354917.py\", line 235, in main\n    r_bld = run_capture(\n        [\"cmake\", \"--build\", str(build_dir), \"--target\", \"speech\", \"--config\", \"Release\", \"-j\", nproc],\n        timeout=1500,\n    )\n  File \"/tmp/ipykernel_308/178354917.py\", line 60, in run_capture\n    proc = subprocess.run(\n        cmd,\n    ...<6 lines>...\n        timeout=timeout,\n    )\n  File \"/usr/lib/python3.13/subprocess.py\", line 557, in run\n    stdout, stderr = process.communicate(input, timeout=timeout)\n                     ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.13/subprocess.py\", line 1223, in communicate\n    stdout, stderr = self._communicate(input, endtime, timeout)\n                     ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.13/subprocess.py\", line 2156, in _communicate\n    self._check_timeout(endtime, orig_timeout, stdout, stderr)\n    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.13/subprocess.py\", line 1270, in _check_timeout\n    raise TimeoutExpired(\n    ...<2 lines>...\n            stderr=b''.join(stderr_seq) if stderr_seq else None)\nsubprocess.TimeoutExpired: Command '['cmake', '--build', '/content/yomibuta_phase0/speech.cpp/build', '--target', 'speech', '--config', 'Release', '-j', '2']' timed out after 1500 seconds\n"
+}

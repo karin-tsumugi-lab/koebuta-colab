@@ -1,0 +1,39 @@
+{
+  "status": "error",
+  "speech_repo": "https://github.com/nyosegawa/speech.cpp.git",
+  "speech_tag": "v0.11.2",
+  "gguf_repo": "StudioYebisu-ship-it/Drama-3-Japanese-speech-cpp-gguf",
+  "gguf_file": "Drama-35B-A3B-Japanese-v3-small-IQ3_XXS.gguf",
+  "patch_file": "drama3-speechcpp-fast.patch",
+  "steps": {
+    "env": {
+      "nvidia_smi": "NVIDIA L4, 23034 MiB, 22564 MiB, 580.82.07",
+      "nproc": "12",
+      "disk_df": "Filesystem      Size  Used Avail Use% Mounted on\noverlay         236G   83M  236G   1% /"
+    },
+    "git_clone": {
+      "returncode": 0,
+      "elapsed_sec": 8.062
+    },
+    "patch_apply": {
+      "file": "drama3-speechcpp-fast.patch",
+      "returncode": 0,
+      "stderr": ""
+    },
+    "cmake_configure": {
+      "returncode": 0,
+      "elapsed_sec": 5.978,
+      "cuda_archs": "75;89",
+      "tail_stderr": ""
+    },
+    "cmake_build": {
+      "returncode": 0,
+      "elapsed_sec": 845.903,
+      "nproc": "12",
+      "tail_stdout": "ribe\n[ 92%] Building CXX object CMakeFiles/speech.dir/src/api/speech.cpp.o\n[ 92%] Building CXX object CMakeFiles/speech.dir/src/api/info.cpp.o\n[ 94%] Building CXX object CMakeFiles/speech.dir/src/api/request.cpp.o\n[ 94%] Building CXX object CMakeFiles/speech.dir/src/api/detection.cpp.o\n[ 94%] Building CXX object CMakeFiles/speech.dir/src/api/diarization.cpp.o\n[ 94%] Building CXX object CMakeFiles/speech.dir/src/api/enhancement.cpp.o\n[ 94%] Building CXX object CMakeFiles/speech.dir/src/api/dialogue.cpp.o\n[ 96%] Building CXX object CMakeFiles/speech.dir/src/engines/qwen3-tts-engine.cpp.o\n[ 96%] Building CXX object CMakeFiles/speech.dir/src/api/voice.cpp.o\n[ 96%] Building CXX object CMakeFiles/speech.dir/src/engines/irodori-tts-engine.cpp.o\n[ 96%] Building CXX object CMakeFiles/speech.dir/src/engines/drama3-engine.cpp.o\n[ 96%] Building CXX object CMakeFiles/speech.dir/src/engines/haru-engine.cpp.o\n[ 96%] Building CXX object CMakeFiles/speech.dir/src/engines/fastconformer-engine.cpp.o\n[ 98%] Building CXX object CMakeFiles/speech.dir/src/engines/qwen3-asr-engine.cpp.o\n[ 98%] Building CXX object CMakeFiles/speech.dir/src/engines/nemotron-transcribe-engine.cpp.o\n[ 98%] Building CXX object CMakeFiles/speech.dir/src/engines/silero-vad-engine.cpp.o\n[ 98%] Building CXX object CMakeFiles/speech.dir/src/engines/sortformer-engine.cpp.o\n[ 98%] Building CXX object CMakeFiles/speech.dir/src/engines/semamba-engine.cpp.o\n[100%] Linking CXX shared library libspeech.so\n[100%] Built target speech\n",
+      "tail_stderr": "/content/yomibuta_phase0/speech.cpp/src/common/model-file.cpp: In function ‘{anonymous}::Gguf {anonymous}::open_gguf(const std::string&, ggml_context**)’:\n/content/yomibuta_phase0/speech.cpp/src/common/model-file.cpp:40:49: warning: ignoring attributes on template argument ‘int (*)(FILE*)’ [-Wignored-attributes]\n   40 |     std::unique_ptr<FILE, decltype(&std::fclose)> f(ggml_fopen(path.c_str(), \"rb\"), &std::fclose);\n      |                                                 ^\n/content/yomibuta_phase0/speech.cpp/src/common/quantize.cpp:28:58: warning: ignoring attributes on template argument ‘int (*)(FILE*)’ [-Wignored-attributes]\n   28 | using File = std::unique_ptr<FILE, decltype(&std::fclose)>;\n      |                                                          ^\n/content/yomibuta_phase0/speech.cpp/src/common/model-file.cpp: In member function ‘void ModelFile::load()’:\n/content/yomibuta_phase0/speech.cpp/src/common/model-file.cpp:265:49: warning: ignoring attributes on template argument ‘int (*)(FILE*)’ [-Wignored-attributes]\n  265 |     std::unique_ptr<FILE, decltype(&std::fclose)> f(ggml_fopen(path_.c_str(), \"rb\"), &std::fclose);\n      |                                                 ^\n"
+    }
+  },
+  "error": "speech binary not found at /content/yomibuta_phase0/speech.cpp/build/speech",
+  "traceback": "Traceback (most recent call last):\n  File \"/tmp/ipykernel_1238/39751292.py\", line 253, in main\n    raise RuntimeError(f\"speech binary not found at {speech_bin}\")\nRuntimeError: speech binary not found at /content/yomibuta_phase0/speech.cpp/build/speech\n"
+}

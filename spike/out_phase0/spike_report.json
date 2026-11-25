@@ -1,0 +1,78 @@
+{
+  "status": "error",
+  "gguf_repo": "StudioYebisu-ship-it/Drama-3-Japanese-speech-cpp-gguf",
+  "quant_pattern": "IQ3_XXS",
+  "speech_repo": "https://github.com/nyosegawa/speech.cpp.git",
+  "test_text": "[囁き]窓の外では静かに雨が降り続いていた。[吐息]ねえ、これからどこへ向かうつもりなの？",
+  "steps": {
+    "env": {
+      "nvidia_smi": "Tesla T4, 15360 MiB, 14913 MiB, 580.82.07",
+      "nvcc": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2025 NVIDIA Corporation\nBuilt on Wed_Aug_20_01:58:59_PM_PDT_2025\nCuda compilation tools, release 13.0, V13.0.88\nBuild cuda_13.0.r13.0/compiler.36424714_0",
+      "cmake": "cmake version 3.31.10\n\nCMake suite maintained and supported by Kitware (kitware.com/cmake).",
+      "gpp": "g++ (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0\nCopyright (C) 2023 Free Software Foundation, Inc.\nThis is free software; see the source for copying conditions.  There is NO\nwarranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.",
+      "disk_df": "Filesystem      Size  Used Avail Use% Mounted on\noverlay         236G   83M  236G   1% /"
+    },
+    "hf_repo_files": [
+      ".gitattributes",
+      "Drama-35B-A3B-Japanese-v3-Q4_K.gguf",
+      "Drama-35B-A3B-Japanese-v3-Q4_K.gguf.json",
+      "Drama-35B-A3B-Japanese-v3-Q5_K.gguf",
+      "Drama-35B-A3B-Japanese-v3-Q5_K.gguf.json",
+      "Drama-35B-A3B-Japanese-v3-small-IQ3_XXS.gguf",
+      "Drama-35B-A3B-Japanese-v3-small-IQ3_XXS.gguf.json",
+      "LICENSE",
+      "LICENSE-SPEECH-CPP",
+      "NOTICE",
+      "README.md",
+      "SHA256SUMS.txt",
+      "SMALL_SHA256SUMS.txt",
+      "TAG_LIST.md",
+      "drama3-japanese-small-IQ3_XXS-audiocpp.gguf",
+      "drama3-small-speechcpp.patch",
+      "drama3-speechcpp-fast.patch",
+      "samples/01_small_iq3_xxs_narration_cuda_fast.wav",
+      "samples/02_small_iq3_xxs_whisper_cuda.wav",
+      "samples/03_full_q4k_whisper_vulkan.wav",
+      "samples/04_full_q5k_narration_vulkan.wav",
+      "silence_codes.json"
+    ],
+    "hf_patch_files": [
+      "drama3-small-speechcpp.patch",
+      "drama3-speechcpp-fast.patch"
+    ],
+    "git_clone": {
+      "cmd": [
+        "git",
+        "clone",
+        "--depth",
+        "1",
+        "--recurse-submodules",
+        "https://github.com/nyosegawa/speech.cpp.git",
+        "/content/yomibuta_phase0/speech.cpp"
+      ],
+      "returncode": 0,
+      "elapsed_sec": 14.275,
+      "stderr": "Cloning into '/content/yomibuta_phase0/speech.cpp'...\nSubmodule 'ggml' (https://github.com/nyosegawa/ggml.git) registered for path 'ggml'\nCloning into '/content/yomibuta_phase0/speech.cpp/ggml'...\nFrom https://github.com/nyosegawa/ggml\n * branch              79b50d239d0b88852814c873db0d85d43ed66d9b -> FETCH_HEAD\n"
+    },
+    "speech_cpp_commit": "cc16a71e46ee3324ca07f9df4d90ce43622ae598",
+    "patches": [
+      {
+        "file": "drama3-small-speechcpp.patch",
+        "applied": true
+      },
+      {
+        "file": "drama3-speechcpp-fast.patch",
+        "applied": false,
+        "check_stderr": ".cpp: patch does not apply\nerror: patch failed: src/families/drama3/sampler.cpp:1\nerror: src/families/drama3/sampler.cpp: patch does not apply\nerror: patch failed: src/families/drama3/sampler.h:1\nerror: src/families/drama3/sampler.h: patch does not apply\nerror: patch failed: src/families/drama3/synthesizer.cpp:1\nerror: src/families/drama3/synthesizer.cpp: patch does not apply\nerror: patch failed: src/families/drama3/synthesizer.h:72\nerror: src/families/drama3/synthesizer.h: patch does not apply\n"
+      }
+    ],
+    "cmake_configure": {
+      "returncode": 0,
+      "elapsed_sec": 11.991,
+      "tail_stdout": " assembler: /usr/bin/cc\n-- Performing Test CMAKE_HAVE_LIBC_PTHREAD\n-- Performing Test CMAKE_HAVE_LIBC_PTHREAD - Success\n-- Found Threads: TRUE\n-- Warning: ccache not found - consider installing it for faster compilation or disable this warning with GGML_CCACHE=OFF\n-- CMAKE_SYSTEM_PROCESSOR: x86_64\n-- GGML_SYSTEM_ARCH: x86\n-- Found OpenMP_C: -fopenmp (found version \"4.5\")\n-- Found OpenMP_CXX: -fopenmp (found version \"4.5\")\n-- Found OpenMP: TRUE (found version \"4.5\")\n-- Including CPU backend\n-- x86 detected\n-- Adding CPU backend variant ggml-cpu: -march=native \n-- Found CUDAToolkit: /usr/local/cuda/targets/x86_64-linux/include;/usr/local/cuda/targets/x86_64-linux/include/cccl (found version \"13.0.88\")\n-- CUDA Toolkit found\n-- The CUDA compiler identification is NVIDIA 13.0.88 with host compiler GNU 13.3.0\n-- Detecting CUDA compiler ABI info\n-- Detecting CUDA compiler ABI info - done\n-- Check for working CUDA compiler: /usr/local/cuda/bin/nvcc - skipped\n-- Detecting CUDA compile features\n-- Detecting CUDA compile features - done\n-- Using CMAKE_CUDA_ARCHITECTURES=75-real CMAKE_CUDA_ARCHITECTURES_NATIVE=75-real\n-- FlashAttention K-V type combinations: f16-f16;q4_0-q4_0;q8_0-q8_0;bf16-bf16\n-- Found NCCL: /usr/lib/x86_64-linux-gnu/libnccl.so\n-- CUDA host compiler is GNU 13.3.0\n-- Including CUDA backend\n-- ggml version: 0.27.0\n-- ggml commit:  79b50d23\n-- Configuring done (11.5s)\n-- Generating done (0.3s)\n-- Build files have been written to: /content/yomibuta_phase0/speech.cpp/build\n",
+      "tail_stderr": ""
+    }
+  },
+  "error": "Command '['cmake', '--build', '/content/yomibuta_phase0/speech.cpp/build', '--config', 'Release', '-j', '2']' timed out after 1200 seconds",
+  "traceback": "Traceback (most recent call last):\n  File \"/tmp/ipykernel_322/4256583367.py\", line 245, in main\n    r_bld = run_capture(\n        [\"cmake\", \"--build\", str(build_dir), \"--config\", \"Release\", \"-j\", nproc],\n        timeout=1200,\n    )\n  File \"/tmp/ipykernel_322/4256583367.py\", line 42, in run_capture\n    proc = subprocess.run(\n        cmd,\n    ...<5 lines>...\n        timeout=timeout,\n    )\n  File \"/usr/lib/python3.13/subprocess.py\", line 557, in run\n    stdout, stderr = process.communicate(input, timeout=timeout)\n                     ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.13/subprocess.py\", line 1223, in communicate\n    stdout, stderr = self._communicate(input, endtime, timeout)\n                     ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.13/subprocess.py\", line 2156, in _communicate\n    self._check_timeout(endtime, orig_timeout, stdout, stderr)\n    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.13/subprocess.py\", line 1270, in _check_timeout\n    raise TimeoutExpired(\n    ...<2 lines>...\n            stderr=b''.join(stderr_seq) if stderr_seq else None)\nsubprocess.TimeoutExpired: Command '['cmake', '--build', '/content/yomibuta_phase0/speech.cpp/build', '--config', 'Release', '-j', '2']' timed out after 1200 seconds\n"
+}

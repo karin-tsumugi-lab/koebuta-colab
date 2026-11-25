@@ -1,0 +1,117 @@
+{
+  "contract": "yomibuta-drama3-v1",
+  "schema_version": 2,
+  "settings": {
+    "title": "Yomibuta Phase 1 MVP テスト",
+    "ttsEngine": "drama3",
+    "ttsModel": "Aratako/Drama-3-Japanese",
+    "backend": "speech_cpp_gguf",
+    "quant": "IQ3_XXS",
+    "sampleRate": 44100,
+    "reading": "shared",
+    "voiceMode": "design",
+    "seed": 42,
+    "pause": 0.28,
+    "engineOptions": {
+      "temperature": 1.0,
+      "top_p": 0.9,
+      "top_k": 30,
+      "max_seconds": 47.55,
+      "max_pause_frames": 18,
+      "experts_on_cpu": false
+    }
+  },
+  "voices": {},
+  "requests": [
+    {
+      "segment_id": "t0010",
+      "speaker_id": "narrator",
+      "pause_after_ms": 450,
+      "spoken_chars": 33,
+      "request": {
+        "prompt": "[落ち着いた明瞭な声の成人女性。丁寧で自然な日本語の朗読。 静かな図書館。] 深夜の図書館は静かで、ページをめくる音だけが規則正しく響いていた。",
+        "spoken_text": "深夜の図書館は静かで、ページをめくる音だけが規則正しく響いていた。",
+        "caption": "落ち着いた明瞭な声の成人女性。丁寧で自然な日本語の朗読。 静かな図書館。",
+        "voice_profile": "none",
+        "seed": 42,
+        "engine_options": {
+          "temperature": 1.0,
+          "top_p": 0.9,
+          "top_k": 30,
+          "max_seconds": 47.55,
+          "max_pause_frames": 18,
+          "experts_on_cpu": false
+        }
+      },
+      "fingerprint": "ba762a9017abb8cd1dbf3f24c1e48f795a3176ffebe0cdc85bf367ab89650063"
+    },
+    {
+      "segment_id": "t0020",
+      "speaker_id": "narrator",
+      "pause_after_ms": 500,
+      "spoken_chars": 26,
+      "request": {
+        "prompt": "[落ち着いた明瞭な声の成人女性。丁寧で自然な日本語の朗読。 耳元に近い距離感。 親密な相手に優しく語りかけるように] [囁き]ねえ、そんなに急がないで。[吐息]ちゃんと、こっち見ててね。",
+        "spoken_text": "[囁き]ねえ、そんなに急がないで。[吐息]ちゃんと、こっち見ててね。",
+        "caption": "落ち着いた明瞭な声の成人女性。丁寧で自然な日本語の朗読。 耳元に近い距離感。 親密な相手に優しく語りかけるように",
+        "voice_profile": "none",
+        "seed": 42,
+        "engine_options": {
+          "temperature": 1.0,
+          "top_p": 0.9,
+          "top_k": 30,
+          "max_seconds": 47.55,
+          "max_pause_frames": 18,
+          "experts_on_cpu": false
+        }
+      },
+      "fingerprint": "c7ad403bac079cbd714776359a1e59739639f694cd6b85f296589b0fab47077a"
+    },
+    {
+      "segment_id": "t0030",
+      "speaker_id": "narrator",
+      "pause_after_ms": 350,
+      "spoken_chars": 19,
+      "request": {
+        "prompt": "[落ち着いた明瞭な声の成人女性。丁寧で自然な日本語の朗読。] 窓の外ではつめたい雨が降り続いていた。",
+        "spoken_text": "窓の外ではつめたい雨が降り続いていた。",
+        "caption": "落ち着いた明瞭な声の成人女性。丁寧で自然な日本語の朗読。",
+        "voice_profile": "none",
+        "seed": 42,
+        "engine_options": {
+          "temperature": 1.0,
+          "top_p": 0.9,
+          "top_k": 30,
+          "max_seconds": 47.55,
+          "max_pause_frames": 18,
+          "experts_on_cpu": false
+        }
+      },
+      "fingerprint": "f44a46a8f4ee5c92974c5f1c97e517e178106be84dd25646fe10c682ae935a8c"
+    },
+    {
+      "segment_id": "t0040",
+      "speaker_id": "narrator",
+      "pause_after_ms": 300,
+      "spoken_chars": 14,
+      "request": {
+        "prompt": "[落ち着いた明瞭な声の成人女性。丁寧で自然な日本語の朗読。 穏やかに微笑みながら] [笑いながら]明日には晴れるといいですね。",
+        "spoken_text": "[笑いながら]明日には晴れるといいですね。",
+        "caption": "落ち着いた明瞭な声の成人女性。丁寧で自然な日本語の朗読。 穏やかに微笑みながら",
+        "voice_profile": "none",
+        "seed": 42,
+        "engine_options": {
+          "temperature": 1.0,
+          "top_p": 0.9,
+          "top_k": 30,
+          "max_seconds": 47.55,
+          "max_pause_frames": 18,
+          "experts_on_cpu": false
+        }
+      },
+      "fingerprint": "bd05ad8810da5a4887340a2b59fefb3acd6ddfceb7b94b7673aeee82d2f56b6b"
+    }
+  ],
+  "diagnostics": [],
+  "plan_signature": "ea094ea01d8dc4624f762efe2f1c4f9fa96022f5efce02a4bee0f38e1d8bbe31"
+}
