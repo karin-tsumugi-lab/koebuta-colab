@@ -5,6 +5,7 @@ from __future__ import annotations
 from array import array
 import io
 import json
+import math
 import struct
 import sys
 import tempfile
@@ -276,6 +277,51 @@ class TestAudioMix(unittest.TestCase):
             self.assertGreater(info["limited_samples"], 0)
             _, _, rd_l, rd_r, _ = ym.read_wav_file(lim_wav)
             self.assertAlmostEqual(rd_l[10] / rd_r[10], 2.0, delta=0.01)
+
+    def test_malformed_wav_bits_zero_strict_init_plan_and_antialias_phase_seam(self):
+        # 1. bits=0 malformed WAV header must raise ValueError, never ZeroDivisionError
+        bad_fmt = struct.pack("<HHIIHH", 1, 1, 44100, 0, 0, 0)
+        bad_wav = b"RIFF" + struct.pack("<I", 36) + b"WAVEfmt " + struct.pack("<I", 16) + bad_fmt + b"data" + struct.pack("<I", 4) + b"\x00\x00\x00\x00"
+        with self.assertRaises(ValueError):
+            ym.read_wav_bytes(bad_wav, "bits0.wav")
+
+        # 2. Strict init_plan matching must not confuse `t001_part2_<hex>.wav` with `t001`
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            run_dir = tmp / "run_part"
+            run_dir.mkdir()
+            u_wav = tmp / "dummy.wav"
+            _write_pcm16_wav(u_wav, [2000, -2000] * 1000)
+            with zipfile.ZipFile(run_dir / "segments.zip", "w") as zf:
+                zf.write(u_wav, "audio/t001_part2_abcdef123456.wav")
+                zf.write(u_wav, "audio/t001_111111222222.wav")
+            (run_dir / "plan.json").write_text(
+                json.dumps(
+                    {
+                        "settings": {"sampleRate": 44100},
+                        "requests": [{"segment_id": "t001", "pause_after_ms": 280}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            out_plan = tmp / "mp.json"
+            with mock.patch("sys.stdout", io.StringIO()):
+                ym.init_plan(out_plan, run_dir)
+            doc = json.loads(out_plan.read_text(encoding="utf-8"))
+            self.assertEqual(doc["utterances"][0]["file"], "audio/t001_111111222222.wav")
+
+        # 3. Downsampling 48kHz -> 44.1kHz attenuates near-Nyquist 23kHz tone
+        hi_tone = array("f", [math.sin(2.0 * math.pi * 23000 * i / 48000) for i in range(4800)])
+        down = ym.resample_channel(hi_tone, 48000, 44100)
+        self.assertLess(max(abs(x) for x in down[100:]), 0.85)
+
+        # 4. Out-of-phase sinusoidal loop seam eliminates hard step jump at seam
+        # Construct clip ending at +0.8 and starting at -0.8 (worst-case 1.6 step without crossfade)
+        n_clip = 4410
+        clip = array("f", [-0.8 * math.cos(math.pi * i / (n_clip - 1)) for i in range(n_clip)])
+        loop_l, _ = ym.render_looped_stereo(clip, array("f", clip), 10000, 44100, crossfade_ms=15)
+        max_step = max(abs(loop_l[i] - loop_l[i - 1]) for i in range(1, len(loop_l)))
+        self.assertLess(max_step, 0.02)
 
 
 if __name__ == "__main__":

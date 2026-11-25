@@ -125,6 +125,7 @@ Drama-3 は総パラメータ約 35B（アクティブ約 3B）の MoE モデル
   "narratorEmotion": true,
   "seed": 314,
   "pause": 0.28,
+  "blankLinePauseMs": null,
   "engineOptions": {
     "temperature": 0.8,
     "top_p": 0.85,
@@ -159,6 +160,11 @@ Drama-3 のゼロショット／フューショット音声クローンは、**�
   - ※`cloneCaption`（トップレベル設定、既定 `false`）：`voiceMode == "clone"` 時に自由記述 `[caption]` を先頭付与すると読み誤りを誘発するため、クローン時は既定で抑制し `TAG_LIST.md` の公式インラインタグのみで演出する。
   - ※`repetition_penalty` は `speech.cpp` の Drama-3 モデルでは非対応（渡すとエラーになるため、公式推論バックエンド専用とする）。
 - `sampleRate`：Drama-3 の既定は `44100`（Irodori は `48000`）。
+- **発話間ポーズ解決規則（Koebuta `faithful.py` 厳密互換）**：
+  1. 発話に `pause_after_ms`（`0〜10000` ms）が明示されていればその値を最優先する。
+  2. 未指定かつ直後に `segment_type: "separator"` があり、そこに `pause_after_ms` が明示されていれば、その最大値（共通ポーズ未満の短ポーズも含む）を適用する。競合がある場合は `W_PAUSE_CONFLICT` 警告を出す。
+  3. 上記いずれも未指定で、発話の `blank_lines_after > 0` かつ `blank_line_pause_ms` または `settings.blankLinePauseMs`（既定 `null`＝無効）が**明示指定されている場合のみ**空行ポーズを適用する。
+  4. それ以外（`pause_after_ms` 省略の `separator` を含む）は共通設定 `pause`（既定 `0.28` 秒＝`280` ms）を適用する。これにより既存の Koebuta シナリオのポーズ出力は不変に保たれる。
 
 ---
 

@@ -96,7 +96,11 @@ def main(argv: list[str] | None = None) -> int:
                 print("tts_test_1:", "rc=", t1.get("returncode"), f"elapsed={t1.get('elapsed_sec')}s", f"peak_vram={t1.get('peak_vram_mb')}MB")
                 if "wav" in t1:
                     w = t1["wav"]
-                    print("wav:", f"{w.get('sample_rate')}Hz {w.get('channels')}ch", f"dur={w.get('duration_sec')}s", f"rtf={w.get('rtf')}", f"rms_active={w.get('rms_active_dbfs')}dBFS")
+                    print("wav:", f"{w.get('sample_rate')}Hz {w.get('channels')}ch", f"dur={w.get('duration_sec')}s", f"rtfx={w.get('rtfx')}", f"rms_active={w.get('rms_active_dbfs')}dBFS")
+            if "tts_test_2_clone" in steps:
+                t2 = steps["tts_test_2_clone"]
+                w2 = t2.get("wav") or {}
+                print("tts_test_2_clone:", "rc=", t2.get("returncode"), f"dur={w2.get('duration_sec')}s", f"rtfx={w2.get('rtfx')}")
             print("outputs:", out_dir)
 
     if not args.keep_session:

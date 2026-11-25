@@ -3,6 +3,9 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# Generated work outputs
+/works/
+
 # Temporary transfer & scratch files
 _code.zip
 _bootstrap.py

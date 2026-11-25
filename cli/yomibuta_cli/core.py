@@ -18,8 +18,8 @@ DEFAULT_BACKEND = "speech_cpp_gguf"
 DEFAULT_QUANT = "IQ3_XXS"
 DEFAULT_SAMPLE_RATE = 44100
 
-# Default released PyPI spec for official backend (override via engineOptions.sglang_pip_spec with pinned tag/commit)
-DEFAULT_SGLANG_PIP_SPEC = "sglang-omni[fishaudio]>=0.1.0,<1.0"
+# Exact default PyPI spec for official backend reproducibility (override via engineOptions.sglang_pip_spec)
+DEFAULT_SGLANG_PIP_SPEC = "sglang-omni[fishaudio]==0.1.0"
 
 GGUF_SPECS = {
     "IQ3_XXS": {

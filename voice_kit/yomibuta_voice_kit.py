@@ -109,6 +109,20 @@ def _adopt_seed(args: argparse.Namespace) -> int:
             rel_wav = Path(os.path.relpath(save_to, settings_path.parent)).as_posix()
         except ValueError:
             rel_wav = str(save_to)
+        existing_voices: dict = {}
+        if settings_path.is_file():
+            try:
+                prev_doc = json.loads(settings_path.read_text(encoding="utf-8"))
+                if isinstance(prev_doc, dict) and isinstance(prev_doc.get("voices"), dict):
+                    existing_voices = dict(prev_doc["voices"])
+            except Exception:
+                pass
+        existing_voices[args.profile] = [
+            {
+                "wav": rel_wav,
+                "transcript": meta.get("text", ""),
+            }
+        ]
         settings_doc = {
             "title": args.title or "新しい朗読",
             "ttsEngine": "drama3",
@@ -117,30 +131,15 @@ def _adopt_seed(args: argparse.Namespace) -> int:
             "quant": "IQ3_XXS",
             "sampleRate": 44100,
             "normalizeRmsDb": -18.0,
-            "reading": "shared",
+            "reading": "cast" if len(existing_voices) > 1 else "shared",
             "voiceMode": "clone",
             "cloneCaption": False,
-            "voices": {
-                args.profile: [
-                    {
-                        "wav": rel_wav,
-                        "transcript": meta.get("text", ""),
-                    }
-                ]
-            },
+            "voices": existing_voices,
             "acting": True,
             "emotion": True,
             "narratorEmotion": True,
             "seed": chosen["seed"],
             "pause": 0.28,
-            "engineOptions": {
-                "temperature": 0.8,
-                "top_p": 0.85,
-                "top_k": 30,
-                "max_seconds": 47.55,
-                "max_pause_frames": 36,
-                "experts_on_cpu": False,
-            },
         }
         settings_path.write_text(json.dumps(settings_doc, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         print(f"SETTINGS_WRITTEN {settings_path}")
@@ -187,11 +186,18 @@ def main(argv: list[str] | None = None) -> int:
     identifier(args.profile, "voice profile", 40)
 
     caption = args.caption or (PRESETS[args.preset]["caption"] if args.preset else "")
-    if not caption:
-        parser.error("--preset または --caption を指定してください")
-    seeds = [int(s.strip()) for s in args.seeds.split(",") if s.strip()]
+    if not caption or not caption.strip():
+        parser.error("--preset または空でない --caption を指定してください")
+    if not isinstance(args.text, str) or not args.text.strip():
+        parser.error("--text に空でない試聴セリフを指定してください")
+    try:
+        seeds = [int(s.strip()) for s in args.seeds.split(",") if s.strip()]
+    except ValueError:
+        parser.error(f"--seeds はカンマ区切りの整数で指定してください: {args.seeds!r}")
     if not seeds:
         parser.error("--seeds に1つ以上の整数を指定してください")
+    if len(set(seeds)) != len(seeds):
+        parser.error(f"--seeds に重複したシード値が含まれています: {seeds}")
     for s in seeds:
         if not (0 <= s <= 9007199254740991):
             parser.error(f"不正なシード値です: {s}")

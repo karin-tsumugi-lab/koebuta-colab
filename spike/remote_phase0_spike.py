@@ -156,6 +156,7 @@ def analyze_wav(path: Path) -> dict:
 def main() -> int:
     WORK.mkdir(parents=True, exist_ok=True)
     report: dict = {
+        "script_version": "phase0-spike-v2",
         "status": "started",
         "speech_repo": SPEECH_REPO,
         "speech_tag": SPEECH_TAG,
@@ -328,17 +329,19 @@ def main() -> int:
             "tail_stdout": r1["stdout"][-1200:],
             "tail_stderr": r1["stderr"][-1200:],
         }
+        t1_ok = False
         if r1["returncode"] == 0 and out_wav1.is_file():
             w1 = analyze_wav(out_wav1)
             if w1["duration_sec"] > 0:
                 w1["rtfx"] = round(w1["duration_sec"] / r1["elapsed_sec"], 3)
+                t1_ok = True
             t1_rec["wav"] = w1
             collected_files.append((out_wav1, "spike_sample_01_design.wav"))
         report["steps"]["tts_test_1"] = t1_rec
 
         # 7. Test 2: Extract voice prompt & VoiceClone
         clone_ok = False
-        if r1["returncode"] == 0 and out_wav1.is_file():
+        if t1_ok:
             voice_gguf = WORK / "speaker.voice.gguf"
             cmd_v = [
                 str(speech_bin), "voice", str(gguf_path), str(out_wav1),
@@ -375,12 +378,12 @@ def main() -> int:
                     w2 = analyze_wav(out_wav2)
                     if w2["duration_sec"] > 0:
                         w2["rtfx"] = round(w2["duration_sec"] / r2["elapsed_sec"], 3)
+                        clone_ok = True
                     t2_rec["wav"] = w2
                     collected_files.append((out_wav2, "spike_sample_02_clone.wav"))
-                    clone_ok = True
                 report["steps"]["tts_test_2_clone"] = t2_rec
 
-        if r1["returncode"] != 0 or not out_wav1.is_file():
+        if not t1_ok:
             report["status"] = "tts_failed"
         elif not clone_ok:
             report["status"] = "clone_failed"

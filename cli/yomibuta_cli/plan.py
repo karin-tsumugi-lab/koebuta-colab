@@ -102,7 +102,7 @@ DEFAULT_SETTINGS = {
     "narratorEmotion": True,
     "seed": 314,
     "pause": 0.28,
-    "blankLinePauseMs": 1200,
+    "blankLinePauseMs": None,
 }
 
 _PINNED_GIT_REF_RE = re.compile(r"^(?:[0-9a-fA-F]{40}|v?\d+\.\d+(?:\.\d+)?(?:[-._A-Za-z0-9]+)?)$")
@@ -204,13 +204,14 @@ def build_plan(
     cfg = {**DEFAULT_SETTINGS, **settings}
     if cfg["ttsEngine"] != "drama3":
         error("ttsEngine", "Yomibutaでは ttsEngine='drama3' のみ対応しています", code="E_SETTINGS")
-    if cfg["backend"] not in ("speech_cpp_gguf", "official"):
+    if not isinstance(cfg["backend"], str) or cfg["backend"] not in ("speech_cpp_gguf", "official"):
         error("backend", f"backend は 'speech_cpp_gguf' または 'official' を指定してください: {cfg['backend']!r}", code="E_SETTINGS")
     elif cfg["backend"] == "speech_cpp_gguf":
-        if cfg["quant"] not in GGUF_SPECS:
+        if not isinstance(cfg["quant"], str) or cfg["quant"] not in GGUF_SPECS:
             error("quant", f"未対応の量子化です: {cfg['quant']!r} (対応: {sorted(GGUF_SPECS)})", code="E_SETTINGS")
     else:
-        if cfg.get("quant") not in (None, "none", "bf16", "fp8"):
+        qval = cfg.get("quant")
+        if qval is not None and (not isinstance(qval, str) or qval not in ("none", "bf16", "fp8")):
             error("quant", "backend='official' では quant='none' / 'bf16' / 'fp8' を指定してください", code="E_SETTINGS")
 
     if type(cfg["sampleRate"]) is not int or cfg["sampleRate"] != DEFAULT_SAMPLE_RATE:
@@ -218,9 +219,9 @@ def build_plan(
     norm_rms = cfg.get("normalizeRmsDb")
     if norm_rms is not None and (not _is_finite_num(norm_rms) or not (-36.0 <= float(norm_rms) <= -6.0)):
         error("normalizeRmsDb", "null または -36.0〜-6.0 の有限数値を指定してください", code="E_SETTINGS")
-    if cfg["reading"] not in ("shared", "cast"):
+    if not isinstance(cfg["reading"], str) or cfg["reading"] not in ("shared", "cast"):
         error("reading", "'shared' または 'cast' を指定してください", code="E_SETTINGS")
-    if cfg["voiceMode"] not in ("design", "clone"):
+    if not isinstance(cfg["voiceMode"], str) or cfg["voiceMode"] not in ("design", "clone"):
         error("voiceMode", "'design' または 'clone' を指定してください", code="E_SETTINGS")
     for bkey in ("acting", "cloneCaption", "emotion", "narratorEmotion"):
         if type(cfg[bkey]) is not bool:
@@ -231,8 +232,8 @@ def build_plan(
         error("seed", "0〜9007199254740991の整数が必要です", code="E_SETTINGS")
     if not _is_finite_num(cfg["pause"]) or not (0 <= float(cfg["pause"]) <= 10):
         error("pause", "0〜10の有限な秒数が必要です", code="E_SETTINGS")
-    if type(cfg["blankLinePauseMs"]) is not int or not (0 <= cfg["blankLinePauseMs"] <= 10000):
-        error("blankLinePauseMs", "0〜10000の整数(ms)が必要です", code="E_SETTINGS")
+    if cfg["blankLinePauseMs"] is not None and (type(cfg["blankLinePauseMs"]) is not int or not (0 <= cfg["blankLinePauseMs"] <= 10000)):
+        error("blankLinePauseMs", "null または 0〜10000の整数(ms)が必要です", code="E_SETTINGS")
 
     # Engine options validation
     raw_eo = cfg.get("engineOptions") if cfg.get("engineOptions") is not None else {}
@@ -243,8 +244,8 @@ def build_plan(
     for k in sorted(unknown_eo):
         error(f"engineOptions.{k}", "未対応のエンジンオプションです", code="E_SETTINGS")
     eo = {**DEFAULT_ENGINE_OPTIONS, **raw_eo}
-    if not _is_finite_num(eo["temperature"]) or float(eo["temperature"]) <= 0:
-        error("engineOptions.temperature", "0より大きい有限数値が必要です", code="E_SETTINGS")
+    if not _is_finite_num(eo["temperature"]) or not (0 < float(eo["temperature"]) <= 2.0):
+        error("engineOptions.temperature", "0 < temperature <= 2.0 の有限数値が必要です", code="E_SETTINGS")
     if not _is_finite_num(eo["top_p"]) or not (0 < float(eo["top_p"]) <= 1.0):
         error("engineOptions.top_p", "0 < top_p <= 1.0 の有限数値が必要です", code="E_SETTINGS")
     if type(eo["top_k"]) is not int or not (1 <= eo["top_k"] <= 4097):
@@ -342,6 +343,7 @@ def build_plan(
         default_fmt = "aozora"
 
     seen_ids: set[str] = set()
+    warned_shared_voice_caption: set[str] = set()
     speech_rows: list[dict] = []
     for idx, seg in enumerate(segments):
         if not isinstance(seg, dict):
@@ -364,7 +366,7 @@ def build_plan(
             continue
 
         seg_type = seg.get("segment_type", "speech")
-        if seg_type not in ("speech", "separator"):
+        if not isinstance(seg_type, str) or seg_type not in ("speech", "separator"):
             error("segment_type", f"不正な segment_type です: {seg_type!r}", sid)
             continue
         if seg_type == "separator":
@@ -374,7 +376,7 @@ def build_plan(
             continue
 
         spk_id = seg.get("speaker_id")
-        if spk_id not in valid_speakers:
+        if not isinstance(spk_id, str) or spk_id not in valid_speakers:
             error("speaker_id", f"未登録または不正な話者IDです: {spk_id!r}", sid)
             continue
         spk = valid_speakers[spk_id]
@@ -472,8 +474,23 @@ def build_plan(
         if cfg["voiceMode"] == "design":
             if cfg["reading"] == "cast" and spk.get("voice_caption"):
                 caption_parts.append(spk["voice_caption"])
-            elif cfg.get("baseCaption"):
-                caption_parts.append(cfg["baseCaption"])
+            else:
+                if (
+                    cfg["reading"] == "shared"
+                    and isinstance(spk.get("voice_caption"), str)
+                    and spk["voice_caption"].strip()
+                    and spk_id not in warned_shared_voice_caption
+                ):
+                    warned_shared_voice_caption.add(spk_id)
+                    add(
+                        "warning",
+                        "W_SPEAKER_VOICE_CAPTION_IGNORED",
+                        "speakers.voice_caption",
+                        f"reading='shared' のため話者 '{spk_id}' の voice_caption は無視され baseCaption が使用されます（話者別にする場合は reading='cast'）",
+                        sid,
+                    )
+                if cfg.get("baseCaption"):
+                    caption_parts.append(cfg["baseCaption"])
             if cfg["acting"]:
                 if spk.get("acting_description"):
                     caption_parts.append(spk["acting_description"])
@@ -510,8 +527,9 @@ def build_plan(
             if cfg["reading"] == "shared":
                 voice_profile = next(iter(normalized_voices)) if normalized_voices else "none"
             else:
-                voice_profile = effective_speaker_voices.get(spk_id, "")
-                if voice_profile not in normalized_voices:
+                vp_raw = effective_speaker_voices.get(spk_id, "")
+                voice_profile = vp_raw if isinstance(vp_raw, str) else ""
+                if not voice_profile or voice_profile not in normalized_voices:
                     error("speakerVoices", f"話者 '{spk_id}' の参照音声プロファイルが未設定です", sid, code="E_REFERENCE")
                     continue
             plain_utterance = strip_inline_tags(resolved_text)
@@ -534,24 +552,36 @@ def build_plan(
             error("blank_line_pause_ms", "0〜10000の整数が必要です", sid)
             continue
 
-        pause_ms = seg.get("pause_after_ms")
-        if pause_ms is not None:
-            if type(pause_ms) is not int or not (0 <= pause_ms <= 10000):
-                error("pause_after_ms", "0〜10000の整数が必要です", sid)
-                continue
+        pause_ms_explicit = seg.get("pause_after_ms")
+        if pause_ms_explicit is not None and (type(pause_ms_explicit) is not int or not (0 <= pause_ms_explicit <= 10000)):
+            error("pause_after_ms", "0〜10000の整数が必要です", sid)
+            continue
+
+        sep_pauses: list[int] = []
+        j = idx + 1
+        while j < len(segments) and isinstance(segments[j], dict) and segments[j].get("segment_type") == "separator":
+            sp = segments[j].get("pause_after_ms")
+            if type(sp) is int and 0 <= sp <= 10000:
+                sep_pauses.append(sp)
+            j += 1
+
+        # Faithful pause resolution (Koebuta `faithful.py` compatible):
+        # 1. Explicit `seg.pause_after_ms` wins.
+        # 2. Otherwise explicit `separator.pause_after_ms` (max of adjacent separators, even if < common pause) wins.
+        # 3. Otherwise opt-in blank-line pause applies ONLY if `blank_line_pause_ms` or `settings.blankLinePauseMs` is explicitly configured.
+        # 4. Otherwise default `settings.pause` (e.g. 280ms) applies.
+        if pause_ms_explicit is not None:
+            pause_ms = pause_ms_explicit
+        elif sep_pauses:
+            pause_ms = max(sep_pauses)
+        elif type(blanks_after) is int and blanks_after > 0 and (blank_pause_override is not None or cfg["blankLinePauseMs"] is not None):
+            pause_ms = blank_pause_override if blank_pause_override is not None else int(cfg["blankLinePauseMs"])
         else:
-            common_pause_ms = int(round(float(cfg["pause"]) * 1000))
-            if type(blanks_after) is int and blanks_after > 0:
-                base_pause = blank_pause_override if blank_pause_override is not None else max(common_pause_ms, int(cfg["blankLinePauseMs"]))
-            else:
-                base_pause = common_pause_ms
-            sep_pauses = []
-            j = idx + 1
-            while j < len(segments) and isinstance(segments[j], dict) and segments[j].get("segment_type") == "separator":
-                sp = segments[j].get("pause_after_ms")
-                sep_pauses.append(sp if (type(sp) is int and 0 <= sp <= 10000) else 1200)
-                j += 1
-            pause_ms = max([base_pause, *sep_pauses])
+            pause_ms = int(round(float(cfg["pause"]) * 1000))
+
+        competing = sep_pauses + ([pause_ms_explicit] if pause_ms_explicit is not None else [])
+        if any(v != pause_ms for v in competing):
+            add("warning", "W_PAUSE_CONFLICT", "pause_after_ms", f"境界には {pause_ms}ms を適用します（合算なし）", sid)
 
         seg_seed = seg.get("seed", cfg["seed"])
         if type(seg_seed) is not int or not (0 <= seg_seed <= 9007199254740991):

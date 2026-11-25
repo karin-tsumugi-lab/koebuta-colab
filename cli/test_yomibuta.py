@@ -365,15 +365,27 @@ class TestYomibutaPlanAndValidation(unittest.TestCase):
             "segments": [
                 {"id": "t0010", "speaker_id": "narrator", "text": "第一段落です。"},
                 {"id": "sep01", "segment_type": "separator", "pause_after_ms": 1500},
+                {"id": "t0015", "speaker_id": "narrator", "text": "短い区切りです。"},
+                {"id": "sep_short", "segment_type": "separator", "pause_after_ms": 100},
+                {"id": "t0018", "speaker_id": "narrator", "text": "省略区切りです。"},
+                {"id": "sep_default", "segment_type": "separator"},
                 {"id": "t0020", "speaker_id": "narrator", "text": "第二段落です。", "blank_lines_after": 1},
                 {"id": "t0030", "speaker_id": "narrator", "text": "第三段落です。"},
             ],
         }
+        # Default (faithful.py strict compat): omitted separator & blank_lines_after stay 280ms; explicit short 100ms honored
+        plan_default = build_plan(scenario, self._base_settings())
+        pauses_def = {r["segment_id"]: r["pause_after_ms"] for r in plan_default["requests"]}
+        self.assertEqual(pauses_def["t0010"], 1500)
+        self.assertEqual(pauses_def["t0015"], 100)
+        self.assertEqual(pauses_def["t0018"], 280)
+        self.assertEqual(pauses_def["t0020"], 280)
+
+        # Opt-in blankLinePauseMs activates blank_lines_after
         plan = build_plan(scenario, self._base_settings(blankLinePauseMs=1100))
-        self.assertEqual([r["segment_id"] for r in plan["requests"]], ["t0010", "t0020", "t0030"])
-        self.assertEqual(plan["requests"][0]["pause_after_ms"], 1500)
-        self.assertEqual(plan["requests"][1]["pause_after_ms"], 1100)
-        self.assertEqual(plan["requests"][2]["pause_after_ms"], 280)
+        pauses_opt = {r["segment_id"]: r["pause_after_ms"] for r in plan["requests"]}
+        self.assertEqual(pauses_opt["t0020"], 1100)
+        self.assertEqual(pauses_opt["t0030"], 280)
 
         sub_plan = build_plan(scenario, self._base_settings(), selected_ids=["t0030"])
         self.assertEqual([r["segment_id"] for r in sub_plan["requests"]], ["t0030"])
@@ -381,6 +393,45 @@ class TestYomibutaPlanAndValidation(unittest.TestCase):
         with self.assertRaises(PlanError) as ctx:
             build_plan(scenario, self._base_settings(), selected_ids=["missing_id"])
         self.assertIn("E_SELECTION", str(ctx.exception))
+
+    def test_unhashable_speaker_id_temperature_upper_bound_and_shared_caption_warning(self):
+        # R1: array/dict speaker_id or segment_type must raise PlanError, never TypeError
+        for bad_seg in (
+            {"id": "t0001", "speaker_id": ["arr"], "text": "テスト。"},
+            {"id": "t0001", "speaker_id": "narrator", "segment_type": ["bad"], "text": "テスト。"},
+        ):
+            with self.assertRaises(PlanError):
+                build_plan(
+                    {
+                        "schema_version": 2,
+                        "speakers": {"narrator": {"name": "語り手", "kind": "narrator"}},
+                        "segments": [bad_seg],
+                    },
+                    self._base_settings(),
+                )
+
+        # R3: temperature > 2.0 rejected
+        with self.assertRaises(PlanError) as ctx_t:
+            build_plan(
+                {
+                    "schema_version": 2,
+                    "speakers": {"narrator": {"name": "語り手", "kind": "narrator"}},
+                    "segments": [{"id": "t0001", "speaker_id": "narrator", "text": "テスト。"}],
+                },
+                self._base_settings(engineOptions={"temperature": 5.0}),
+            )
+        self.assertIn("temperature", str(ctx_t.exception))
+
+        # F13: shared + design warns when speaker voice_caption is ignored
+        plan_w = build_plan(
+            {
+                "schema_version": 2,
+                "speakers": {"narrator": {"name": "語り手", "kind": "narrator", "voice_caption": "固有の声"}},
+                "segments": [{"id": "t0001", "speaker_id": "narrator", "text": "テスト。"}],
+            },
+            self._base_settings(reading="shared", voiceMode="design"),
+        )
+        self.assertIn("W_SPEAKER_VOICE_CAPTION_IGNORED", [d["code"] for d in plan_w["diagnostics"]])
 
     def test_sglang_pip_spec_rejects_unpinned_git_branch(self):
         scenario = {
@@ -701,6 +752,53 @@ class TestCliRecoveryManifestAndStopSafety(unittest.TestCase):
             self.assertTrue(pipe["session_stopped"])
             self.assertEqual(pipe["status"], "failed")
 
+    def test_stop_timeout_is_caught_and_pipeline_json_is_still_written(self):
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            sc, st = self._write_scenario_and_settings(tmp)
+            out_dir = tmp / "out_stop_timeout"
+
+            def fake_colab_stop_timeout(args, *, check=True, timeout=None):
+                if args[0] == "stop":
+                    raise subprocess.TimeoutExpired(cmd=["colab", *args], timeout=120)
+                if args[0] == "exec":
+                    return subprocess.CompletedProcess(["colab", *args], 1)
+                if args[0] == "download":
+                    inv = load_json(out_dir / "invocation.json")
+                    atomic_json(
+                        Path(args[4]),
+                        {
+                            "contract": CONTRACT,
+                            "job_id": inv["job"],
+                            "nonce": inv["nonce"],
+                            "plan_signature": inv["plan_signature"],
+                            "status": "failed",
+                            "warnings": [],
+                        },
+                    )
+                return subprocess.CompletedProcess(["colab", *args], 0)
+
+            with (
+                mock.patch("shutil.which", return_value="/usr/bin/colab"),
+                mock.patch.object(yomibuta_generate, "_run_colab", side_effect=fake_colab_stop_timeout),
+                mock.patch("sys.stderr", io.StringIO()),
+            ):
+                rc = yomibuta_generate.main(
+                    [
+                        "--scenario", str(sc),
+                        "--settings", str(st),
+                        "--session", "sess01",
+                        "--job", "job01",
+                        "--out", str(out_dir),
+                        "--skip-binary-upload",
+                        "--stop-after-download",
+                    ]
+                )
+            self.assertEqual(rc, 1)
+            pipe = load_json(out_dir / "pipeline.json")
+            self.assertTrue(pipe["stop_failed"])
+            self.assertFalse(pipe["session_stopped"])
+
     def test_remote_worker_incremental_resume_and_early_eos_warning(self):
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
@@ -729,13 +827,15 @@ class TestCliRecoveryManifestAndStopSafety(unittest.TestCase):
                 mock.patch.object(remote_worker, "_ensure_speech_binary", return_value=tmp / "speech"),
                 mock.patch.object(remote_worker, "_ensure_gguf_model", return_value=tmp / "m.gguf"),
                 mock.patch.object(remote_worker, "_prepare_voice_profiles", return_value={}),
-                mock.patch.object(remote_worker._ResidentSpeechServer, "start", return_value=False),
+                mock.patch.object(remote_worker._ResidentSpeechServer, "start", return_value=False) as srv_start_mock,
                 mock.patch.object(remote_worker._ResidentSpeechServer, "is_alive", return_value=False),
                 mock.patch.object(remote_worker, "_synthesize_cli", side_effect=fake_cli_synth) as synth_mock,
                 mock.patch.object(remote_worker, "_split_for_download", return_value=[]),
             ):
                 rc1 = remote_worker.main()
                 self.assertEqual(rc1, 0)
+                # N-01: initial server.start() failed once, so it must NOT spin server.start() on each of the 3 retries!
+                self.assertEqual(srv_start_mock.call_count, 1)
                 self.assertEqual(synth_mock.call_count, 3)  # Retried 3 times due to short audio
                 mf1 = load_json(manifest_out)
                 self.assertEqual(mf1["nonce"], "nonce_123")

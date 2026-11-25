@@ -730,11 +730,11 @@ function renderSpeakers(){
     ${(Array.isArray(s.reference_clips)?s.reference_clips:[]).map((c,idx)=>`<div style="border:1px solid #d5dbe3;border-radius:6px;padding:6px;margin-bottom:6px">
       <label>クリップ${idx+1} WAV<input data-clip-wav="${idx}" value="${html(c?.wav||'')}" placeholder="voices/narrator_0${idx+1}.wav"></label>
       <label>文字起こし (transcript)<textarea data-clip-transcript="${idx}" rows="2" placeholder="参照音声の正確な書き起こし">${html(c?.transcript||'')}</textarea></label>
-      <button type="button" class="tiny" data-action="remove-clip" data-clip-idx="${idx}">クリップ削除</button>
+      <div class="voiceButtons"><button type="button" class="tiny" data-action="choose-clip-wav" data-clip-idx="${idx}">📁 WAV選択</button><button type="button" class="tiny" data-action="play-clip-wav" data-clip-idx="${idx}" ${c?.wav?'':'disabled'}>▶ 試聴</button><button type="button" class="tiny" data-action="remove-clip" data-clip-idx="${idx}">クリップ削除</button></div>
     </div>`).join('')}
     <button type="button" data-action="add-clip" ${(Array.isArray(s.reference_clips)&&s.reference_clips.length>=3)?'disabled':''}>＋ 参照クリップを追加（最大3件）</button>`;
 }
-const speakerOptions=()=>Object.entries(state.doc.speakers).map(([id,s])=>`<option value="${html(id)}">${html(s?.name||id)}</option>`).join('');
+const speakerOptionsFor=selectedId=>Object.entries(state.doc.speakers).map(([id,s])=>`<option value="${html(id)}" ${id===selectedId?'selected':''}>${html(s?.name||id)}</option>`).join('');
 function filteredIndices(){
   if(!docOk())return [];
   const issues=state.issues;const affected=new Set(issues.filter(x=>x.index!==null&&(x.level==='error'||x.level==='warning')).map(x=>x.index));
@@ -754,13 +754,14 @@ function renderTable(){
   const body=byId('rows');if(!docOk()){body.innerHTML='<tr><td colspan="8" class="empty">作品フォルダまたはシナリオJSONを開いてください。</td></tr>';byId('pagination').textContent='';return;}
   const all=filteredIndices();const pages=Math.max(1,Math.ceil(all.length/state.pageSize));state.page=Math.min(state.page,pages-1);
   const slice=all.slice(state.page*state.pageSize,(state.page+1)*state.pageSize);
-  const selectList=speakerOptions();const pauses=effectivePauses(state.doc);
+  const pauses=effectivePauses(state.doc);
+  const isV2=state.doc.schema_version===2;
   body.innerHTML=slice.map(i=>{
     const s=state.doc.segments[i],invalid=!s||typeof s!=='object'||Array.isArray(s);
-    if(invalid)return `<tr class="invalid"><td>${i+1}</td><td colspan="8">オブジェクトではない項目です。JSONで修復してください: ${html(JSON.stringify(s))}</td></tr>`;
+    if(invalid)return `<tr class="invalid"><td>${i+1}</td><td colspan="7">オブジェクトではない項目です。JSONで修復してください: ${html(JSON.stringify(s))}</td></tr>`;
     const isSep=s.segment_type==='separator';const iss=state.issues.filter(x=>x.index===i);const level=iss.some(x=>x.level==='error')?'err':iss.some(x=>x.level==='warning')?'warn':iss.length?'notice':'';
     const mark=iss.map(x=>x.message).join(' / ');
-    const c=EMOTIONS[s.emotion]||['不明','❓'];
+    const c=s.emotion==null&&isV2?['未設定','—']:(EMOTIONS[s.emotion]||['不明','❓']);
     const hasParts=Array.isArray(s.koebuta_tts_parts);
     const pause=pauses.get(i);
     // The input shows the computed pause, but the value is NOT persisted unless
@@ -774,13 +775,14 @@ function renderTable(){
     const noteEditor=[...notes,''].map((note,j)=>`<textarea aria-label="編集指示" data-note="${i}:${j}" rows="2" placeholder="[効果音] この発話の直後に…">${html(note)}</textarea>`).join('');
     const rubyEditor=Array.isArray(s.koebuta_added_ruby)?s.koebuta_added_ruby.map((r,j)=>isObject(r)?
       `<label>🔖 ${html(r.surface)}《${html(r.reading)}》 <select aria-label="追加ルビの採用" data-ruby-choice="${i}:${j}">${Object.entries({auto:'自動',kana:'仮名',surface:'元表記'}).map(([key,label])=>`<option value="${key}" ${r.selection===key?'selected':''}>${label}</option>`).join('')}</select></label>`:'').join(''):'';
+    const emotionOptions=`${isV2?`<option value="" ${s.emotion==null?'selected':''}>— 未設定 (v2任意)</option>`:''}${s.emotion!=null&&!Object.hasOwn(EMOTIONS,s.emotion)?`<option selected value="${html(s.emotion)}">❓ 不明 (${html(s.emotion)})</option>`:(!isV2&&s.emotion==null?`<option selected value="">❓ 未設定</option>`:'')}${Object.entries(EMOTIONS).map(([k,v])=>`<option value="${k}" ${s.emotion===k?'selected':''}>${v[1]} ${v[0]}</option>`).join('')}`;
     const parentRow=`<tr data-index="${i}" class="${state.selected.has(i)?'selected ':''}${isSep?'separator ':''}${level}">
       <td class="index"><input type="checkbox" data-select="${i}" ${state.selected.has(i)?'checked':''} aria-label="行${i+1}を選択"><span>${i+1}</span><input class="idInput" aria-label="発話ID" data-field="id" data-idx="${i}" value="${html(s.id||'')}"></td>
-      <td><select data-field="speaker_id" data-idx="${i}" ${isSep?'disabled':''}>${!Object.hasOwn(state.doc.speakers,s.speaker_id)?`<option selected value="${html(s.speaker_id||'')}">⚠ ${html(s.speaker_id||'未設定')}</option>`:''}${selectList.replace(`value="${html(s.speaker_id)}"`,`value="${html(s.speaker_id)}" selected`)}</select></td>
+      <td><select data-field="speaker_id" data-idx="${i}" ${isSep?'disabled':''}>${!Object.hasOwn(state.doc.speakers,s.speaker_id)?`<option selected value="${html(s.speaker_id||'')}">⚠ ${html(s.speaker_id||'未設定')}</option>`:''}${speakerOptionsFor(s.speaker_id)}</select></td>
       <td class="textcell"><textarea data-field="text" data-idx="${i}" rows="2" placeholder="原文">${html(s.text||'')}</textarea></td>
       <td class="textcell">${hasParts?`<div class="ttsPartNote">全文（${s.koebuta_tts_parts.length}片に分割済み）</div>`:''}<textarea data-field="tts_text" data-idx="${i}" rows="2" ${hasParts?'readonly title="分割片を下の行で編集してください"':''} placeholder="未指定（原文を使用）">${html(s.tts_text||'')}</textarea>${rubyEditor}<details ${notes.length?'open':''}><summary>編集指示${notes.length?`（${notes.length}件）`:''}</summary>${noteEditor}</details></td>
       <td><textarea data-field="acting_description" data-idx="${i}" rows="2" placeholder="演技指示（未指定）">${html(s.acting_description||'')}</textarea><input data-field="scene_caption" data-idx="${i}" value="${html(s.scene_caption||'')}" placeholder="場面・距離感 (scene_caption)" style="width:100%;margin-top:4px;font-size:12px"></td>
-      <td class="emotion"><select data-field="emotion" data-idx="${i}">${!Object.hasOwn(EMOTIONS,s.emotion)?`<option selected value="${html(s.emotion||'')}">❓ 不明</option>`:''}${Object.entries(EMOTIONS).map(([k,v])=>`<option value="${k}" ${s.emotion===k?'selected':''}>${v[1]} ${v[0]}</option>`).join('')}</select></td>
+      <td class="emotion"><select data-field="emotion" data-idx="${i}">${emotionOptions}</select></td>
       ${pauseCell}
       <td class="statuscell" title="${html(mark)}"><span>${level==='err'?'⛔':level==='warn'?'⚠️':level==='notice'?'●':'✓'}</span><small>${html(mark||'正常')}</small>${s.koebuta_edit?.needs_review?`<button class="tiny" data-reviewed="${i}">確認済み</button>`:''}</td>
     </tr>`;
@@ -1000,6 +1002,16 @@ async function exportZip(){
 }
 function assignRoleWav(key,file){
   if(!file||!/\.wav$/i.test(file.name))throw Error('WAVファイルを選択してください');
+  if(typeof key==='string'&&key.startsWith('__clip__:')){
+    const [,spk,idxStr]=key.split(':');const idx=Number(idxStr);
+    const safeSpk=(spk||'voice').replace(/[^A-Za-z0-9_-]/g,'_')||'voice';
+    const path=`voices/${safeSpk}_0${idx+1}.wav`;
+    const next=clone(state.doc);const sp=next.speakers[spk];
+    if(!Array.isArray(sp.reference_clips))sp.reference_clips=[];
+    sp.reference_clips[idx]={...(sp.reference_clips[idx]||{}),wav:path};
+    const pending=new Map(state.pendingWavs);pending.set(path,file);
+    change(next,'参照クリップWAVを割当',pending);return;
+  }
   const wavKey=key==='__shared__'?'shared':key;
   const filename=wavKey.replace(/[^A-Za-z0-9_-]/g,'_')||'voice';
   const path=`voices/${filename}.wav`;
@@ -1145,7 +1157,8 @@ byId('saveBtn').addEventListener('click',()=>save().catch(e=>alert('保存エラ
 byId('saveAsBtn').addEventListener('click',async()=>{try{if(window.showDirectoryPicker){const folder=await showDirectoryPicker({mode:'readwrite'});await saveToFolder(folder);}else alert('フォルダ保存はChrome/EdgeのフォルダAPIが必要です。ZIP出力をご利用ください。');}catch(e){if(e.name!=='AbortError')alert('保存エラー: '+e.message)}});
 byId('zipBtn').addEventListener('click',()=>exportZip().catch(e=>alert('ZIP出力エラー: '+e.message)));
 function buildCliSettings(doc){
-  const ks={...DEFAULT_SETTINGS,...(isObject(doc?.koebuta_settings)?doc.koebuta_settings:{})};
+  const rawKs=isObject(doc?.koebuta_settings)?doc.koebuta_settings:{};
+  const ks={...DEFAULT_SETTINGS,...rawKs};
   const voices={};
   for(const [spkId,sp] of Object.entries(doc?.speakers||{})){
     if(!isObject(sp))continue;
@@ -1156,6 +1169,7 @@ function buildCliSettings(doc){
   }
   const hasClone=Object.keys(voices).length>0;
   const firstCaption=Object.values(doc?.speakers||{}).map(sp=>sp?.voice_caption?.trim()).find(Boolean)||'落ち着いた明瞭な日本語の朗読。';
+  // Omit engineOptions so CLI inherits canonical DEFAULT_ENGINE_OPTIONS without drifting over time.
   const out={
     title:(state.filename||'scenario').replace(/\.json$/i,''),
     ttsEngine:'drama3',
@@ -1172,10 +1186,11 @@ function buildCliSettings(doc){
     narratorEmotion:Boolean(ks.narrator_emotion),
     seed:Number.isInteger(ks.seed)?ks.seed:314,
     pause:Number(((Number.isInteger(ks.default_pause_ms)?ks.default_pause_ms:280)/1000).toFixed(3)),
-    blankLinePauseMs:Number.isInteger(ks.default_blank_line_pause_ms)?ks.default_blank_line_pause_ms:1200,
-    textOptions:{format:RUBY_FORMATS.includes(ks.default_text_format)?ks.default_text_format:'none'},
-    engineOptions:{temperature:0.8,top_p:0.85,top_k:30,max_seconds:47.55,max_pause_frames:36,experts_on_cpu:false}
+    textOptions:{format:RUBY_FORMATS.includes(ks.default_text_format)?ks.default_text_format:'none'}
   };
+  if(Object.hasOwn(rawKs,'default_blank_line_pause_ms')&&Number.isInteger(rawKs.default_blank_line_pause_ms)){
+    out.blankLinePauseMs=rawKs.default_blank_line_pause_ms;
+  }
   if(hasClone)out.voices=voices;else out.baseCaption=firstCaption;
   return out;
 }
@@ -1223,6 +1238,8 @@ byId('speakerDetail').addEventListener('click',e=>{const b=e.target.closest('[da
   const action=b.dataset.action;if(action==='choose-wav'){state.wavTarget=state.speaker;byId('wavPicker').click();}
   if(action==='play-wav')playWav(state.doc.speakers[state.speaker]?.reference_wav).catch(err=>alert(err.message));
   if(action==='remove-wav'){const next=clone(state.doc);delete next.speakers[state.speaker].reference_wav;change(next,'WAVの割当を解除');}
+  if(action==='choose-clip-wav'){const idx=Number(b.dataset.clipIdx);state.wavTarget=`__clip__:${state.speaker}:${idx}`;byId('wavPicker').click();}
+  if(action==='play-clip-wav'){const idx=Number(b.dataset.clipIdx);playWav(state.doc.speakers[state.speaker]?.reference_clips?.[idx]?.wav).catch(err=>alert(err.message));}
   if(action==='add-clip'){const next=clone(state.doc);const sp=next.speakers[state.speaker];if(!Array.isArray(sp.reference_clips))sp.reference_clips=[];if(sp.reference_clips.length<3){sp.reference_clips.push({wav:'',transcript:''});change(next,'参照クリップを追加');}}
   if(action==='remove-clip'){const idx=Number(b.dataset.clipIdx);const next=clone(state.doc);const sp=next.speakers[state.speaker];if(Array.isArray(sp.reference_clips)){sp.reference_clips.splice(idx,1);if(!sp.reference_clips.length)delete sp.reference_clips;change(next,'参照クリップを削除');}}
 });
@@ -1255,7 +1272,7 @@ let eventTarget=null;
 for(const name of ['focusin','input','keyup','mouseup','select'])byId('rows').addEventListener(name,e=>{
   const el=e.target;
   if(el.dataset.field==='tts_text'||el.dataset.ttsPartField)eventTarget={dataset:{...el.dataset},
-    value:el.value,selectionStart:el.selectionStart,selectionEnd:el.selectionEnd,readOnly:el.readOnly};
+    selectionStart:el.selectionStart,selectionEnd:el.selectionEnd,readOnly:el.readOnly};
 });
 const eventTools=document.createElement('span');
 const eventSelect=document.createElement('select');
@@ -1264,17 +1281,23 @@ for(const tag of EVENT_TAGS){const option=document.createElement('option');optio
 const eventButton=document.createElement('button');
 eventButton.textContent='読みのカーソルに挿入';
 eventButton.onclick=()=>{
-  if(!eventTarget||eventTarget.readOnly){alert('挿入先のTTS text欄をクリックしてください。');return;}
-  const el=eventTarget,idx=Number(el.dataset.idx);
-  let value=el.value,start=el.selectionStart,end=el.selectionEnd;
-  if(!value.trim()&&el.dataset.field==='tts_text'){
-    const initial=spoken(state.doc.segments[idx],state.doc);
-    if(initial.warnings.length){alert('読みを確認してから挿入してください。');return;}
-    value=initial.value;start=end=value.length;
+  if(!docOk()||!eventTarget||eventTarget.readOnly){alert('挿入先のTTS text欄をクリックしてください。');return;}
+  const el=eventTarget;
+  if(el.dataset.ttsPartField){
+    const [i,j]=el.dataset.ttsPartField.split(':').map(Number);
+    const live=String(state.doc.segments?.[i]?.koebuta_tts_parts?.[j]??'');
+    const start=Math.min(el.selectionStart??live.length,live.length),end=Math.min(el.selectionEnd??start,live.length);
+    commitTtsPart(i,j,live.slice(0,start)+eventSelect.value+live.slice(end));
+  }else{
+    const idx=Number(el.dataset.idx),seg=state.doc.segments?.[idx];if(!seg)return;
+    let live=String(seg.tts_text??''),start=Math.min(el.selectionStart??live.length,live.length),end=Math.min(el.selectionEnd??start,live.length);
+    if(!live.trim()){
+      const initial=spoken(seg,state.doc);
+      if(initial.warnings.length){alert('読みを確認してから挿入してください。');return;}
+      live=initial.value;start=end=live.length;
+    }
+    commitField(idx,'tts_text',live.slice(0,start)+eventSelect.value+live.slice(end));
   }
-  value=value.slice(0,start)+eventSelect.value+value.slice(end);
-  if(el.dataset.ttsPartField){const [i,j]=el.dataset.ttsPartField.split(':').map(Number);commitTtsPart(i,j,value);}
-  else commitField(idx,'tts_text',value);
   eventTarget=null;
 };
 eventTools.append(eventSelect,eventButton);document.querySelector('.controls').append(eventTools);

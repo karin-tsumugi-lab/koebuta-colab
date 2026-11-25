@@ -10,8 +10,10 @@ Safety & recovery guarantees:
 from __future__ import annotations
 
 import gzip
+import importlib.metadata
 import json
 import os
+import platform
 import shutil
 import socket
 import stat
@@ -169,6 +171,8 @@ def _prepare_voice_profiles(
     for profile, clips in voices.items():
         cache_key = digest(
             {
+                "binary_sha256": PREBUILT_BINARY_SHA256,
+                "model_file": model_path.name,
                 "profile": profile,
                 "clips": [{"sha256": c["wav_sha256"], "transcript": c["transcript"]} for c in clips],
             }
@@ -340,7 +344,10 @@ class _ResidentSpeechServer:
                     self.proc.wait(timeout=15)
                 except subprocess.TimeoutExpired:
                     self.proc.kill()
-                    self.proc.wait(timeout=5)
+                    try:
+                        self.proc.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        pass
             self.proc = None
         if self._log_fh is not None:
             try:
@@ -452,7 +459,10 @@ class _OfficialSglangServer:
                     self.proc.wait(timeout=20)
                 except subprocess.TimeoutExpired:
                     self.proc.kill()
-                    self.proc.wait(timeout=5)
+                    try:
+                        self.proc.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        pass
             self.proc = None
         if self._log_fh is not None:
             try:
@@ -498,6 +508,95 @@ def _synthesize_cli(
     )
     if proc.returncode != 0 or not out_wav.is_file():
         raise RuntimeError(f"speech tts 失敗: rc={proc.returncode} stderr={proc.stderr[-1000:]}")
+
+
+def _run_utterance_with_retries(
+    *,
+    idx: int,
+    total: int,
+    row: dict,
+    audio_dir: Path,
+    sample_rate: int,
+    attempt_fn,
+) -> tuple[dict, list[dict]]:
+    """Shared retry + WAV format validation + early-EOS detection across backends."""
+    sid = row["segment_id"]
+    filename = f"{sid}_{row['fingerprint'][:12]}.wav"
+    out_wav = audio_dir / filename
+    req = row["request"]
+    spoken_chars = int(row["spoken_chars"])
+    min_expected_sec = round(spoken_chars * 0.12, 3) if spoken_chars >= 6 else 0.0
+    max_attempts = 3
+
+    best_wav_bytes: bytes | None = None
+    best_meta: dict | None = None
+    best_mode = "serve"
+    best_elapsed = 0.0
+    attempts_used = 0
+    warnings: list[dict] = []
+
+    for attempt in range(max_attempts):
+        attempts_used = attempt + 1
+        try_seed = int(req["seed"]) + attempt * 9973
+        t0 = time.monotonic()
+        if attempt == 0:
+            print(f"PROGRESS [{idx}/{total}] Synthesizing {sid} ({spoken_chars} chars)...", flush=True)
+        else:
+            print(
+                f"PROGRESS [{idx}/{total}] Retrying {sid} (attempt {attempts_used}/{max_attempts}, seed={try_seed})...",
+                flush=True,
+            )
+
+        tmp_wav = audio_dir / f"{sid}_try{attempt}.wav"
+        used_mode = attempt_fn(attempt, try_seed, tmp_wav)
+        if used_mode is None:
+            tmp_wav.unlink(missing_ok=True)
+            continue
+
+        elapsed = round(time.monotonic() - t0, 3)
+        meta = wav_info(tmp_wav)
+        if meta["sample_rate"] != sample_rate or meta["channels"] != 1 or meta["sampwidth"] != 2:
+            tmp_wav.unlink(missing_ok=True)
+            raise RuntimeError(f"{sid}: 予期しないWAV形式 {meta}")
+
+        if best_meta is None or meta["seconds"] > best_meta["seconds"]:
+            best_wav_bytes = tmp_wav.read_bytes()
+            best_meta = meta
+            best_mode = used_mode
+            best_elapsed = elapsed
+        tmp_wav.unlink(missing_ok=True)
+
+        if meta["seconds"] >= min_expected_sec:
+            break
+
+    if best_wav_bytes is None or best_meta is None:
+        raise RuntimeError(f"発話推論が全試行失敗しました: {sid}")
+
+    out_wav.write_bytes(best_wav_bytes)
+    early_eos = min_expected_sec > 0 and best_meta["seconds"] < min_expected_sec
+    if early_eos:
+        warnings.append(
+            {
+                "code": "W_EARLY_EOS_SUSPECTED",
+                "segment_id": sid,
+                "seconds": best_meta["seconds"],
+                "min_expected_sec": min_expected_sec,
+            }
+        )
+    rec_clean = {
+        "segment_id": sid,
+        "filename": filename,
+        "pause_after_ms": int(row["pause_after_ms"]),
+        "spoken_chars": spoken_chars,
+        "min_expected_sec": min_expected_sec,
+        "early_eos_suspected": early_eos,
+        "mode": best_mode,
+        "attempts": attempts_used,
+        "elapsed_sec": best_elapsed,
+        "rtfx": round(best_meta["seconds"] / best_elapsed, 3) if best_elapsed > 0 else 0.0,
+        **best_meta,
+    }
+    return rec_clean, warnings
 
 
 def _load_saved_takes(state_path: Path, audio_dir: Path, sample_rate: int) -> dict[str, dict]:
@@ -575,6 +674,10 @@ def main() -> int:
         atomic_json(job_dir / "plan.json", plan)
 
         manifest["plan_signature"] = plan["plan_signature"]
+        manifest["environment"] = {
+            "python": platform.python_version(),
+            "backend": plan["settings"].get("backend", "speech_cpp_gguf"),
+        }
         manifest["status"] = "running"
         _flush_manifest()
 
@@ -617,6 +720,15 @@ def main() -> int:
             if not official_srv.start(deadline):
                 raise RuntimeError(f"公式推論サーバーの起動に失敗しました（ログ: {official_srv.log_path}）")
             try:
+                sgl_ver = importlib.metadata.version("sglang-omni")
+            except importlib.metadata.PackageNotFoundError:
+                sgl_ver = "unknown"
+            manifest["environment"]["sglang_omni_version"] = sgl_ver
+            manifest["environment"]["sglang_pip_spec"] = eo.get("sglang_pip_spec")
+            _flush_manifest()
+
+            official_restarts = 0
+            try:
                 total = len(requests)
                 for idx, row in enumerate(requests, 1):
                     sid = row["segment_id"]
@@ -630,64 +742,27 @@ def main() -> int:
                         continue
 
                     req = row["request"]
-                    spoken_chars = int(row["spoken_chars"])
-                    min_expected_sec = round(spoken_chars * 0.12, 3) if spoken_chars >= 6 else 0.0
                     clips_for_req = staged_refs.get(req["voice_profile"], []) if req["voice_profile"] != "none" else []
 
-                    best_bytes: bytes | None = None
-                    best_meta: dict | None = None
-                    best_elapsed = 0.0
-                    attempts_used = 0
-                    for attempt in range(3):
-                        attempts_used = attempt + 1
-                        t0 = time.monotonic()
-                        print(f"PROGRESS [{idx}/{total}] Synthesizing (official) {sid} (attempt {attempts_used}/3)...", flush=True)
-                        tmp_wav = audio_dir / f"{sid}_try{attempt}.wav"
-                        ok = official_srv.synthesize(
-                            req["prompt"],
-                            clips_for_req,
-                            tmp_wav,
-                            int(req["seed"]) + attempt * 9973,
-                            deadline,
-                        )
-                        if not ok:
-                            tmp_wav.unlink(missing_ok=True)
-                            if not official_srv.start(deadline):
-                                break
-                            continue
-                        elapsed = round(time.monotonic() - t0, 3)
-                        meta = wav_info(tmp_wav)
-                        if meta["sample_rate"] != sample_rate or meta["channels"] != 1 or meta["sampwidth"] != 2:
-                            tmp_wav.unlink(missing_ok=True)
-                            raise RuntimeError(f"{sid}: 予期しないWAV形式 {meta}")
-                        if best_meta is None or meta["seconds"] > best_meta["seconds"]:
-                            best_bytes = tmp_wav.read_bytes()
-                            best_meta = meta
-                            best_elapsed = elapsed
-                        tmp_wav.unlink(missing_ok=True)
-                        if meta["seconds"] >= min_expected_sec:
-                            break
-                    if best_bytes is None or best_meta is None:
-                        raise RuntimeError(f"公式サーバー推論が全試行失敗しました: {sid}")
-                    out_wav.write_bytes(best_bytes)
-                    early_eos = min_expected_sec > 0 and best_meta["seconds"] < min_expected_sec
-                    if early_eos:
-                        manifest["warnings"].append(
-                            {"code": "W_EARLY_EOS_SUSPECTED", "segment_id": sid, "seconds": best_meta["seconds"], "min_expected_sec": min_expected_sec}
-                        )
-                    rec_clean = {
-                        "segment_id": sid,
-                        "filename": filename,
-                        "pause_after_ms": int(row["pause_after_ms"]),
-                        "spoken_chars": spoken_chars,
-                        "min_expected_sec": min_expected_sec,
-                        "early_eos_suspected": early_eos,
-                        "mode": "official",
-                        "attempts": attempts_used,
-                        "elapsed_sec": best_elapsed,
-                        "rtfx": round(best_meta["seconds"] / best_elapsed, 3) if best_elapsed > 0 else 0.0,
-                        **best_meta,
-                    }
+                    def _official_attempt(_attempt: int, try_seed: int, tmp_wav: Path) -> str | None:
+                        nonlocal official_restarts
+                        ok = official_srv.synthesize(req["prompt"], clips_for_req, tmp_wav, try_seed, deadline)
+                        if ok:
+                            return "official"
+                        if official_restarts < 1:
+                            official_restarts += 1
+                            official_srv.start(deadline)
+                        return None
+
+                    rec_clean, utt_warns = _run_utterance_with_retries(
+                        idx=idx,
+                        total=total,
+                        row=row,
+                        audio_dir=audio_dir,
+                        sample_rate=sample_rate,
+                        attempt_fn=_official_attempt,
+                    )
+                    manifest["warnings"].extend(utt_warns)
                     saved_takes[filename] = rec_clean
                     atomic_json(takes_state_path, saved_takes)
                     takes.append({**rec_clean, "path": str(out_wav)})
@@ -701,6 +776,10 @@ def main() -> int:
         else:
             speech_bin = _ensure_speech_binary(runtime_root, bin_gz_path, bin_parts)
             model_path = _ensure_gguf_model(runtime_root, settings["quant"])
+            manifest["environment"]["speech_binary_sha256"] = PREBUILT_BINARY_SHA256
+            manifest["environment"]["gguf_file"] = model_path.name
+            _flush_manifest()
+
             voice_files = _prepare_voice_profiles(
                 runtime_root,
                 job_id,
@@ -712,7 +791,9 @@ def main() -> int:
             )
 
             server = _ResidentSpeechServer(speech_bin, model_path, voice_files, seed, eo, job_dir / "speech_serve.log")
-            server.start(deadline)
+            # Review N-01: Bound server startup attempts so an unstartable/hung server never spins 120s per retry!
+            serve_disabled = not server.start(deadline)
+            serve_restarts = 0
 
             try:
                 total = len(requests)
@@ -728,86 +809,45 @@ def main() -> int:
                         continue
 
                     req = row["request"]
-                    spoken_chars = int(row["spoken_chars"])
-                    min_expected_sec = round(spoken_chars * 0.12, 3) if spoken_chars >= 6 else 0.0
-                    max_attempts = 3
 
-                    best_wav_bytes: bytes | None = None
-                    best_meta: dict | None = None
-                    best_mode = "serve"
-                    best_elapsed = 0.0
-                    attempts_used = 0
-
-                    for attempt in range(max_attempts):
-                        attempts_used = attempt + 1
-                        try_seed = int(req["seed"]) + attempt * 9973
-                        t0 = time.monotonic()
-                        if attempt == 0:
-                            print(f"PROGRESS [{idx}/{total}] Synthesizing {sid} ({spoken_chars} chars)...", flush=True)
-                        else:
-                            print(
-                                f"PROGRESS [{idx}/{total}] Retrying {sid} (attempt {attempts_used}/{max_attempts}, seed={try_seed})...",
-                                flush=True,
-                            )
-
-                        tmp_wav = audio_dir / f"{sid}_try{attempt}.wav"
-                        used_mode = "serve"
-                        # Review R-04: Keep resident server alive across seed-shifted retries!
-                        # Only fall back to CLI (stopping server first to free VRAM) if server itself fails.
-                        if not server.is_alive():
-                            server.start(deadline)
-                        ok = server.is_alive() and server.synthesize(req["prompt"], req["voice_profile"], tmp_wav, try_seed, deadline)
-                        if not ok:
+                    def _gguf_attempt(_attempt: int, try_seed: int, tmp_wav: Path) -> str:
+                        nonlocal serve_disabled, serve_restarts
+                        if not serve_disabled and not server.is_alive():
+                            if serve_restarts < 1:
+                                serve_restarts += 1
+                                if not server.start(deadline):
+                                    serve_disabled = True
+                            else:
+                                serve_disabled = True
+                        if not serve_disabled and server.is_alive():
+                            if server.synthesize(req["prompt"], req["voice_profile"], tmp_wav, try_seed, deadline):
+                                return "serve"
+                            # Server failed mid-request; stop it to free VRAM before CLI fallback
                             server.stop()
-                            used_mode = "cli"
-                            _synthesize_cli(
-                                speech_bin,
-                                model_path,
-                                voice_files,
-                                req["prompt"],
-                                req["voice_profile"],
-                                try_seed,
-                                req["engine_options"],
-                                tmp_wav,
-                                deadline,
-                            )
-
-                        elapsed = round(time.monotonic() - t0, 3)
-                        meta = wav_info(tmp_wav)
-                        if meta["sample_rate"] != sample_rate or meta["channels"] != 1 or meta["sampwidth"] != 2:
-                            tmp_wav.unlink(missing_ok=True)
-                            raise RuntimeError(f"{sid}: 予期しないWAV形式 {meta}")
-
-                        if best_meta is None or meta["seconds"] > best_meta["seconds"]:
-                            best_wav_bytes = tmp_wav.read_bytes()
-                            best_meta = meta
-                            best_mode = used_mode
-                            best_elapsed = elapsed
-                        tmp_wav.unlink(missing_ok=True)
-
-                        if meta["seconds"] >= min_expected_sec:
-                            break
-
-                    assert best_wav_bytes is not None and best_meta is not None
-                    out_wav.write_bytes(best_wav_bytes)
-                    early_eos = min_expected_sec > 0 and best_meta["seconds"] < min_expected_sec
-                    if early_eos:
-                        manifest["warnings"].append(
-                            {"code": "W_EARLY_EOS_SUSPECTED", "segment_id": sid, "seconds": best_meta["seconds"], "min_expected_sec": min_expected_sec}
+                            if serve_restarts >= 1:
+                                serve_disabled = True
+                        _synthesize_cli(
+                            speech_bin,
+                            model_path,
+                            voice_files,
+                            req["prompt"],
+                            req["voice_profile"],
+                            try_seed,
+                            req["engine_options"],
+                            tmp_wav,
+                            deadline,
                         )
-                    rec_clean = {
-                        "segment_id": sid,
-                        "filename": filename,
-                        "pause_after_ms": int(row["pause_after_ms"]),
-                        "spoken_chars": spoken_chars,
-                        "min_expected_sec": min_expected_sec,
-                        "early_eos_suspected": early_eos,
-                        "mode": best_mode,
-                        "attempts": attempts_used,
-                        "elapsed_sec": best_elapsed,
-                        "rtfx": round(best_meta["seconds"] / best_elapsed, 3) if best_elapsed > 0 else 0.0,
-                        **best_meta,
-                    }
+                        return "cli"
+
+                    rec_clean, utt_warns = _run_utterance_with_retries(
+                        idx=idx,
+                        total=total,
+                        row=row,
+                        audio_dir=audio_dir,
+                        sample_rate=sample_rate,
+                        attempt_fn=_gguf_attempt,
+                    )
+                    manifest["warnings"].extend(utt_warns)
                     saved_takes[filename] = rec_clean
                     atomic_json(takes_state_path, saved_takes)
                     takes.append({**rec_clean, "path": str(out_wav)})

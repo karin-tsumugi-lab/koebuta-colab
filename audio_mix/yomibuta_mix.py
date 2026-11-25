@@ -14,6 +14,7 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import struct
 import sys
 import wave
@@ -81,8 +82,10 @@ def read_wav_bytes(data: bytes, label: str = '<memory>') -> tuple[int, int, arra
         elif cid == b'data':
             pcm = body
         pos += 8 + sz + (sz % 2)
-    if pcm is None or fmt_tag is None or ch not in (1, 2) or not sr:
-        raise ValueError(f'未対応のWAVフォーマットです（1ch/2chのPCMまたは32bit floatに対応）: {label}')
+    if pcm is None or fmt_tag is None or ch not in (1, 2) or not sr or sr < 8000:
+        raise ValueError(f'未対応のWAVフォーマットです（1ch/2ch・8kHz以上のPCMまたは32bit floatに対応）: {label}')
+    if (fmt_tag, bits) not in {(1, 16), (1, 24), (1, 32), (3, 32)}:
+        raise ValueError(f'未対応のWAVビット深度/形式です (tag={fmt_tag}, bits={bits}): {label}')
 
     bps = bits // 8
     total_samples = len(pcm) // bps
@@ -139,7 +142,21 @@ def read_wav_file(path: Path) -> tuple[int, int, array, array, str]:
 def resample_channel(samples: array, src_sr: int, dst_sr: int) -> array:
     if src_sr == dst_sr or not samples:
         return samples
-    n_src = len(samples)
+    # Apply lightweight 2-pass 1st-order anti-aliasing low-pass filter before downsampling
+    src_data = samples
+    if dst_sr < src_sr:
+        cutoff_hz = 0.45 * dst_sr
+        rc = 1.0 / (2.0 * math.pi * cutoff_hz)
+        dt = 1.0 / src_sr
+        alpha = dt / (rc + dt)
+        for _ in range(2):
+            lp = array('f', [0.0]) * len(src_data)
+            prev_y = src_data[0]
+            for i, x in enumerate(src_data):
+                prev_y = prev_y + alpha * (x - prev_y)
+                lp[i] = prev_y
+            src_data = lp
+    n_src = len(src_data)
     n_dst = max(1, int(round(n_src * dst_sr / src_sr)))
     ratio = src_sr / dst_sr
     out = array('f', [0.0]) * n_dst
@@ -148,10 +165,10 @@ def resample_channel(samples: array, src_sr: int, dst_sr: int) -> array:
         pos = i * ratio
         idx = int(pos)
         if idx >= last:
-            out[i] = samples[last]
+            out[i] = src_data[last]
         else:
             frac = pos - idx
-            out[i] = samples[idx] * (1.0 - frac) + samples[idx + 1] * frac
+            out[i] = src_data[idx] * (1.0 - frac) + src_data[idx + 1] * frac
     return out
 
 
@@ -417,16 +434,17 @@ def init_plan(plan_path: Path, run_dir: Path, scenario_path: Path | None = None,
             raise ValueError(f'plan.json の requests に重複した発話IDがあります: {uid}')
         seen_ids.add(uid)
         sid = req.get('segment_id', uid)
-        # Support both Koebuta (`<id>_<fp>_<take>.wav`) and Yomibuta (`<sid>_<fp12>.wav`) naming
-        matched = next(
-            (
-                f
-                for f in zip_files
-                if f.removeprefix('audio/').removesuffix('.wav').rsplit('_', 1)[0] == uid
-                or f.removeprefix('audio/').removesuffix('.wav').rsplit('_', 2)[0] == uid
-            ),
-            None,
-        )
+        fp = req.get('fingerprint')
+        exact_yomibuta = f'audio/{uid}_{fp[:12]}.wav' if isinstance(fp, str) and len(fp) >= 12 else None
+        if exact_yomibuta and exact_yomibuta in zip_files:
+            matched = exact_yomibuta
+        else:
+            # Strict regex matching for Yomibuta (`<uid>_<12hex>.wav`) or Koebuta (`<uid>_<hex>_<take>.wav`)
+            pat = re.compile(rf'^audio/{re.escape(uid)}_[0-9a-fA-F]+(?:_\d+)?\.wav$')
+            matches = [f for f in zip_files if pat.fullmatch(f)]
+            if len(matches) > 1:
+                raise ValueError(f'segments.zip 内に発話 {uid} の候補WAVが複数あります: {matches}')
+            matched = matches[0] if matches else None
         if matched is None:
             raise FileNotFoundError(f'segments.zip 内に発話 {uid} のWAVが見つかりません')
         entry: dict = {
@@ -538,7 +556,6 @@ def run_mix(plan_path: Path, out_path: Path | None, *, dry_run: bool = False) ->
         seen_utt_ids: set[str] = set()
         weighted_energy_sum = 0.0
         weighted_frames = 0
-        max_tts_peak_db = -99.9
         for u_idx, u in enumerate(utterances):
             if not isinstance(u, dict):
                 raise ValueError(f'utterances[{u_idx}] がオブジェクトではありません')
@@ -557,8 +574,6 @@ def run_mix(plan_path: Path, out_path: Path | None, *, dry_run: bool = False) ->
                 context=f'utterance {uid}',
             )
             stats = measure_levels(l_arr, r_arr, sr)
-            if stats['peak_db'] > max_tts_peak_db:
-                max_tts_peak_db = stats['peak_db']
             if stats['active_rms_db'] > -60.0:
                 energy = 10.0 ** (stats['active_rms_db'] / 10.0)
                 weighted_energy_sum += energy * len(l_arr)
@@ -619,6 +634,7 @@ def run_mix(plan_path: Path, out_path: Path | None, *, dry_run: bool = False) ->
                     if hpf_hz > 0:
                         se_l = apply_hpf_1st_order(se_l, sr, hpf_hz)
                         se_r = apply_hpf_1st_order(se_r, sr, hpf_hz)
+                    apply_fade(se_l, se_r, sr, int(ins.get('fade_in_ms', 30)), int(ins.get('fade_out_ms', 50)))
                     se_stats = measure_levels(se_l, se_r, sr)
                     gain_db, capped = compute_category_gain(
                         se_stats,
@@ -627,7 +643,6 @@ def run_mix(plan_path: Path, out_path: Path | None, *, dry_run: bool = False) ->
                         gain_offset_db=float(ins.get('gain_offset_db', 0.0)),
                         max_gain_db=ins.get('max_gain_db'),
                     )
-                    apply_fade(se_l, se_r, sr, int(ins.get('fade_in_ms', 30)), int(ins.get('fade_out_ms', 50)))
                     g_lin = db_to_lin(gain_db)
                     for i in range(len(se_l)):
                         se_l[i] *= g_lin

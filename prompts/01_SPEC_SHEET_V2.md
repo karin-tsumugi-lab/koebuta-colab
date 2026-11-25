@@ -80,3 +80,14 @@
   - `selection: "kana"`：常に指定の仮名へ展開する（確実に読ませたい固有名詞・旧仮名・当て字・同形異音語は `"kana"` を推奨）。
   - `selection: "surface"`：元表記を維持する。
   - `selection: "auto"`：自動判定は Phase 3 へ延期しているため、元表記を維持しつつ `W_RUBY_AUTO_DEFERRED` 警告を出す。
+
+---
+
+## 5. 発話後の間（ポーズ解決規則）
+
+旧 Koebuta CLI（`faithful.py`）との下位互換を維持するため、境界ごとの無音長は以下の優先順位で単一値に解決する（合算は行わない）。
+
+1. 発話の `pause_after_ms`（`0〜10000` の整数ミリ秒）が明示されていればその値を採用する。
+2. 発話に未指定で、直後の `segment_type: "separator"` 行に `pause_after_ms` が明示されていればその最大値（共通ポーズ未満の短い値も含む）を採用する（複数指定が競合する場合は `W_PAUSE_CONFLICT` 警告）。
+3. 上記がいずれも未指定で、発話の `blank_lines_after > 0` かつ発話の `blank_line_pause_ms` または `settings.json` の `blankLinePauseMs`（既定 `null`）が明示設定されている場合のみ、その空行ポーズを採用する。
+4. それ以外（`pause_after_ms` を省略した `separator` を含む）は、`settings.json` の共通 `pause`（既定 `0.28` 秒 ＝ `280` ms）を採用する。

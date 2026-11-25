@@ -37,6 +37,25 @@ def _run_colab(args: list[str], *, check: bool = True, timeout: int | None = Non
     return subprocess.run(cmd, check=check, timeout=timeout)
 
 
+def _safe_stop_session(session: str) -> tuple[bool, bool]:
+    """Attempt `colab stop` without letting TimeoutExpired/OSError escape cleanup."""
+    try:
+        stop_proc = _run_colab(["stop", "-s", session], check=False, timeout=120)
+        if stop_proc.returncode == 0:
+            return True, False
+        print(
+            f"SESSION_STOP_FAILED ランタイム '{session}' の停止コマンドが非ゼロ終了しました (rc={stop_proc.returncode})。colab stop -s {session} を確認してください",
+            file=sys.stderr,
+        )
+        return False, True
+    except (subprocess.SubprocessError, OSError) as exc:
+        print(
+            f"SESSION_STOP_FAILED ランタイム '{session}' の停止中に例外が発生しました ({exc})。colab stop -s {session} を確認してください",
+            file=sys.stderr,
+        )
+        return False, True
+
+
 def _pack_code_zip(dest: Path) -> None:
     pkg_dir = CLI_DIR / "yomibuta_cli"
     with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -227,11 +246,7 @@ def _run_recover_mode(args: argparse.Namespace) -> int:
     stop_failed = False
     session_stopped = False
     if args.stop_after_download and (verified or not args.keep_on_error):
-        stop_proc = _run_colab(["stop", "-s", session], check=False, timeout=120)
-        session_stopped = stop_proc.returncode == 0
-        if not session_stopped:
-            stop_failed = True
-            print(f"SESSION_STOP_FAILED ランタイム '{session}' の停止に失敗しました。colab stop -s {session} を確認してください", file=sys.stderr)
+        session_stopped, stop_failed = _safe_stop_session(session)
 
     for w in warnings_out:
         print(f"[WARNING] {w.get('code')} ({w.get('segment_id')}): {w}", file=sys.stderr)
@@ -436,14 +451,7 @@ def main(argv: list[str] | None = None) -> int:
         session_stopped = False
         should_stop = args.stop_after_download and session_ready and (verified or not args.keep_on_error)
         if should_stop:
-            stop_proc = _run_colab(["stop", "-s", args.session], check=False, timeout=120)
-            session_stopped = stop_proc.returncode == 0
-            if not session_stopped:
-                stop_failed = True
-                print(
-                    f"SESSION_STOP_FAILED ランタイム '{args.session}' の停止に失敗しました。colab stop -s {args.session} を確認してください",
-                    file=sys.stderr,
-                )
+            session_stopped, stop_failed = _safe_stop_session(args.session)
 
         for w in warnings_out:
             print(f"[WARNING] {w.get('code')} ({w.get('segment_id')}): {w}", file=sys.stderr)
