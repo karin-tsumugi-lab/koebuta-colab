@@ -70,13 +70,17 @@
    - `tts_text` 未指定で原文 `text` に `[注]` のような半角角括弧が含まれる場合、CLI は `W_RAW_BRACKET_IN_TEXT` 警告を出す。必要に応じて `tts_text` で全角 `［注］` へ逃がすか削除する。
 4. **ベースモデル制御トークンの禁止**
    - `<|speaker:0|>` 等の `<|...|>` トークンは `Aratako/Drama-3-Japanese`（単一話者特化）で誤動作するため、`E_FORBIDDEN_CONTROL_TOKEN` エラーとして拒否する。
+5. **非言語タグ単独発話の禁止**
+   - インラインタグを除去した後の読み上げ文字数が 0 文字の発話（例：`"[ため息]"` のみ）は無音・暴走防止のためエラーとなる。必ず発話本文と結合して記述する。
 
 ---
 
 ## 4. 読み・ルビ規則（Phase 1〜2）
 
 - **原文の作者ルビ**および **`tts_text` の青空文庫ルビ（`｜親文字《読み》`）**：常に指定の読みへ展開する。
-- **`koebuta_added_ruby`**：
+- **`tts_text` と `koebuta_added_ruby` の関係（重要）**：
+  - `tts_text` が指定されている発話では `tts_text` が最終読み上げ原稿として優先され、`koebuta_added_ruby` は適用されない（同時指定時は構文検証のうえ `W_ADDED_RUBY_IGNORED_BY_TTS_TEXT` 警告が出る）。インライン演技タグ等で `tts_text` を使う発話では、難読語の読みも `tts_text` 側へ直接書き込むこと。
+- **`koebuta_added_ruby`（`tts_text` 省略時に適用）**：
   - `selection: "kana"`：常に指定の仮名へ展開する（確実に読ませたい固有名詞・旧仮名・当て字・同形異音語は `"kana"` を推奨）。
   - `selection: "surface"`：元表記を維持する。
   - `selection: "auto"`：自動判定は Phase 3 へ延期しているため、元表記を維持しつつ `W_RUBY_AUTO_DEFERRED` 警告を出す。

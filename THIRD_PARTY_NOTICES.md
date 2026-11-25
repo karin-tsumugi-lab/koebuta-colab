@@ -20,9 +20,9 @@ Built with Fish Audio.
 
 ---
 
-## 2. 外部から取得するモデル重みおよびタグ定義（非同梱）
+## 2. モデル重み（非同梱）および公式タグ定義
 
-モデルの重みファイル（GGUF および Safetensors）は本リポジトリには含まれず、Colab 実行時に Hugging Face Hub から直接取得されます。
+モデルの重みファイル（GGUF および Safetensors）は本リポジトリには含まれず、Colab 実行時に Hugging Face Hub から直接取得されます。`prompts/TAG_LIST.md` は `Aratako/Drama-3-Japanese` 公開の公式タグ一覧を参照用に同梱したものです。
 
 - ベースモデル・日本語特化モデル:
   - `fishaudio/s2-pro` (39 AI, INC. / Fish Audio)

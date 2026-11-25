@@ -38,11 +38,11 @@ Yomibuta は、Koebuta v3 の朗読生成パイプラインを基盤に、**`Ara
      --session work-sess --job run01 --out works/my_book/run01 \
      --new --gpu T4 --stop-after-download
 
-   # 通信断などで回収前に中断した出力フォルダーからの回収専用リカバリ
+   # 通信断などで回収前に中断した出力フォルダーからの回収専用リカバリ（推論実行中はランタイムを止めず待機案内）
    python3 cli/yomibuta_generate.py \
      --recover works/my_book/run01 --stop-after-download
    ```
-   - 部分再生成は `--ids t0010,t0040` で発話単位指定が可能です。同一 `--session`・`--job` での再実行時は、遠隔に残っている検証済み発話 WAV を自動再利用して途中再開します。
+   - 部分再生成は `--ids t0010,t0040` で発話単位指定が可能です。推論途中で中断したジョブを同一 `--session`・`--job` で途中再開する場合は、上書き保護のため新しい空の `--out` フォルダー（例：`works/my_book/run01_resume`）を指定してください（遠隔に残っている検証済み発話 WAV は自動再利用されます）。
    - 効果音・環境音のミキシングは [audio_mix/yomibuta_mix.py](audio_mix/yomibuta_mix.py)（44.1 kHz 標準対応）を使用します。
 
 ---

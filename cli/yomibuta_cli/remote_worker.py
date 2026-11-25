@@ -40,12 +40,17 @@ from yomibuta_cli.core import (
 )
 
 OUT_CHUNK_BYTES = 40 * 1024 * 1024  # 40 MiB per download chunk
+MAX_SAFE_SEED = 9007199254740991
+
+
+class _DeadlineExceeded(RuntimeError):
+    """Raised strictly when the overall job deadline (`YOMIBUTA_REMOTE_TIMEOUT`) is exhausted."""
 
 
 def _remaining_sec(deadline: float, cap: float) -> float:
     rem = deadline - time.monotonic()
     if rem <= 1.0:
-        raise TimeoutError("遠隔ワーカーの実行制限時間（timeout）を超過しました")
+        raise _DeadlineExceeded("遠隔ワーカーの実行制限時間（timeout）を超過しました")
     return min(cap, rem)
 
 
@@ -139,6 +144,8 @@ def _ensure_gguf_model(runtime_root: Path, quant: str) -> Path:
 
     gguf_cached = Path(hf_hub_download(spec["repo"], spec["gguf_file"]))
     sidecar_cached = Path(hf_hub_download(spec["repo"], spec["sidecar_file"]))
+    if not isinstance(load_json(sidecar_cached), dict):
+        raise RuntimeError(f"GGUF sidecar JSON が不正です: {sidecar_cached}")
     if expected_sha:
         print("PROGRESS Verifying GGUF SHA-256...", flush=True)
         actual_sha = file_hash(gguf_cached)
@@ -161,6 +168,7 @@ def _prepare_voice_profiles(
     speech_bin: Path,
     model_path: Path,
     voices: dict[str, list[dict]],
+    used_profiles: set[str],
     voice_parts_map: dict[str, int],
     deadline: float,
 ) -> dict[str, Path]:
@@ -169,6 +177,8 @@ def _prepare_voice_profiles(
     built: dict[str, Path] = {}
 
     for profile, clips in voices.items():
+        if profile not in used_profiles:
+            continue
         cache_key = digest(
             {
                 "binary_sha256": PREBUILT_BINARY_SHA256,
@@ -178,6 +188,7 @@ def _prepare_voice_profiles(
             }
         )[:24]
         out_voice = cache_dir / f"{profile}_{cache_key}.voice.gguf"
+        tmp_voice = cache_dir / f"{profile}_{cache_key}.tmp.voice.gguf"
 
         staged_wavs: list[Path] = []
         for idx, clip in enumerate(clips):
@@ -188,7 +199,7 @@ def _prepare_voice_profiles(
                 _reassemble_if_chunked(flat_wav, parts)
             staged_wavs.append(flat_wav)
 
-        if out_voice.is_file():
+        if out_voice.is_file() and out_voice.stat().st_size > 0:
             for w in staged_wavs:
                 w.unlink(missing_ok=True)
             print(f"PROGRESS Reusing cached voice profile: {profile}", flush=True)
@@ -202,7 +213,7 @@ def _prepare_voice_profiles(
             if file_hash(local_wav) != clip["wav_sha256"]:
                 raise RuntimeError(f"参照WAVのSHA256が一致しません: {local_wav}")
             cmd.append(str(local_wav))
-        cmd.append(str(out_voice))
+        cmd.append(str(tmp_voice))
         for clip in clips:
             cmd.extend(["--transcript", clip["transcript"]])
 
@@ -216,9 +227,11 @@ def _prepare_voice_profiles(
                 errors="replace",
                 timeout=_remaining_sec(deadline, 300.0),
             )
-            if proc.returncode != 0 or not out_voice.is_file():
+            if proc.returncode != 0 or not tmp_voice.is_file() or tmp_voice.stat().st_size == 0:
                 raise RuntimeError(f"speech voice 失敗 ({profile}): {proc.stderr[-1000:]}")
+            os.replace(tmp_voice, out_voice)
         finally:
+            tmp_voice.unlink(missing_ok=True)
             for w in staged_wavs:
                 w.unlink(missing_ok=True)
         built[profile] = out_voice
@@ -330,7 +343,7 @@ class _ResidentSpeechServer:
                 return False
             out_wav.write_bytes(raw)
             return True
-        except TimeoutError:
+        except _DeadlineExceeded:
             raise
         except Exception as exc:
             print(f"WARNING Resident server request failed ({exc}); falling back to CLI.", flush=True)
@@ -360,11 +373,12 @@ class _ResidentSpeechServer:
 class _OfficialSglangServer:
     """Resident SGLang-Omni server adapter for official unquantized Drama-3-Japanese on A100/G4."""
 
-    def __init__(self, model_id: str, job_dir: Path, seed: int, eo: dict):
+    def __init__(self, model_id: str, job_dir: Path, seed: int, eo: dict, quant: str | None = None):
         self.model_id = model_id
         self.log_path = job_dir / "sgl_omni_serve.log"
         self.seed = seed
         self.eo = eo
+        self.quant = quant
         self.port = _find_free_port()
         self.proc: subprocess.Popen | None = None
         self._log_fh: IO[str] | None = None
@@ -376,7 +390,7 @@ class _OfficialSglangServer:
         pip_spec = str(self.eo.get("sglang_pip_spec") or DEFAULT_SGLANG_PIP_SPEC).strip()
         print(f"PROGRESS Installing {pip_spec} for official Drama-3 backend...", flush=True)
         subprocess.run(
-            [sys.executable, "-m", "pip", "install", "-q", pip_spec],
+            [sys.executable, "-m", "pip", "install", "-q", "--", pip_spec],
             check=True,
             timeout=_remaining_sec(deadline, 900.0),
         )
@@ -385,11 +399,22 @@ class _OfficialSglangServer:
             raise RuntimeError("sgl-omni のインストール後に実行ファイルが見つかりません")
         return exe
 
+    def is_healthy(self) -> bool:
+        if self.proc is None or self.proc.poll() is not None:
+            return False
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{self.port}/health", timeout=2) as resp:
+                return resp.status == 200
+        except Exception:
+            return False
+
     def start(self, deadline: float, startup_timeout: float = 420.0) -> bool:
         self.stop()
         exe = self._ensure_installed(deadline)
         self.port = _find_free_port()
         cmd = [exe, "serve", "--model-path", self.model_id, "--host", "127.0.0.1", "--port", str(self.port)]
+        if self.quant == "fp8":
+            cmd.extend(["--quantization", "fp8"])
         print(f"PROGRESS Starting official sgl-omni server ({self.model_id}) on 127.0.0.1:{self.port}...", flush=True)
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
         self._log_fh = self.log_path.open("a", encoding="utf-8")
@@ -420,8 +445,12 @@ class _OfficialSglangServer:
             "stream": False,
             "temperature": float(self.eo["temperature"]),
             "top_p": float(self.eo["top_p"]),
+            "top_k": int(self.eo["top_k"]),
+            "max_new_tokens": max(64, int(round(float(self.eo["max_seconds"]) * 25))),
             "seed": int(seed),
         }
+        if self.eo.get("repetition_penalty") is not None:
+            body["repetition_penalty"] = float(self.eo["repetition_penalty"])
         if voice_clips:
             body["references"] = [
                 {
@@ -445,7 +474,7 @@ class _OfficialSglangServer:
                 return False
             out_wav.write_bytes(raw)
             return True
-        except TimeoutError:
+        except _DeadlineExceeded:
             raise
         except Exception as exc:
             print(f"WARNING Official server request failed ({exc}).", flush=True)
@@ -482,7 +511,8 @@ def _synthesize_cli(
     eo: dict,
     out_wav: Path,
     deadline: float,
-) -> None:
+) -> tuple[bool, bool]:
+    """Run single-shot `speech tts`. Returns `(ok, hit_max_seconds)`."""
     env = {**os.environ, "SPEECH_DRAMA3_MAX_PAUSE_FRAMES": str(eo["max_pause_frames"])}
     cmd = [
         str(speech_bin), "tts", str(model_path),
@@ -495,7 +525,8 @@ def _synthesize_cli(
     ]
     if voice_profile != "none":
         cmd.extend(["--add-voice", f"{voice_profile}={voice_files[voice_profile]}"])
-    cmd.extend(["--voice", voice_profile, "-o", str(out_wav), prompt])
+    # `--` prevents prompts starting with `-` from being parsed as CLI flags (`speech tts --help`).
+    cmd.extend(["--voice", voice_profile, "-o", str(out_wav), "--", prompt])
 
     proc = subprocess.run(
         cmd,
@@ -506,8 +537,36 @@ def _synthesize_cli(
         errors="replace",
         timeout=_remaining_sec(deadline, 600.0),
     )
-    if proc.returncode != 0 or not out_wav.is_file():
-        raise RuntimeError(f"speech tts 失敗: rc={proc.returncode} stderr={proc.stderr[-1000:]}")
+    if proc.returncode == 0 and out_wav.is_file():
+        return True, False
+    # `speech tts` exits with code 3 when generation hit `--max-seconds`
+    if proc.returncode == 3 and out_wav.is_file():
+        return True, True
+    out_wav.unlink(missing_ok=True)
+    print(f"WARNING speech tts failed (rc={proc.returncode}): {proc.stderr[-400:]}", flush=True)
+    return False, False
+
+
+def _restore_take_warnings(rec: dict, warnings_out: list[dict]) -> None:
+    sid = rec.get("segment_id")
+    if rec.get("early_eos_suspected"):
+        warnings_out.append(
+            {
+                "code": "W_EARLY_EOS_SUSPECTED",
+                "segment_id": sid,
+                "seconds": rec.get("seconds"),
+                "min_expected_sec": rec.get("min_expected_sec"),
+            }
+        )
+    if rec.get("max_seconds_truncated"):
+        warnings_out.append(
+            {
+                "code": "W_MAX_SECONDS_TRUNCATED",
+                "segment_id": sid,
+                "seconds": rec.get("seconds"),
+                "max_seconds": rec.get("max_seconds"),
+            }
+        )
 
 
 def _run_utterance_with_retries(
@@ -517,9 +576,10 @@ def _run_utterance_with_retries(
     row: dict,
     audio_dir: Path,
     sample_rate: int,
+    max_seconds: float,
     attempt_fn,
 ) -> tuple[dict, list[dict]]:
-    """Shared retry + WAV format validation + early-EOS detection across backends."""
+    """Shared retry + WAV format validation + early-EOS / max_seconds detection across backends."""
     sid = row["segment_id"]
     filename = f"{sid}_{row['fingerprint'][:12]}.wav"
     out_wav = audio_dir / filename
@@ -532,12 +592,13 @@ def _run_utterance_with_retries(
     best_meta: dict | None = None
     best_mode = "serve"
     best_elapsed = 0.0
+    best_hit_max = False
     attempts_used = 0
     warnings: list[dict] = []
 
     for attempt in range(max_attempts):
         attempts_used = attempt + 1
-        try_seed = int(req["seed"]) + attempt * 9973
+        try_seed = (int(req["seed"]) + attempt * 9973) % (MAX_SAFE_SEED + 1)
         t0 = time.monotonic()
         if attempt == 0:
             print(f"PROGRESS [{idx}/{total}] Synthesizing {sid} ({spoken_chars} chars)...", flush=True)
@@ -548,25 +609,42 @@ def _run_utterance_with_retries(
             )
 
         tmp_wav = audio_dir / f"{sid}_try{attempt}.wav"
-        used_mode = attempt_fn(attempt, try_seed, tmp_wav)
+        attempt_res = attempt_fn(attempt, try_seed, tmp_wav)
+        if isinstance(attempt_res, tuple):
+            used_mode, cli_hit_max = attempt_res
+        else:
+            used_mode, cli_hit_max = attempt_res, False
         if used_mode is None:
             tmp_wav.unlink(missing_ok=True)
             continue
 
         elapsed = round(time.monotonic() - t0, 3)
-        meta = wav_info(tmp_wav)
+        try:
+            meta = wav_info(tmp_wav)
+        except Exception as exc:
+            tmp_wav.unlink(missing_ok=True)
+            print(f"WARNING {sid}: invalid WAV output ({exc}); retrying.", flush=True)
+            continue
         if meta["sample_rate"] != sample_rate or meta["channels"] != 1 or meta["sampwidth"] != 2:
             tmp_wav.unlink(missing_ok=True)
             raise RuntimeError(f"{sid}: 予期しないWAV形式 {meta}")
 
-        if best_meta is None or meta["seconds"] > best_meta["seconds"]:
+        hit_max = cli_hit_max or (max_seconds > 0 and meta["seconds"] >= max_seconds - 0.15)
+        # Prefer a non-truncated take over a max_seconds-truncated runaway take
+        take_better = (
+            best_meta is None
+            or (best_hit_max and not hit_max)
+            or (best_hit_max == hit_max and meta["seconds"] > best_meta["seconds"])
+        )
+        if take_better:
             best_wav_bytes = tmp_wav.read_bytes()
             best_meta = meta
             best_mode = used_mode
             best_elapsed = elapsed
+            best_hit_max = hit_max
         tmp_wav.unlink(missing_ok=True)
 
-        if meta["seconds"] >= min_expected_sec:
+        if meta["seconds"] >= min_expected_sec and not hit_max:
             break
 
     if best_wav_bytes is None or best_meta is None:
@@ -574,28 +652,22 @@ def _run_utterance_with_retries(
 
     out_wav.write_bytes(best_wav_bytes)
     early_eos = min_expected_sec > 0 and best_meta["seconds"] < min_expected_sec
-    if early_eos:
-        warnings.append(
-            {
-                "code": "W_EARLY_EOS_SUSPECTED",
-                "segment_id": sid,
-                "seconds": best_meta["seconds"],
-                "min_expected_sec": min_expected_sec,
-            }
-        )
     rec_clean = {
         "segment_id": sid,
         "filename": filename,
         "pause_after_ms": int(row["pause_after_ms"]),
         "spoken_chars": spoken_chars,
         "min_expected_sec": min_expected_sec,
+        "max_seconds": max_seconds,
         "early_eos_suspected": early_eos,
+        "max_seconds_truncated": best_hit_max,
         "mode": best_mode,
         "attempts": attempts_used,
         "elapsed_sec": best_elapsed,
         "rtfx": round(best_meta["seconds"] / best_elapsed, 3) if best_elapsed > 0 else 0.0,
         **best_meta,
     }
+    _restore_take_warnings(rec_clean, warnings)
     return rec_clean, warnings
 
 
@@ -637,10 +709,12 @@ def main() -> int:
     job_id = os.environ.get("YOMIBUTA_REMOTE_JOB_ID", job_dir.name)
     nonce = os.environ.get("YOMIBUTA_REMOTE_NONCE", "")
     plan_path = Path(os.environ.get("YOMIBUTA_REMOTE_PLAN", str(job_dir / "plan.json")))
+    plan_parts = int(os.environ.get("YOMIBUTA_REMOTE_PLAN_PARTS", "0") or "0")
     bin_gz_path = Path(os.environ.get("YOMIBUTA_REMOTE_BIN_GZ", str(runtime_root / "speech_cuda13_sm75_89.gz")))
     bin_parts = int(os.environ.get("YOMIBUTA_REMOTE_BIN_PARTS", "0") or "0")
     voice_parts_map = json.loads(os.environ.get("YOMIBUTA_REMOTE_VOICE_PARTS", "{}") or "{}")
     manifest_remote = Path(os.environ.get("YOMIBUTA_REMOTE_MANIFEST", f"/content/yomibuta_{job_id}_manifest.json"))
+    artifact_prefix = os.environ.get("YOMIBUTA_REMOTE_ARTIFACT_PREFIX", f"/content/yomibuta_{job_id}")
 
     job_dir.mkdir(parents=True, exist_ok=True)
     audio_dir = job_dir / "audio"
@@ -667,6 +741,8 @@ def main() -> int:
     _flush_manifest()
 
     try:
+        if plan_parts > 0:
+            _reassemble_if_chunked(plan_path, plan_parts)
         plan = load_json(plan_path)
         if not isinstance(plan, dict) or plan.get("contract") != CONTRACT:
             raise ValueError("無効な実行計画契約です")
@@ -685,8 +761,14 @@ def main() -> int:
         requests = plan["requests"]
         sample_rate = int(settings.get("sampleRate", DEFAULT_SAMPLE_RATE))
         eo = settings["engineOptions"]
+        max_seconds = float(eo["max_seconds"])
         seed = int(settings["seed"])
         backend = settings.get("backend", "speech_cpp_gguf")
+        used_profiles = {
+            r["request"]["voice_profile"]
+            for r in requests
+            if r["request"].get("voice_profile") and r["request"]["voice_profile"] != "none"
+        }
 
         saved_takes = _load_saved_takes(takes_state_path, audio_dir, sample_rate)
         takes: list[dict] = []
@@ -696,39 +778,46 @@ def main() -> int:
 
         if not need_synthesis:
             print("PROGRESS All utterances already synthesized and verified; reusing cached takes.", flush=True)
+            for idx_b in range(bin_parts):
+                Path(f"{bin_gz_path}.part{idx_b:02d}").unlink(missing_ok=True)
+            for stale_v in Path("/content").glob(f"yomibuta_{job_id}_voice_*.wav*"):
+                stale_v.unlink(missing_ok=True)
             for row in requests:
                 sid = row["segment_id"]
                 filename = f"{sid}_{row['fingerprint'][:12]}.wav"
                 rec = {**saved_takes[filename], "mode": "reused", "pause_after_ms": int(row["pause_after_ms"])}
+                _restore_take_warnings(rec, manifest["warnings"])
                 takes.append({**rec, "path": str(audio_dir / filename)})
                 manifest["takes"].append(rec)
         elif backend == "official":
             staged_refs: dict[str, list[dict]] = {}
-            for profile, clips in (plan.get("voices") or {}).items():
-                staged_refs[profile] = []
-                for idx_c, clip in enumerate(clips):
-                    key = f"{profile}_{idx_c}"
-                    flat_wav = Path(f"/content/yomibuta_{job_id}_voice_{key}.wav")
-                    parts = int(voice_parts_map.get(key, 0))
-                    if parts > 0:
-                        _reassemble_if_chunked(flat_wav, parts)
-                    if not flat_wav.is_file() or file_hash(flat_wav) != clip["wav_sha256"]:
-                        raise RuntimeError(f"参照WAVの検証に失敗しました: {flat_wav}")
-                    staged_refs[profile].append({"local_wav": str(flat_wav), "transcript": clip["transcript"]})
-
-            official_srv = _OfficialSglangServer(settings["ttsModel"], job_dir, seed, eo)
-            if not official_srv.start(deadline):
-                raise RuntimeError(f"公式推論サーバーの起動に失敗しました（ログ: {official_srv.log_path}）")
+            official_srv = _OfficialSglangServer(settings["ttsModel"], job_dir, seed, eo, settings.get("quant"))
             try:
-                sgl_ver = importlib.metadata.version("sglang-omni")
-            except importlib.metadata.PackageNotFoundError:
-                sgl_ver = "unknown"
-            manifest["environment"]["sglang_omni_version"] = sgl_ver
-            manifest["environment"]["sglang_pip_spec"] = eo.get("sglang_pip_spec")
-            _flush_manifest()
+                for profile, clips in (plan.get("voices") or {}).items():
+                    if profile not in used_profiles:
+                        continue
+                    staged_refs[profile] = []
+                    for idx_c, clip in enumerate(clips):
+                        key = f"{profile}_{idx_c}"
+                        flat_wav = Path(f"/content/yomibuta_{job_id}_voice_{key}.wav")
+                        parts = int(voice_parts_map.get(key, 0))
+                        if parts > 0:
+                            _reassemble_if_chunked(flat_wav, parts)
+                        if not flat_wav.is_file() or file_hash(flat_wav) != clip["wav_sha256"]:
+                            raise RuntimeError(f"参照WAVの検証に失敗しました: {flat_wav}")
+                        staged_refs[profile].append({"local_wav": str(flat_wav), "transcript": clip["transcript"]})
 
-            official_restarts = 0
-            try:
+                if not official_srv.start(deadline):
+                    raise RuntimeError(f"公式推論サーバーの起動に失敗しました（ログ: {official_srv.log_path}）")
+                try:
+                    sgl_ver = importlib.metadata.version("sglang-omni")
+                except importlib.metadata.PackageNotFoundError:
+                    sgl_ver = "unknown"
+                manifest["environment"]["sglang_omni_version"] = sgl_ver
+                manifest["environment"]["sglang_pip_spec"] = eo.get("sglang_pip_spec")
+                _flush_manifest()
+
+                official_restarts = 0
                 total = len(requests)
                 for idx, row in enumerate(requests, 1):
                     sid = row["segment_id"]
@@ -737,6 +826,7 @@ def main() -> int:
                     if filename in saved_takes:
                         print(f"PROGRESS [{idx}/{total}] Reusing verified {sid}.", flush=True)
                         rec = {**saved_takes[filename], "mode": "reused", "pause_after_ms": int(row["pause_after_ms"])}
+                        _restore_take_warnings(rec, manifest["warnings"])
                         takes.append({**rec, "path": str(out_wav)})
                         manifest["takes"].append(rec)
                         continue
@@ -744,15 +834,15 @@ def main() -> int:
                     req = row["request"]
                     clips_for_req = staged_refs.get(req["voice_profile"], []) if req["voice_profile"] != "none" else []
 
-                    def _official_attempt(_attempt: int, try_seed: int, tmp_wav: Path) -> str | None:
+                    def _official_attempt(_attempt: int, try_seed: int, tmp_wav: Path) -> tuple[str | None, bool]:
                         nonlocal official_restarts
                         ok = official_srv.synthesize(req["prompt"], clips_for_req, tmp_wav, try_seed, deadline)
                         if ok:
-                            return "official"
-                        if official_restarts < 1:
+                            return "official", False
+                        if not official_srv.is_healthy() and official_restarts < 1:
                             official_restarts += 1
                             official_srv.start(deadline)
-                        return None
+                        return None, False
 
                     rec_clean, utt_warns = _run_utterance_with_retries(
                         idx=idx,
@@ -760,6 +850,7 @@ def main() -> int:
                         row=row,
                         audio_dir=audio_dir,
                         sample_rate=sample_rate,
+                        max_seconds=max_seconds,
                         attempt_fn=_official_attempt,
                     )
                     manifest["warnings"].extend(utt_warns)
@@ -773,6 +864,8 @@ def main() -> int:
                 for clips in staged_refs.values():
                     for c in clips:
                         Path(c["local_wav"]).unlink(missing_ok=True)
+                for leftover in Path("/content").glob(f"yomibuta_{job_id}_voice_*.wav*"):
+                    leftover.unlink(missing_ok=True)
         else:
             speech_bin = _ensure_speech_binary(runtime_root, bin_gz_path, bin_parts)
             model_path = _ensure_gguf_model(runtime_root, settings["quant"])
@@ -786,6 +879,7 @@ def main() -> int:
                 speech_bin,
                 model_path,
                 plan.get("voices") or {},
+                used_profiles,
                 voice_parts_map,
                 deadline,
             )
@@ -804,13 +898,15 @@ def main() -> int:
                     if filename in saved_takes:
                         print(f"PROGRESS [{idx}/{total}] Reusing verified {sid}.", flush=True)
                         rec = {**saved_takes[filename], "mode": "reused", "pause_after_ms": int(row["pause_after_ms"])}
+                        _restore_take_warnings(rec, manifest["warnings"])
                         takes.append({**rec, "path": str(out_wav)})
                         manifest["takes"].append(rec)
                         continue
 
                     req = row["request"]
+                    req_eo = req.get("engine_options") or eo
 
-                    def _gguf_attempt(_attempt: int, try_seed: int, tmp_wav: Path) -> str:
+                    def _gguf_attempt(_attempt: int, try_seed: int, tmp_wav: Path) -> tuple[str | None, bool]:
                         nonlocal serve_disabled, serve_restarts
                         if not serve_disabled and not server.is_alive():
                             if serve_restarts < 1:
@@ -821,23 +917,23 @@ def main() -> int:
                                 serve_disabled = True
                         if not serve_disabled and server.is_alive():
                             if server.synthesize(req["prompt"], req["voice_profile"], tmp_wav, try_seed, deadline):
-                                return "serve"
+                                return "serve", False
                             # Server failed mid-request; stop it to free VRAM before CLI fallback
                             server.stop()
                             if serve_restarts >= 1:
                                 serve_disabled = True
-                        _synthesize_cli(
+                        ok_cli, hit_max_cli = _synthesize_cli(
                             speech_bin,
                             model_path,
                             voice_files,
                             req["prompt"],
                             req["voice_profile"],
                             try_seed,
-                            req["engine_options"],
+                            req_eo,
                             tmp_wav,
                             deadline,
                         )
-                        return "cli"
+                        return ("cli" if ok_cli else None), hit_max_cli
 
                     rec_clean, utt_warns = _run_utterance_with_retries(
                         idx=idx,
@@ -845,6 +941,7 @@ def main() -> int:
                         row=row,
                         audio_dir=audio_dir,
                         sample_rate=sample_rate,
+                        max_seconds=max_seconds,
                         attempt_fn=_gguf_attempt,
                     )
                     manifest["warnings"].extend(utt_warns)
@@ -868,8 +965,8 @@ def main() -> int:
         zip_meta = pack_segments_zip(takes, segments_zip)
 
         manifest["download_chunks"] = {
-            "result.wav": _split_for_download(result_wav, f"/content/yomibuta_{job_id}_result"),
-            "segments.zip": _split_for_download(segments_zip, f"/content/yomibuta_{job_id}_segments"),
+            "result.wav": _split_for_download(result_wav, f"{artifact_prefix}_result"),
+            "segments.zip": _split_for_download(segments_zip, f"{artifact_prefix}_segments"),
         }
         manifest["status"] = "complete"
         manifest["combined"] = {"file": "result.wav", **combined_meta}

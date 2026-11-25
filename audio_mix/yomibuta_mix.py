@@ -3,8 +3,8 @@
 
 Standard-library only (Python 3.10+). Supports 16/24/32-bit PCM and 32-bit IEEE float WAVs,
 automatic 44.1kHz (or job-matched) stereo conversion, active-RMS category leveling with max gain cap,
-90Hz high-pass filtering, utterance-gap SFX insertion, ducked ambience overlays,
-and soft peak limiting (-1.0 dBFS).
+category-tuned high-pass filtering (80-100Hz), utterance-gap SFX insertion, ducked ambience overlays,
+and stereo-linked soft peak limiting (-1.0 dBFS).
 """
 from __future__ import annotations
 
@@ -54,6 +54,55 @@ CATEGORIES: dict[str, dict[str, float | bool]] = {
 }
 
 
+_EXTENSIBLE_GUID_TAIL = b'\x00\x00\x10\x00\x80\x00\x00\xaa\x00\x38\x9b\x71'
+
+
+def _load_strict_json(path: Path) -> dict:
+    def _pairs(items: list[tuple[str, object]]) -> dict[str, object]:
+        out: dict[str, object] = {}
+        for k, v in items:
+            if k in out:
+                raise ValueError(f'{path.name}: 重複したJSONキーがあります: {k}')
+            out[k] = v
+        return out
+
+    raw = json.loads(
+        path.read_text(encoding='utf-8-sig'),
+        object_pairs_hook=_pairs,
+        parse_constant=lambda v: (_ for _ in ()).throw(ValueError(f'{path.name}: 非有限値 ({v}) は使用できません')),
+    )
+    if not isinstance(raw, dict):
+        raise ValueError(f'{path.name}: ルート要素はJSONオブジェクトである必要があります')
+    return raw
+
+
+def _req_int(val: object, name: str, *, min_val: int | None = None, max_val: int | None = None) -> int:
+    if isinstance(val, bool) or not isinstance(val, int):
+        raise ValueError(f'{name} には整数を指定してください: {val!r}')
+    if min_val is not None and val < min_val:
+        raise ValueError(f'{name} には {min_val} 以上を指定してください: {val}')
+    if max_val is not None and val > max_val:
+        raise ValueError(f'{name} には {max_val} 以下を指定してください: {val}')
+    return val
+
+
+def _req_float(val: object, name: str, *, min_val: float | None = None, max_val: float | None = None) -> float:
+    if isinstance(val, bool) or not isinstance(val, (int, float)) or not math.isfinite(val):
+        raise ValueError(f'{name} には有限数値を指定してください: {val!r}')
+    fval = float(val)
+    if min_val is not None and fval < min_val:
+        raise ValueError(f'{name} には {min_val} 以上を指定してください: {fval}')
+    if max_val is not None and fval > max_val:
+        raise ValueError(f'{name} には {max_val} 以下を指定してください: {fval}')
+    return fval
+
+
+def _req_bool(val: object, name: str) -> bool:
+    if not isinstance(val, bool):
+        raise ValueError(f'{name} には真偽値 (true/false) を指定してください: {val!r}')
+    return val
+
+
 def db_to_lin(db: float) -> float:
     return 10.0 ** (db / 20.0)
 
@@ -66,19 +115,31 @@ def read_wav_bytes(data: bytes, label: str = '<memory>') -> tuple[int, int, arra
     """Decode PCM (16/24/32-bit) or IEEE 32-bit float WAV into stereo float32 arrays (L, R)."""
     if len(data) < 44 or data[:4] != b'RIFF' or data[8:12] != b'WAVE':
         raise ValueError(f'WAV形式ではありません: {label}')
+    riff_size = struct.unpack_from('<I', data, 4)[0]
+    riff_end = 8 + riff_size
+    if riff_end > len(data) or riff_end < 44:
+        raise ValueError(f'WAVのRIFFチャンク長が途中で切断されているか不正です: {label}')
+
     pos = 12
     fmt_tag = ch = sr = bits = None
     pcm = None
-    while pos + 8 <= len(data):
+    while pos + 8 <= riff_end:
         cid = data[pos : pos + 4]
         sz = struct.unpack_from('<I', data, pos + 4)[0]
+        if pos + 8 + sz > riff_end:
+            raise ValueError(f'WAVチャンク ({cid!r}) が途中で切断されています: {label}')
         body = data[pos + 8 : pos + 8 + sz]
-        if cid == b'fmt ' and len(body) >= 16:
+        if cid == b'fmt ':
+            if len(body) < 16:
+                raise ValueError(f'WAVのfmtチャンクが短すぎます: {label}')
             fmt_tag, ch, sr, _, _, bits = struct.unpack_from('<HHIIHH', body, 0)
-            if fmt_tag == 0xFFFE and len(body) >= 40:
-                # WAVE_FORMAT_EXTENSIBLE: check SubFormat first 2 bytes
-                sub_tag = struct.unpack_from('<H', body, 24)[0]
-                fmt_tag = sub_tag
+            if fmt_tag == 0xFFFE:
+                if len(body) < 40:
+                    raise ValueError(f'WAVE_FORMAT_EXTENSIBLE チャンク長が不正です: {label}')
+                sub_code = struct.unpack_from('<I', body, 24)[0]
+                if body[28:40] != _EXTENSIBLE_GUID_TAIL or sub_code not in (1, 3):
+                    raise ValueError(f'未対応の拡張WAV SubFormat GUIDです: {label}')
+                fmt_tag = sub_code
         elif cid == b'data':
             pcm = body
         pos += 8 + sz + (sz % 2)
@@ -86,6 +147,9 @@ def read_wav_bytes(data: bytes, label: str = '<memory>') -> tuple[int, int, arra
         raise ValueError(f'未対応のWAVフォーマットです（1ch/2ch・8kHz以上のPCMまたは32bit floatに対応）: {label}')
     if (fmt_tag, bits) not in {(1, 16), (1, 24), (1, 32), (3, 32)}:
         raise ValueError(f'未対応のWAVビット深度/形式です (tag={fmt_tag}, bits={bits}): {label}')
+    frame_bytes = ch * (bits // 8)
+    if len(pcm) % frame_bytes != 0:
+        raise ValueError(f'WAV dataチャンク長がフレーム境界と一致しません: {label}')
 
     bps = bits // 8
     total_samples = len(pcm) // bps
@@ -253,15 +317,15 @@ def compute_category_gain(
     if src_rms <= -95.0:
         return 0.0, False
     desired_gain = target_rms - src_rms
-    cap = float(preset['max_gain_db']) if max_gain_db is None else float(max_gain_db)
-    capped = False
-    if desired_gain > cap:
+    cap = float(preset['max_gain_db']) if max_gain_db is None else _req_float(max_gain_db, 'max_gain_db', min_val=-60.0, max_val=60.0)
+    hit_cap = desired_gain > cap
+    if hit_cap:
         desired_gain = cap
-        capped = True
     # Also respect peak ceiling so transients don't jump too loudly
     peak_ceiling = float(preset['peak_ceiling_db']) + float(gain_offset_db)
     if stats['peak_db'] + desired_gain > peak_ceiling:
         desired_gain = peak_ceiling - stats['peak_db']
+    capped = hit_cap and (desired_gain >= cap - 1e-6)
     return round(desired_gain, 2), capped
 
 
@@ -269,17 +333,23 @@ def apply_fade(left: array, right: array, sr: int, fade_in_ms: int, fade_out_ms:
     n = len(left)
     fi = min(n, max(0, int(sr * fade_in_ms / 1000)))
     fo = min(n, max(0, int(sr * fade_out_ms / 1000)))
-    if fi > 0:
-        inv = 1.0 / fi
+    if fi == 1:
+        left[0] = 0.0
+        right[0] = 0.0
+    elif fi > 1:
+        inv = 1.0 / (fi - 1)
         for i in range(fi):
             g = i * inv
             left[i] *= g
             right[i] *= g
-    if fo > 0:
-        inv = 1.0 / fo
+    if fo == 1:
+        left[n - 1] = 0.0
+        right[n - 1] = 0.0
+    elif fo > 1:
+        inv = 1.0 / (fo - 1)
         start = n - fo
         for i in range(fo):
-            g = (fo - i) * inv
+            g = (fo - 1 - i) * inv
             left[start + i] *= g
             right[start + i] *= g
 
@@ -294,10 +364,10 @@ def slice_audio(
     context: str = '',
 ) -> tuple[array, array]:
     prefix = f'{context}: ' if context else ''
-    if start_ms is not None and start_ms < 0:
-        raise ValueError(f'{prefix}trim_start_ms には 0 以上を指定してください: {start_ms}')
-    if end_ms is not None and end_ms < 0:
-        raise ValueError(f'{prefix}trim_end_ms には 0 以上を指定してください: {end_ms}')
+    if start_ms is not None:
+        start_ms = _req_int(start_ms, f'{prefix}trim_start_ms', min_val=0)
+    if end_ms is not None:
+        end_ms = _req_int(end_ms, f'{prefix}trim_end_ms', min_val=0)
     if start_ms is not None and end_ms is not None and start_ms >= end_ms:
         raise ValueError(f'{prefix}trim_start_ms ({start_ms}) は trim_end_ms ({end_ms}) より小さくしてください')
     n = len(left)
@@ -410,13 +480,15 @@ def init_plan(plan_path: Path, run_dir: Path, scenario_path: Path | None = None,
     if not plan_json.is_file():
         raise FileNotFoundError(f'plan.json が見つかりません: {plan_json}')
 
-    cli_plan = json.loads(plan_json.read_text(encoding='utf-8'))
+    cli_plan = _load_strict_json(plan_json)
     notes_map: dict[str, list[str]] = {}
     if scenario_path is not None:
-        sc = json.loads(scenario_path.expanduser().resolve().read_text(encoding='utf-8'))
-        for row in sc.get('segments', []):
-            if isinstance(row, dict) and row.get('id') and row.get('notes'):
-                notes_map[row['id']] = list(row['notes'])
+        sc = _load_strict_json(scenario_path.expanduser().resolve())
+        sc_segs = sc.get('segments')
+        if isinstance(sc_segs, list):
+            for row in sc_segs:
+                if isinstance(row, dict) and isinstance(row.get('id'), str) and isinstance(row.get('notes'), list):
+                    notes_map[row['id']] = [str(n) for n in row['notes']]
 
     try:
         with zipfile.ZipFile(seg_zip, 'r') as zf:
@@ -462,13 +534,15 @@ def init_plan(plan_path: Path, run_dir: Path, scenario_path: Path | None = None,
     except ValueError:
         rel_zip = str(seg_zip)
 
-    plan_sr = int(cli_plan.get('settings', {}).get('sampleRate', TARGET_SAMPLE_RATE))
+    settings_obj = cli_plan.get('settings') if isinstance(cli_plan.get('settings'), dict) else {}
+    exec_obj = cli_plan.get('execution') if isinstance(cli_plan.get('execution'), dict) else {}
+    plan_sr = _req_int(settings_obj.get('sampleRate', TARGET_SAMPLE_RATE), 'sampleRate', min_val=8000, max_val=384000)
     mix_doc = {
         'target_tts_rms_db': -18.0,
         'sample_rate': plan_sr,
         'segments_zip': rel_zip,
-        'leading_pause_ms': int(cli_plan.get('execution', {}).get('leading_pause_ms', 0)),
-        'trailing_pause_ms': int(cli_plan.get('execution', {}).get('trailing_pause_ms', 0)),
+        'leading_pause_ms': _req_int(exec_obj.get('leading_pause_ms', 0), 'leading_pause_ms', min_val=0),
+        'trailing_pause_ms': _req_int(exec_obj.get('trailing_pause_ms', 0), 'trailing_pause_ms', min_val=0),
         'utterances': utterances,
         'overlays': [],
     }
@@ -505,18 +579,27 @@ def run_mix(plan_path: Path, out_path: Path | None, *, dry_run: bool = False) ->
 
     plan_path = plan_path.expanduser().resolve()
     base_dir = plan_path.parent
-    plan = json.loads(plan_path.read_text(encoding='utf-8'))
+    plan = _load_strict_json(plan_path)
 
-    sr = int(plan.get('sample_rate', TARGET_SAMPLE_RATE))
-    target_tts_rms = float(plan.get('target_tts_rms_db', -18.0))
+    sr = _req_int(plan.get('sample_rate', TARGET_SAMPLE_RATE), 'sample_rate', min_val=8000, max_val=384000)
+    target_tts_rms = _req_float(plan.get('target_tts_rms_db', -18.0), 'target_tts_rms_db', min_val=-60.0, max_val=0.0)
     explicit_tts_gain = plan.get('tts_gain_db')
-    utterances = plan.get('utterances', [])
-    if not utterances:
-        raise ValueError('utterances が空です')
+    if explicit_tts_gain is not None:
+        explicit_tts_gain = _req_float(explicit_tts_gain, 'tts_gain_db', min_val=-60.0, max_val=36.0)
+    utterances = plan.get('utterances')
+    if not isinstance(utterances, list) or not utterances:
+        raise ValueError('utterances は空でない配列を指定してください')
+    raw_overlays = plan.get('overlays', [])
+    if not isinstance(raw_overlays, list):
+        raise ValueError('overlays は配列を指定してください')
+    leading_pause_ms = _req_int(plan.get('leading_pause_ms', 0), 'leading_pause_ms', min_val=0, max_val=60000)
+    trailing_pause_ms = _req_int(plan.get('trailing_pause_ms', 0), 'trailing_pause_ms', min_val=0, max_val=60000)
 
     seg_zip_rel = plan.get('segments_zip')
     zf = None
-    if seg_zip_rel:
+    if seg_zip_rel is not None:
+        if not isinstance(seg_zip_rel, str) or not seg_zip_rel.strip():
+            raise ValueError('segments_zip には文字列パスを指定してください')
         seg_zip_path = (base_dir / seg_zip_rel).resolve()
         if not seg_zip_path.is_file():
             raise FileNotFoundError(f'segments_zip が見つかりません: {seg_zip_path}')
@@ -568,9 +651,11 @@ def run_mix(plan_path: Path, out_path: Path | None, *, dry_run: bool = False) ->
             u_file = u.get('file')
             if not isinstance(u_file, str) or not u_file.strip():
                 raise ValueError(f'utterances[{u_idx}] ({uid}) に file が指定されていません')
+            # Prefer local file override on disk if present; otherwise read from segments_zip
+            local_override = not Path(u_file).is_absolute() and (base_dir / u_file).is_file()
             l_arr, r_arr, desc = load_audio_source(
                 u_file,
-                from_zip=(zf is not None and not Path(u_file).is_absolute()),
+                from_zip=(zf is not None and not Path(u_file).is_absolute() and not local_override),
                 context=f'utterance {uid}',
             )
             stats = measure_levels(l_arr, r_arr, sr)
@@ -598,7 +683,7 @@ def run_mix(plan_path: Path, out_path: Path | None, *, dry_run: bool = False) ->
 
         # 2. Build main timeline (utterances + inserted SEs + pauses) and record utterance spans
         timeline_items: list[tuple[str, str, int, int, array | None, array | None]] = []
-        cursor = max(0, int(sr * int(plan.get('leading_pause_ms', 0)) / 1000))
+        cursor = int(sr * leading_pause_ms / 1000)
         utt_spans: dict[str, tuple[int, int]] = {}
         speech_regions: list[tuple[int, int]] = []
         se_reports = []
@@ -612,7 +697,10 @@ def run_mix(plan_path: Path, out_path: Path | None, *, dry_run: bool = False) ->
             timeline_items.append(('tts', uid, start_frame, end_frame, l_arr, r_arr))
             cursor = end_frame
 
-            inserts = u.get('insert_after') or []
+            u_pause = _req_int(u.get('pause_after_ms', 280), f'utterance {uid}.pause_after_ms', min_val=0, max_val=60000)
+            inserts = u.get('insert_after')
+            if inserts is not None and not isinstance(inserts, list):
+                raise ValueError(f'utterance {uid}: insert_after は配列を指定してください')
             if inserts:
                 for ins_idx, ins in enumerate(inserts):
                     if not isinstance(ins, dict):
@@ -620,39 +708,41 @@ def run_mix(plan_path: Path, out_path: Path | None, *, dry_run: bool = False) ->
                     ins_wav = ins.get('wav')
                     cue_ctx = f'insert_after (after_id={uid}, index={ins_idx}, wav={ins_wav!r})'
                     cat = ins.get('category', 'action')
-                    if cat not in CATEGORIES:
+                    if not isinstance(cat, str) or cat not in CATEGORIES:
                         raise ValueError(
                             f'{cue_ctx}: 未対応のカテゴリです: {cat!r}（選択可能: {", ".join(CATEGORIES)}）'
                         )
-                    pre_ms = int(ins.get('pre_gap_ms', 200))
-                    post_ms = int(ins.get('post_gap_ms', 250))
+                    pre_ms = _req_int(ins.get('pre_gap_ms', 200), f'{cue_ctx}.pre_gap_ms', min_val=0, max_val=60000)
+                    post_ms = _req_int(ins.get('post_gap_ms', 250), f'{cue_ctx}.post_gap_ms', min_val=0, max_val=60000)
+                    fade_in_ms = _req_int(ins.get('fade_in_ms', 30), f'{cue_ctx}.fade_in_ms', min_val=0, max_val=30000)
+                    fade_out_ms = _req_int(ins.get('fade_out_ms', 50), f'{cue_ctx}.fade_out_ms', min_val=0, max_val=30000)
                     se_l, se_r, se_desc = load_audio_source(ins_wav, from_zip=False, context=cue_ctx)
                     se_l, se_r = slice_audio(
                         se_l, se_r, sr, ins.get('trim_start_ms'), ins.get('trim_end_ms'), context=cue_ctx
                     )
-                    hpf_hz = float(ins.get('hpf_hz', CATEGORIES[cat]['hpf_hz']))
+                    hpf_hz = _req_float(ins.get('hpf_hz', CATEGORIES[cat]['hpf_hz']), f'{cue_ctx}.hpf_hz', min_val=0.0, max_val=20000.0)
                     if hpf_hz > 0:
                         se_l = apply_hpf_1st_order(se_l, sr, hpf_hz)
                         se_r = apply_hpf_1st_order(se_r, sr, hpf_hz)
-                    apply_fade(se_l, se_r, sr, int(ins.get('fade_in_ms', 30)), int(ins.get('fade_out_ms', 50)))
                     se_stats = measure_levels(se_l, se_r, sr)
                     gain_db, capped = compute_category_gain(
                         se_stats,
                         cat,
                         target_tts_rms,
-                        gain_offset_db=float(ins.get('gain_offset_db', 0.0)),
+                        gain_offset_db=_req_float(ins.get('gain_offset_db', 0.0), f'{cue_ctx}.gain_offset_db', min_val=-60.0, max_val=60.0),
                         max_gain_db=ins.get('max_gain_db'),
                     )
+                    apply_fade(se_l, se_r, sr, fade_in_ms, fade_out_ms)
                     g_lin = db_to_lin(gain_db)
                     for i in range(len(se_l)):
                         se_l[i] *= g_lin
                         se_r[i] *= g_lin
 
-                    cursor += max(0, int(sr * pre_ms / 1000))
+                    cursor += int(sr * pre_ms / 1000)
                     se_start = cursor
                     se_end = cursor + len(se_l)
                     timeline_items.append(('se', ins_wav, se_start, se_end, se_l, se_r))
-                    cursor = se_end + max(0, int(sr * post_ms / 1000))
+                    cursor = se_end + int(sr * post_ms / 1000)
                     se_reports.append({
                         'type': 'insert_after',
                         'after_id': uid,
@@ -666,39 +756,44 @@ def run_mix(plan_path: Path, out_path: Path | None, *, dry_run: bool = False) ->
                     })
             else:
                 if idx < len(loaded_utts) - 1:
-                    cursor += max(0, int(sr * int(u.get('pause_after_ms', 280)) / 1000))
+                    cursor += int(sr * u_pause / 1000)
 
-        cursor += max(0, int(sr * int(plan.get('trailing_pause_ms', 0)) / 1000))
+        cursor += int(sr * trailing_pause_ms / 1000)
         total_frames = cursor
 
         # 3. Prepare overlays (ambience / background tracks)
         overlay_tracks = []
-        for ov_idx, ov in enumerate(plan.get('overlays', [])):
+        for ov_idx, ov in enumerate(raw_overlays):
             if not isinstance(ov, dict):
                 raise ValueError(f'overlays[{ov_idx}] がオブジェクトではありません')
             ov_wav = ov.get('wav')
             ov_ctx = f'overlays[{ov_idx}] (wav={ov_wav!r})'
             cat = ov.get('category', 'ambience')
-            if cat not in CATEGORIES:
+            if not isinstance(cat, str) or cat not in CATEGORIES:
                 raise ValueError(
                     f'{ov_ctx}: 未対応のカテゴリです: {cat!r}（選択可能: {", ".join(CATEGORIES)}）'
                 )
             start_id = ov.get('start_id')
             end_id = ov.get('end_id')
-            if start_id and start_id not in utt_spans:
-                raise ValueError(f'{ov_ctx}: start_id が見つかりません: {start_id}')
-            if end_id and end_id not in utt_spans:
-                raise ValueError(f'{ov_ctx}: end_id が見つかりません: {end_id}')
+            if start_id is not None and (not isinstance(start_id, str) or start_id not in utt_spans):
+                raise ValueError(f'{ov_ctx}: start_id が見つかりません: {start_id!r}')
+            if end_id is not None and (not isinstance(end_id, str) or end_id not in utt_spans):
+                raise ValueError(f'{ov_ctx}: end_id が見つかりません: {end_id!r}')
             ov_start = utt_spans[start_id][0] if start_id else 0
             ov_end = utt_spans[end_id][1] if end_id else total_frames
             if ov_end <= ov_start:
                 raise ValueError(f'{ov_ctx}: overlay 区間が不正です: {start_id} .. {end_id}')
 
+            ov_loop = _req_bool(ov.get('loop', True), f'{ov_ctx}.loop')
+            ov_fi_ms = _req_int(ov.get('fade_in_ms', 800), f'{ov_ctx}.fade_in_ms', min_val=0, max_val=60000)
+            ov_fo_ms = _req_int(ov.get('fade_out_ms', 1000), f'{ov_ctx}.fade_out_ms', min_val=0, max_val=60000)
+            ov_xf_ms = _req_int(ov.get('loop_crossfade_ms', LOOP_CROSSFADE_MS), f'{ov_ctx}.loop_crossfade_ms', min_val=0, max_val=5000)
+
             ov_l, ov_r, ov_desc = load_audio_source(ov_wav, from_zip=False, context=ov_ctx)
             ov_l, ov_r = slice_audio(
                 ov_l, ov_r, sr, ov.get('trim_start_ms'), ov.get('trim_end_ms'), context=ov_ctx
             )
-            hpf_hz = float(ov.get('hpf_hz', CATEGORIES[cat]['hpf_hz']))
+            hpf_hz = _req_float(ov.get('hpf_hz', CATEGORIES[cat]['hpf_hz']), f'{ov_ctx}.hpf_hz', min_val=0.0, max_val=20000.0)
             if hpf_hz > 0:
                 ov_l = apply_hpf_1st_order(ov_l, sr, hpf_hz)
                 ov_r = apply_hpf_1st_order(ov_r, sr, hpf_hz)
@@ -707,11 +802,16 @@ def run_mix(plan_path: Path, out_path: Path | None, *, dry_run: bool = False) ->
                 ov_stats,
                 cat,
                 target_tts_rms,
-                gain_offset_db=float(ov.get('gain_offset_db', 0.0)),
+                gain_offset_db=_req_float(ov.get('gain_offset_db', 0.0), f'{ov_ctx}.gain_offset_db', min_val=-60.0, max_val=60.0),
                 max_gain_db=ov.get('max_gain_db'),
             )
-            duck_db = float(ov.get('duck_db', -4.0 if cat == 'ambience' else 0.0))
-            overlay_tracks.append((ov, ov_start, ov_end, ov_l, ov_r, gain_db, duck_db))
+            duck_db = _req_float(
+                ov.get('duck_db', -4.0 if cat == 'ambience' else 0.0),
+                f'{ov_ctx}.duck_db',
+                min_val=-60.0,
+                max_val=0.0,
+            )
+            overlay_tracks.append((ov_loop, ov_fi_ms, ov_fo_ms, ov_xf_ms, ov_start, ov_end, ov_l, ov_r, gain_db, duck_db))
             se_reports.append({
                 'type': 'overlay',
                 'span': f'{start_id or "START"}..{end_id or "END"}',
@@ -756,15 +856,12 @@ def run_mix(plan_path: Path, out_path: Path | None, *, dry_run: bool = False) ->
                 mix_r[st + i] += r_arr[i] * g
 
         # Build smooth ducking envelope (1.0 during silence, duck_lin during speech)
-        for ov, ov_start, ov_end, ov_l, ov_r, gain_db, duck_db in overlay_tracks:
+        for ov_loop, ov_fi_ms, ov_fo_ms, ov_xf_ms, ov_start, ov_end, ov_l, ov_r, gain_db, duck_db in overlay_tracks:
             span_len = ov_end - ov_start
             if not ov_l or span_len <= 0:
                 continue
-            loop = bool(ov.get('loop', True))
-            if loop:
-                buf_l, buf_r = render_looped_stereo(
-                    ov_l, ov_r, span_len, sr, crossfade_ms=int(ov.get('loop_crossfade_ms', LOOP_CROSSFADE_MS))
-                )
+            if ov_loop:
+                buf_l, buf_r = render_looped_stereo(ov_l, ov_r, span_len, sr, crossfade_ms=ov_xf_ms)
                 active_len = span_len
             else:
                 active_len = min(span_len, len(ov_l))
@@ -772,7 +869,7 @@ def run_mix(plan_path: Path, out_path: Path | None, *, dry_run: bool = False) ->
                 buf_r = ov_r[:active_len]
 
             # Apply fade_in / fade_out strictly over the active audio samples (prevents hard cutoff when loop=False)
-            apply_fade(buf_l, buf_r, sr, int(ov.get('fade_in_ms', 800)), int(ov.get('fade_out_ms', 1000)))
+            apply_fade(buf_l, buf_r, sr, ov_fi_ms, ov_fo_ms)
             base_g = db_to_lin(gain_db)
             duck_g = db_to_lin(duck_db)
 
@@ -786,12 +883,12 @@ def run_mix(plan_path: Path, out_path: Path | None, *, dry_run: bool = False) ->
                     b = min(active_len, sp_b - ov_start)
                     if a < b:
                         ba = a // step
-                        bb = min(env_blocks - 1, b // step)
+                        bb = min(env_blocks - 1, (b - 1) // step)
                         for bi in range(ba, bb + 1):
                             is_speech[bi] = True
-                # Smooth attack (~80ms) and release (~250ms)
+                # Initialize directly to ducked level if speech is already active at frame 0 of the overlay
                 env = [1.0] * env_blocks
-                cur = 1.0
+                cur = duck_g if is_speech[0] else 1.0
                 for bi in range(env_blocks):
                     target = duck_g if is_speech[bi] else 1.0
                     alpha = 0.25 if target < cur else 0.08

@@ -158,8 +158,8 @@ const EMOTIONS = {
   ]
 };
 const DEFAULT_SETTINGS = {
-  reading_mode:'cast', use_emotion:true, use_acting:false, narrator_emotion:false,
-  seed:314, steps:40, default_pause_ms:280, default_blank_line_pause_ms:1200, default_text_format:'none', shared_reference_wav:null
+  reading_mode:'cast', use_emotion:true, use_acting:true, narrator_emotion:true,
+  seed:314, steps:40, default_pause_ms:280, default_blank_line_pause_ms:null, default_text_format:'aozora', shared_reference_wav:null
 };
 const RUBY_FORMATS = ['none','aozora','narou','kakuyomu','pixiv'];
 const clone = value => structuredClone(value);
@@ -167,9 +167,9 @@ const isObject=x=>x!==null&&typeof x==='object'&&!Array.isArray(x);
 const cp = s=>Array.from(s);
 const cplen = s=>cp(s).length;
 function cut(text,k){const arr=cp(text);return [arr.slice(0,k).join(''),arr.slice(k).join('')];}
-const han='[\\p{Script=Han}々〆〇ヶ]';
-/** Conservative ruby parser. Uncertain markup must stop automatic edits. */
-function reading(text,format='none'){
+const han='[\\p{Script=Han}\\uF900-\\uFAFF々〆〇ヶヵ〻]';
+/** Conservative ruby parser aligned with cli/yomibuta_cli/ruby.py. */
+function reading(text,format='aozora'){
   if(!RUBY_FORMATS.includes(format))return {value:String(text),warnings:['未対応のルビ形式']};
   if(typeof text!=='string')return {value:'',warnings:['本文が文字列ではありません']};
   if(format==='none')return {value:text,warnings:[]};
@@ -184,29 +184,51 @@ function reading(text,format='none'){
     value=value.replace(/［＃([^［］\n]*)］/g,(m,x)=> /^(?:改ページ|改丁|改見開き|ここから[０-９0-9]+字下げ|ここで字下げ終わり|[０-９0-9]+字下げ|「[^「」［］\n]+」に傍点|「[^「」［］\n]+」は[大中小]見出し|[大中小]見出し(?:終わり)?)$/.test(x)?'':m);
   }
   // Guard special annotation syntax to avoid interpreting an escaped ruby marker.
-  const sentinel='\uE000';if(value.includes(sentinel))warnings.push('特殊記号のためルビ変換要確認');
-  if(format==='kakuyomu')value=value.replace(/｜《/g,sentinel+'a').replace(/《《([^《》\n]+)》》/g,'$1');
-  if(format==='narou')value=value.replace(/[｜|]([（(])/g,(_,x)=>sentinel+(x==='('?'b':'c'));
-  value=value.replace(/[｜|]([^｜|《》\n]+)《([^《》\n]+)》/g,(_,a,b)=>b);
+  let sentinel='\uE000';while(value.includes(sentinel))sentinel+='\uE000';
+  if(format==='kakuyomu'){
+    value=value.replace(/｜《([^《》\n]*)》/g,(_,x)=>sentinel+'o'+x+sentinel+'c');
+    value=value.replace(/｜《/g,sentinel+'a').replace(/《《([^《》\n]+)》》/g,'$1');
+  }
+  if(format==='narou')value=value.replace(/[｜|]([（(])/g,(_,x)=>sentinel+(x==='('?'b':'fw'));
+  const barPat=format==='aozora'?/｜([^｜|《》\n]+)《([^《》\n]+)》/g:/[｜|]([^｜|《》\n]+)《([^《》\n]+)》/g;
+  value=value.replace(barPat,(_,a,b)=>b);
   const implicit = new RegExp(han+'+《([^《》\\n]+)》','gu');
   value=value.replace(implicit,(_,a)=>a);
   if(format==='narou'){
-    value=value.replace(new RegExp(han+'+\\(([ぁ-ゖァ-ヺー・ヴゝゞヽヾ　 ]+)\\)','gu'),'$1');
-    value=value.replace(new RegExp(han+'+（([ぁ-ゖァ-ヺー・ヴゝゞヽヾ　 ]+)）','gu'),'$1');
+    value=value.replace(new RegExp(han+'+\\(([ぁ-ゖァ-ヺー・ヴゝゞヽヾ　 ]+)\\)','gu'),(_,a)=>a.trim());
+    value=value.replace(new RegExp(han+'+（([ぁ-ゖァ-ヺー・ヴゝゞヽヾ　 ]+)）','gu'),(_,a)=>a.trim());
   }
-  value=value.replaceAll(sentinel+'a','｜《').replaceAll(sentinel+'b','|(').replaceAll(sentinel+'c','｜（');
-  if(/《|》|\[\[rb:|［＃/.test(value))warnings.push('未変換のルビ・注記');
+  if(/《|》|\[\[rb:|［＃|｜|］/.test(value))warnings.push('未変換のルビ・注記');
+  value=value.replaceAll(sentinel+'o','《').replaceAll(sentinel+'c','》').replaceAll(sentinel+'a','《').replaceAll(sentinel+'b','(').replaceAll(sentinel+'fw','（');
   return {value,warnings};
 }
-function effectiveFormat(s,project){return s.text_format||project?.koebuta_settings?.default_text_format||'none';}
+function effectiveFormat(s,project){return s.text_format||project?.koebuta_settings?.default_text_format||'aozora';}
+function applyAddedRubyJs(text,entries){
+  if(!Array.isArray(entries)||!entries.length)return text;
+  const chars=Array.from(text),sorted=[...entries].sort((a,b)=>a.start-b.start);
+  let out='',cur=0;
+  for(const r of sorted){
+    out+=chars.slice(cur,r.start).join('');
+    out+=r.selection==='kana'?r.reading:r.surface;
+    cur=r.end;
+  }
+  out+=chars.slice(cur).join('');
+  return out;
+}
 function spoken(s,project=null){
-  if(typeof s.tts_text==='string'&&s.tts_text.trim())return {value:s.tts_text,warnings:[]};
-  return reading(s.text??'',effectiveFormat(s,project));
+  if(typeof s.tts_text==='string'&&s.tts_text.trim())return reading(s.tts_text,'aozora');
+  let src=s.text??'';
+  if(Array.isArray(s.koebuta_added_ruby)&&s.koebuta_added_ruby.length&&!rubyIssue(s)){
+    src=applyAddedRubyJs(src,s.koebuta_added_ruby);
+  }
+  return reading(src,effectiveFormat(s,project));
 }
 const EVENT_TAGS=['😮‍💨','⏸️','🤭','🌬️','😮','💋','🥤','🤧','👌','👃'];
+const DRAMA3_QUICK_TAGS=['[囁き]','[耳元で]','[吐息]','[ため息]','[少し間を置いて]','[一呼吸おいて]','[笑いながら]','[くすくす笑い]','[嬉しそうに]','[優しく]','[悲しげに]','[泣きながら]','[怒りを込めて]','[驚いて]','[心配そうに]','[焦って]','[呆れたように]','[からかうように]','[恥ずかしそうに]','[声を張って]','[ゆっくりと]','[早口で]','[電話越しに]','[ナレーション]','[咳払い]','[息をのむ]'];
 const EXCLUDED_TAGS={'👅':'意図した口の音として判別しにくい異音','🤐':'台詞に合わない声','🥱':'あくびの再現性不足と異音','😒':'反復時の異音'};
 const TAG_PATTERN=new RegExp([...new Set([...Object.values(EMOTIONS).map(v=>v[1]),...EVENT_TAGS,...Object.keys(EXCLUDED_TAGS)])].filter(t=>t!=='―').sort((a,b)=>b.length-a.length).join('|'),'gu');
 const DRAMA3_INLINE_TAG=/\[[^\[\]\r\n]{1,120}\]/gu;
+const DRAMA3_INLINE_TAG_TEST=/\[[^\[\]\r\n]{1,120}\]/u;
 const DRAMA3_CONTROL_TOKEN=/<\|[^|\r\n]{1,64}\|>/u;
 function speechLength(s,project=null){
   if(typeof s.text!=='string')return null;
@@ -301,38 +323,48 @@ function inherited(a,b){
   const aOld=isObject(a.koebuta_edit)?a.koebuta_edit:{};
   if(old.fallback||old.forced||old.actions){a.koebuta_edit={...aOld,actions:[...new Set([...(Array.isArray(aOld.actions)?aOld.actions:[]),...(Array.isArray(old.actions)?old.actions:[])])],fallback:Boolean(aOld.fallback||old.fallback),forced:Boolean(aOld.forced||old.forced)};}
 }
-/** Effective pause rules: an explicit pause always wins. The blank-line pause
- * override is an Inspector / future-CLI extension; current Colab uses 1200ms.
- * A separator supplies a pause before the next speech when the previous speech
- * does not have a pause_after_ms; this helper handles that via `effectivePauses`.
+/** Effective pause rules aligned with cli/yomibuta_cli/plan.py (faithful.py strict compat):
+ * 1. Explicit `s.pause_after_ms` wins.
+ * 2. Explicit `separator.pause_after_ms` (max of adjacent explicit separator pauses, even < common) wins.
+ * 3. Opt-in blank-line pause applies ONLY when `blank_line_pause_ms` or `default_blank_line_pause_ms` is set.
+ * 4. Otherwise `default_pause_ms` (280ms) applies.
  */
 function effectivePauses(project){
-  const settings={...DEFAULT_SETTINGS,...(isObject(project?.koebuta_settings)?project.koebuta_settings:{})};
+  const rawKs=isObject(project?.koebuta_settings)?project.koebuta_settings:{};
+  const settings={...DEFAULT_SETTINGS,...rawKs};
   const common=Number.isInteger(settings.default_pause_ms)&&settings.default_pause_ms>=0?settings.default_pause_ms:280;
-  const fallbackBlank=Number.isInteger(settings.default_blank_line_pause_ms)&&settings.default_blank_line_pause_ms>=0?settings.default_blank_line_pause_ms:1200;
-  const result=new Map();let previous=null,pendingSeparator=null;
+  const hasGlobalBlank=Number.isInteger(settings.default_blank_line_pause_ms)&&settings.default_blank_line_pause_ms>=0;
+  const result=new Map();let previous=null,pendingSepPauses=[];
   for(let index=0;index<(project?.segments||[]).length;index++){
     const s=project.segments[index];if(!isObject(s))continue;
     if(s.segment_type==='separator'){
-      const time=Number.isInteger(s.pause_after_ms)&&s.pause_after_ms>=0?s.pause_after_ms:1200;
-      pendingSeparator=Math.max(pendingSeparator??0,time);continue;
+      if(Number.isInteger(s.pause_after_ms)&&s.pause_after_ms>=0)pendingSepPauses.push(s.pause_after_ms);
+      continue;
     }
-    if(previous!==null&&pendingSeparator!==null){
+    if(previous!==null&&pendingSepPauses.length){
       const old=project.segments[previous];
       if(!(Number.isInteger(old.pause_after_ms)&&old.pause_after_ms>=0)){
         const entry=result.get(previous);
-        if(entry){entry.ms=Math.max(entry.ms,pendingSeparator);entry.kind='区切り';}
+        if(entry){entry.ms=Math.max(...pendingSepPauses);entry.kind='区切り';}
       }
     }
-    pendingSeparator=null;
+    pendingSepPauses=[];
     const explicit=Number.isInteger(s.pause_after_ms)&&s.pause_after_ms>=0;
     const blanks=Number.isInteger(s.blank_lines_after)&&s.blank_lines_after>0;
     const blankSpecific=Number.isInteger(s.blank_line_pause_ms)&&s.blank_line_pause_ms>=0;
-    const blankMs=blankSpecific?s.blank_line_pause_ms:Math.max(common,fallbackBlank);
-    result.set(index,{ms:explicit?s.pause_after_ms:blanks?blankMs:common,
-      kind:explicit?'明示':blanks?(blankSpecific?'空行個別':'空行既定'):'共通',
-      blankMs,hasBlank:blanks});
+    const useBlank=blanks&&(blankSpecific||hasGlobalBlank);
+    const blankMs=blankSpecific?s.blank_line_pause_ms:(hasGlobalBlank?settings.default_blank_line_pause_ms:common);
+    result.set(index,{ms:explicit?s.pause_after_ms:useBlank?blankMs:common,
+      kind:explicit?'明示':useBlank?(blankSpecific?'空行個別':'空行設定'):'共通',
+      blankMs,hasBlank:useBlank});
     previous=index;
+  }
+  if(previous!==null&&pendingSepPauses.length){
+    const old=project.segments[previous];
+    if(!(Number.isInteger(old.pause_after_ms)&&old.pause_after_ms>=0)){
+      const entry=result.get(previous);
+      if(entry){entry.ms=Math.max(...pendingSepPauses);entry.kind='区切り';}
+    }
   }
   return result;
 }
@@ -553,7 +585,7 @@ function planAuto(project,low=12,high=140,indices=null,options={}){
         const forced=forceMerge(result,i,i+1);
         result.segments.splice(i,2,forced.project.segments[i]);
         logs.push(`⚠ 強制結合 ${a.id} + ${b.id}（${forced.warnings.join('／')||'差異あり'}）`);
-        continue;
+        i++;continue;
       }catch(error){skips.push(`${a.id} + ${b.id}: 強制結合見送り（${error.message}）`);i++;continue;}
     }
     const check=safeAutoMerge(result,i,low,high);if(!check.ok){i++;continue;}
@@ -603,15 +635,16 @@ function diagnostics(raw,low=12,high=140){
   const issues=[];const add=(level,index,message)=>issues.push({level,index,message});
   if(!isObject(raw)){add('error',null,'最上位がオブジェクトではありません');return issues;}
   if(raw.schema_version!==1&&raw.schema_version!==2)add('error',null,'schema_version が 1 または 2 ではありません');
-  if(!isObject(raw.speakers))add('error',null,'speakers がオブジェクトではありません');
-  if(!Array.isArray(raw.segments)){add('error',null,'segments が配列ではありません');return issues;}
+  if(!isObject(raw.speakers)||!Object.keys(raw.speakers).length)add('error',null,'空でない speakers オブジェクトが必要です');
+  if(!Array.isArray(raw.segments)||!raw.segments.length){add('error',null,'空でない segments 配列が必要です');return issues;}
   const ids=new Set();const speakers=isObject(raw.speakers)?raw.speakers:{};
+  const identRe=/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
   // Sequential partial source alignment: unlike an exact equivalence proof,
   // this can only report the first mismatch. It never mutates text or source.
-  let sourceCursor=0,sourceMismatch=false;
+  let sourceCursor=0,sourceMismatch=false,speechCount=0;
   for(const [key,v] of Object.entries(speakers)){
-    if(!/^[A-Za-z0-9_-]+$/.test(key))add('warning',null,`話者ID ${key} に通常形式以外の文字があります`);
-    if(!isObject(v)||typeof v.name!=='string'||!['narrator','character'].includes(v.kind))add('warning',null,`話者 ${key} のname/kindを確認してください`);
+    if(!identRe.test(key))add('error',null,`話者ID ${key} は先頭英数字・64文字以内の英数字/_/-にしてください`);
+    if(!isObject(v)||typeof v.name!=='string'||!v.name.trim()||!['narrator','character'].includes(v.kind))add('error',null,`話者 ${key} のname/kindを確認してください`);
     if(isObject(v)&&Object.hasOwn(v,'reference_clips')){
       if(!Array.isArray(v.reference_clips)||v.reference_clips.length>3)add('error',null,`話者 ${key} の reference_clips は最大3件の配列にしてください`);
       else for(const [ci,clip] of v.reference_clips.entries()){
@@ -622,7 +655,7 @@ function diagnostics(raw,low=12,high=140){
   }
   for(const [i,s] of raw.segments.entries()){
     if(!isObject(s)){add('error',i,'項目がオブジェクトではありません');continue;}
-    if(typeof s.id!=='string'||!s.id.trim()||ids.has(s.id))add('error',i,`発話ID欠落または重複: ${s.id??'(なし)'}`);else ids.add(s.id);
+    if(typeof s.id!=='string'||!identRe.test(s.id)||ids.has(s.id))add('error',i,`発話ID不正または重複: ${s.id??'(なし)'}`);else ids.add(s.id);
     if(typeof raw.source==='string'&&!sourceMismatch&&typeof s.text==='string'&&s.text){
       const found=raw.source.indexOf(s.text,sourceCursor);
       if(found<0){
@@ -635,33 +668,42 @@ function diagnostics(raw,low=12,high=140){
     const attachmentIssue=rubyIssue(s);if(attachmentIssue)add('error',i,attachmentIssue);
     if(Object.hasOwn(s,'koebuta_added_ruby')&&Object.hasOwn(s,'koebuta_tts_parts'))
       add('error',i,'v3ではTTS片の代わりに、発話IDを分けてください');
-    if(s.segment_type==='separator')continue;
+    if(s.segment_type==='separator'){
+      if(s.pause_after_ms!=null&&(!Number.isInteger(s.pause_after_ms)||s.pause_after_ms<0||s.pause_after_ms>10000))add('error',i,'区切りのpause_after_msは0〜10000の整数にしてください');
+      continue;
+    }
     if(s.segment_type!=null&&s.segment_type!=='speech'){add('error',i,`不明なsegment_type: ${s.segment_type}`);continue;}
+    speechCount++;
     if(typeof s.speaker_id!=='string'||!Object.hasOwn(speakers,s.speaker_id))add('error',i,`話者IDが存在しません: ${s.speaker_id??'(なし)'}`);
     if(typeof s.text!=='string'||!s.text.trim())add('error',i,'原文がありません');
-    if(s.emotion==null&&raw.schema_version!==2)add('warning',i,'感情が未設定（Koebutaではneutral）');
-    else if(s.emotion!=null&&!Object.hasOwn(EMOTIONS,s.emotion))add('warning',i,`不明な感情: ${s.emotion}`);
+    if(s.emotion==null&&raw.schema_version!==2)add('error',i,'schema_version 1 では感情(emotion)が必須です');
+    else if(s.emotion!=null&&!Object.hasOwn(EMOTIONS,s.emotion))add('error',i,`未定義の感情ID: ${s.emotion}`);
     const spObj=isObject(speakers[s.speaker_id])?speakers[s.speaker_id]:{};
     const promptFields=[s.tts_text,s.text,s.scene_caption,s.acting_description,spObj.voice_caption,spObj.acting_description];
     if(promptFields.some(v=>typeof v==='string'&&DRAMA3_CONTROL_TOKEN.test(v)))add('error',i,'Drama-3制御トークン <|...|> は単一話者モードで使用できません');
-    if(!s.tts_text&&typeof s.text==='string'&&DRAMA3_INLINE_TAG.test(s.text))add('warning',i,'原文に半角角括弧 [...] が含まれます（Drama-3が演技タグと誤認する可能性）');
-    if(s.text_format!=null&&!RUBY_FORMATS.includes(s.text_format))add('warning',i,`不明なルビ形式: ${s.text_format}`);
-    for(const k of ['pause_after_ms','blank_lines_after','blank_line_pause_ms'])if(s[k]!=null&&(!Number.isInteger(s[k])||s[k]<0))add('warning',i,`${k}の数値が不正です`);
-    if(s.tts_text!=null&&(typeof s.tts_text!=='string'||!s.tts_text.trim()))add('warning',i,'tts_textが空または文字列ではありません');
+    if(!s.tts_text&&typeof s.text==='string'&&DRAMA3_INLINE_TAG_TEST.test(s.text))add('warning',i,'原文に半角角括弧 [...] が含まれます（Drama-3が演技タグと誤認する可能性）');
+    if(s.tts_text&&Array.isArray(s.koebuta_added_ruby)&&s.koebuta_added_ruby.length)add('warning',i,'tts_text指定時はkoebuta_added_rubyがCLIで適用されません（tts_text側へ読みを記載してください）');
+    if(s.text_format!=null&&!RUBY_FORMATS.includes(s.text_format))add('error',i,`未対応のルビ形式: ${s.text_format}`);
+    for(const k of ['pause_after_ms','blank_line_pause_ms'])if(s[k]!=null&&(!Number.isInteger(s[k])||s[k]<0||s[k]>10000))add('error',i,`${k}は0〜10000の整数にしてください`);
+    if(s.blank_lines_after!=null&&(!Number.isInteger(s.blank_lines_after)||s.blank_lines_after<0))add('error',i,'blank_lines_afterは0以上の整数にしてください');
+    if(s.tts_text!=null&&(typeof s.tts_text!=='string'||!s.tts_text.trim()))add('error',i,'tts_textが空または文字列ではありません');
     for(const [tag,reason] of Object.entries(EXCLUDED_TAGS))if(String(s.tts_text||s.text||'').includes(tag))add('warning',i,tag+' 自動選択対象外・手動指定を保持：'+reason);
     if(s.blank_line_pause_ms!=null&&!s.blank_lines_after)add('notice',i,'空行時の間が設定されていますが、空行数が0のため未使用です');
     if(!validTtsParts(s))add('error',i,'TTS分割情報が読み上げ文と一致しません');
+    const totalLen=speechLength(s,raw);
+    if(totalLen===0)add('error',i,'タグ除去後に読み上げる文字がありません');
     const lengths=validTtsParts(s)&&Array.isArray(s.koebuta_tts_parts)
-      ?s.koebuta_tts_parts.map(p=>cplen(p.trim())):[speechLength(s,raw)];
+      ?s.koebuta_tts_parts.map(p=>cplen(p.replace(TAG_PATTERN,'').replace(DRAMA3_INLINE_TAG,'').trim())):[totalLen];
     for(const [partIndex,n] of lengths.entries()){
       const prefix=lengths.length>1?`TTS片 ${partIndex+1}: `:'';
-      if(n!==null&&n<low)add('notice',i,`${prefix}短文 ${n}文字（${low}文字未満）`);
+      if(n!==null&&n>0&&n<low)add('notice',i,`${prefix}短文 ${n}文字（${low}文字未満）`);
       if(n!==null&&n>high)add('notice',i,`${prefix}長文 ${n}文字（${high}文字超）`);
     }
     if(spoken(s,raw).warnings.length)add('warning',i,'ルビ変換を確認してください');
     if(isObject(s.koebuta_edit)&&s.koebuta_edit.needs_review)add('notice',i,'編集後の要確認');
     if(isObject(s.koebuta_edit)&&s.koebuta_edit.forced)add('warning',i,'強制結合済み：話者・感情・演技・発話後の間を確認してください');
   }
+  if(!speechCount)add('error',null,'読み上げ対象の発話(speech)が1件もありません');
   return issues;
 }
 
@@ -670,13 +712,13 @@ const byId=id=>document.getElementById(id);
 const html=s=>String(s??'').replace(/[&<>"']/g,x=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[x]));
 const docOk=()=>state.doc&&Array.isArray(state.doc.segments)&&state.doc.speakers&&typeof state.doc.speakers==='object'&&!Array.isArray(state.doc.speakers);
 let state={doc:null,folder:null,filename:'scenario.json',dirty:false,selected:new Set(),partSelected:new Set(),speaker:null,filter:'all',search:'',page:0,pageSize:80,issues:[],low:15,high:140,undo:[],redo:[],pendingWavs:new Map(),newLoadedWavs:new Map(),wavIssues:[],saving:false};
-const settings=()=>({...DEFAULT_SETTINGS,...(state.doc?.koebuta_settings||{})});
-function inform(msg,isError=false){const e=byId('status');e.textContent=msg;e.className=isError?'status error':'status';}
+const settings=()=>({...DEFAULT_SETTINGS,...(isObject(state.doc?.koebuta_settings)?state.doc.koebuta_settings:{})});
+function inform(msg,isError=false){const e=byId('status');e.textContent=msg;e.className=isError?'statusbar error':'statusbar';}
 // File objects are immutable references. Snapshot Maps separately: JSON cloning
 // cannot represent a File, and a document-only undo would silently restore the
 // wrong WAV content when a user reassigns an existing path.
-function snapshot(){return {doc:clone(state.doc),pendingWavs:new Map(state.pendingWavs),newLoadedWavs:new Map(state.newLoadedWavs)};}
-function restoreSnapshot(v){state.doc=v.doc;state.pendingWavs=new Map(v.pendingWavs);state.newLoadedWavs=new Map(v.newLoadedWavs);}
+function snapshot(){return {doc:clone(state.doc),speaker:state.speaker,pendingWavs:new Map(state.pendingWavs),newLoadedWavs:new Map(state.newLoadedWavs)};}
+function restoreSnapshot(v){state.doc=v.doc;state.speaker=(v.speaker&&Object.hasOwn(v.doc?.speakers||{},v.speaker))?v.speaker:(Object.keys(v.doc?.speakers||{})[0]||null);state.pendingWavs=new Map(v.pendingWavs);state.newLoadedWavs=new Map(v.newLoadedWavs);}
 function change(next,label='編集',nextPending=null){
   if(!state.doc)return;
   if(state.saving){alert('作品フォルダへ保存中です。保存完了後に編集してください。');refresh();return;}
@@ -1005,9 +1047,12 @@ function assignRoleWav(key,file){
   if(typeof key==='string'&&key.startsWith('__clip__:')){
     const [,spk,idxStr]=key.split(':');const idx=Number(idxStr);
     const safeSpk=(spk||'voice').replace(/[^A-Za-z0-9_-]/g,'_')||'voice';
-    const path=`voices/${safeSpk}_0${idx+1}.wav`;
     const next=clone(state.doc);const sp=next.speakers[spk];
     if(!Array.isArray(sp.reference_clips))sp.reference_clips=[];
+    const currentPath=sp.reference_clips?.[idx]?.wav||'';
+    const usedPaths=referencedWavs(state.doc);if(currentPath)usedPaths.delete(currentPath);
+    let slot=idx+1,path=`voices/${safeSpk}_0${slot}.wav`;
+    while(usedPaths.has(path)){slot++;path=`voices/${safeSpk}_0${slot}.wav`;}
     sp.reference_clips[idx]={...(sp.reference_clips[idx]||{}),wav:path};
     const pending=new Map(state.pendingWavs);pending.set(path,file);
     change(next,'参照クリップWAVを割当',pending);return;
@@ -1075,19 +1120,27 @@ function settingsDialog(){state.stagedShared=null;const s=settings();
 function applySettings(){const next=clone(state.doc);const obj={...settings()};
   for(const [k,v] of Object.entries(DEFAULT_SETTINGS)){
     const el=byId('g_'+k);if(!el)continue;
-    obj[k]=el.type==='checkbox'?el.checked:['seed','steps','default_pause_ms','default_blank_line_pause_ms'].includes(k)?Number(el.value):el.value||null;
+    if(el.type==='checkbox')obj[k]=el.checked;
+    else if(k==='default_blank_line_pause_ms')obj[k]=el.value===''?null:Number(el.value);
+    else if(['seed','steps','default_pause_ms'].includes(k))obj[k]=Number(el.value);
+    else obj[k]=el.value||null;
   }
   const low=Number(byId('g_low').value),high=Number(byId('g_high').value);
   if(!Number.isInteger(low)||!Number.isInteger(high)||low<1||low>=high)throw Error('短文と長文の基準値が不正です');
-  if(!Number.isInteger(obj.seed)||!Number.isInteger(obj.steps)||obj.steps<=0||!Number.isInteger(obj.default_pause_ms)||obj.default_pause_ms<0||!Number.isInteger(obj.default_blank_line_pause_ms)||obj.default_blank_line_pause_ms<0)throw Error('生成設定の数値を確認してください');
+  if(!Number.isInteger(obj.seed)||obj.seed<0||obj.seed>9007199254740991||!Number.isInteger(obj.steps)||obj.steps<=0||!Number.isInteger(obj.default_pause_ms)||obj.default_pause_ms<0||obj.default_pause_ms>10000||(obj.default_blank_line_pause_ms!==null&&(!Number.isInteger(obj.default_blank_line_pause_ms)||obj.default_blank_line_pause_ms<0||obj.default_blank_line_pause_ms>10000)))throw Error('生成設定の数値を確認してください');
   const pending=new Map(state.pendingWavs);
   if(state.stagedShared)pending.set(state.stagedShared.path,state.stagedShared.file);
   next.koebuta_settings=obj;state.low=low;state.high=high;change(next,'生成設定を変更',pending);state.stagedShared=null;byId('settingsDialog').close();
 }
 function selectRows(index,checked,shift){
   state.partSelected.clear();
-  if(shift&&state.lastClicked!=null){for(let i=Math.min(index,state.lastClicked);i<=Math.max(index,state.lastClicked);i++)if(checked)state.selected.add(i);else state.selected.delete(i);}
-  else if(checked)state.selected.add(index);else state.selected.delete(index);
+  if(shift&&state.lastClicked!=null){
+    const visible=new Set(filteredIndices());
+    for(let i=Math.min(index,state.lastClicked);i<=Math.max(index,state.lastClicked);i++){
+      if(!visible.has(i))continue;
+      if(checked)state.selected.add(i);else state.selected.delete(i);
+    }
+  }else if(checked)state.selected.add(index);else state.selected.delete(index);
   state.lastClicked=index;renderTable();
 }
 function getMergeIndices(){const arr=[...state.selected].sort((a,b)=>a-b);if(!arr.length)throw Error('結合する行を選択してください');
@@ -1159,13 +1212,19 @@ byId('zipBtn').addEventListener('click',()=>exportZip().catch(e=>alert('ZIP出�
 function buildCliSettings(doc){
   const rawKs=isObject(doc?.koebuta_settings)?doc.koebuta_settings:{};
   const ks={...DEFAULT_SETTINGS,...rawKs};
-  const voices={};
+  const readingMode=ks.reading_mode==='shared'?'shared':'cast';
+  const voices={},speakerVoices={};
   for(const [spkId,sp] of Object.entries(doc?.speakers||{})){
     if(!isObject(sp))continue;
     if(Array.isArray(sp.reference_clips)&&sp.reference_clips.length){
       const valid=sp.reference_clips.filter(c=>isObject(c)&&typeof c.wav==='string'&&c.wav.trim()).map(c=>({wav:c.wav.trim(),transcript:String(c.transcript||'').trim()}));
-      if(valid.length)voices[spkId]=valid;
+      if(valid.length){voices[spkId]=valid;speakerVoices[spkId]=spkId;}
     }
+  }
+  const activeSpeakers=new Set((doc?.segments||[]).filter(s=>isObject(s)&&s.segment_type!=='separator'&&typeof s.speaker_id==='string').map(s=>s.speaker_id));
+  const missingClone=[...activeSpeakers].filter(id=>!Object.hasOwn(voices,id));
+  if(Object.keys(voices).length>0&&readingMode==='cast'&&missingClone.length>0){
+    throw Error(`話者別のクローン設定として出力するには、発話のある全話者に参照クリップを設定してください（未設定: ${missingClone.join('、')}）`);
   }
   const hasClone=Object.keys(voices).length>0;
   const firstCaption=Object.values(doc?.speakers||{}).map(sp=>sp?.voice_caption?.trim()).find(Boolean)||'落ち着いた明瞭な日本語の朗読。';
@@ -1178,20 +1237,23 @@ function buildCliSettings(doc){
     quant:'IQ3_XXS',
     sampleRate:44100,
     normalizeRmsDb:-18.0,
-    reading:ks.reading_mode==='shared'?'shared':'cast',
+    reading:readingMode,
     voiceMode:hasClone?'clone':'design',
     cloneCaption:false,
     acting:Boolean(ks.use_acting),
     emotion:Boolean(ks.use_emotion),
     narratorEmotion:Boolean(ks.narrator_emotion),
-    seed:Number.isInteger(ks.seed)?ks.seed:314,
-    pause:Number(((Number.isInteger(ks.default_pause_ms)?ks.default_pause_ms:280)/1000).toFixed(3)),
-    textOptions:{format:RUBY_FORMATS.includes(ks.default_text_format)?ks.default_text_format:'none'}
+    seed:Number.isInteger(ks.seed)&&ks.seed>=0?ks.seed:314,
+    pause:Number(((Number.isInteger(ks.default_pause_ms)&&ks.default_pause_ms>=0?ks.default_pause_ms:280)/1000).toFixed(3)),
+    textOptions:{format:RUBY_FORMATS.includes(ks.default_text_format)?ks.default_text_format:'aozora'}
   };
-  if(Object.hasOwn(rawKs,'default_blank_line_pause_ms')&&Number.isInteger(rawKs.default_blank_line_pause_ms)){
+  if(Number.isInteger(rawKs.default_blank_line_pause_ms)&&rawKs.default_blank_line_pause_ms>=0){
     out.blankLinePauseMs=rawKs.default_blank_line_pause_ms;
   }
-  if(hasClone)out.voices=voices;else out.baseCaption=firstCaption;
+  if(hasClone){
+    out.voices=voices;
+    if(readingMode==='cast')out.speakerVoices=speakerVoices;
+  }else out.baseCaption=firstCaption;
   return out;
 }
 function exportCliSettings(){
@@ -1216,7 +1278,7 @@ byId('speakerDetail').addEventListener('change',e=>{
   const el=e.target;
   if(el.dataset.roleId!==undefined){
     const old=state.speaker,newId=el.value.trim();if(newId===old)return;
-    if(!/^[A-Za-z0-9_-]+$/.test(newId)||Object.hasOwn(state.doc.speakers,newId)){alert('英数字・ハイフン・アンダースコアを使い、既存と異なる話者IDにしてください');renderSpeakers();return;}
+    if(!/^[A-Za-z0-9][A-Za-z0-9_-]{0,39}$/.test(newId)||newId==='none'||Object.hasOwn(state.doc.speakers,newId)){alert('先頭英数字・40文字以内の英数字/_/-を使い、予約語(none)や既存と異なる話者IDにしてください');renderSpeakers();return;}
     const next=clone(state.doc),before=next.speakers;next.speakers={};for(const [key,val] of Object.entries(before))next.speakers[key===old?newId:key]=val;
     for(const s of next.segments)if(s?.speaker_id===old)s.speaker_id=newId;
     state.speaker=newId;change(next,'話者IDを変更');return;
@@ -1276,29 +1338,31 @@ for(const name of ['focusin','input','keyup','mouseup','select'])byId('rows').ad
 });
 const eventTools=document.createElement('span');
 const eventSelect=document.createElement('select');
-eventSelect.setAttribute('aria-label','読みへ挿入する効果音');
-for(const tag of EVENT_TAGS){const option=document.createElement('option');option.value=tag;option.textContent=tag;eventSelect.append(option);}
+eventSelect.setAttribute('aria-label','読みへ挿入するDrama-3公式演技タグ');
+for(const tag of DRAMA3_QUICK_TAGS){const option=document.createElement('option');option.value=tag;option.textContent=tag;eventSelect.append(option);}
 const eventButton=document.createElement('button');
-eventButton.textContent='読みのカーソルに挿入';
+eventButton.textContent='タグをカーソルに挿入';
 eventButton.onclick=()=>{
-  if(!docOk()||!eventTarget||eventTarget.readOnly){alert('挿入先のTTS text欄をクリックしてください。');return;}
-  const el=eventTarget;
-  if(el.dataset.ttsPartField){
-    const [i,j]=el.dataset.ttsPartField.split(':').map(Number);
-    const live=String(state.doc.segments?.[i]?.koebuta_tts_parts?.[j]??'');
-    const start=Math.min(el.selectionStart??live.length,live.length),end=Math.min(el.selectionEnd??start,live.length);
-    commitTtsPart(i,j,live.slice(0,start)+eventSelect.value+live.slice(end));
-  }else{
-    const idx=Number(el.dataset.idx),seg=state.doc.segments?.[idx];if(!seg)return;
-    let live=String(seg.tts_text??''),start=Math.min(el.selectionStart??live.length,live.length),end=Math.min(el.selectionEnd??start,live.length);
-    if(!live.trim()){
-      const initial=spoken(seg,state.doc);
-      if(initial.warnings.length){alert('読みを確認してから挿入してください。');return;}
-      live=initial.value;start=end=live.length;
+  try{
+    if(!docOk()||!eventTarget||eventTarget.readOnly){alert('挿入先のTTS text欄をクリックしてください。');return;}
+    const el=eventTarget;
+    if(el.dataset.ttsPartField){
+      const [i,j]=el.dataset.ttsPartField.split(':').map(Number);
+      const live=String(state.doc.segments?.[i]?.koebuta_tts_parts?.[j]??'');
+      const start=Math.min(el.selectionStart??live.length,live.length),end=Math.min(el.selectionEnd??start,live.length);
+      commitTtsPart(i,j,live.slice(0,start)+eventSelect.value+live.slice(end));
+    }else{
+      const idx=Number(el.dataset.idx),seg=state.doc.segments?.[idx];if(!seg)return;
+      let live=String(seg.tts_text??''),start=Math.min(el.selectionStart??live.length,live.length),end=Math.min(el.selectionEnd??start,live.length);
+      if(!live.trim()){
+        const initial=spoken(seg,state.doc);
+        if(initial.warnings.length){alert('読みを確認してから挿入してください。');return;}
+        live=initial.value;start=end=live.length;
+      }
+      commitField(idx,'tts_text',live.slice(0,start)+eventSelect.value+live.slice(end));
     }
-    commitField(idx,'tts_text',live.slice(0,start)+eventSelect.value+live.slice(end));
-  }
-  eventTarget=null;
+    eventTarget=null;
+  }catch(e){alert(e.message);}
 };
 eventTools.append(eventSelect,eventButton);document.querySelector('.controls').append(eventTools);
 byId('search').addEventListener('input',e=>{state.search=e.target.value;state.page=0;renderTable()});

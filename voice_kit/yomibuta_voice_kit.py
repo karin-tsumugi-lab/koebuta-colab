@@ -20,7 +20,9 @@ CLI_SCRIPT = CLI_DIR / "yomibuta_generate.py"
 if str(CLI_DIR) not in sys.path:
     sys.path.insert(0, str(CLI_DIR))
 
-from yomibuta_cli.core import identifier
+from yomibuta_cli.core import identifier, load_json
+from yomibuta_cli.drama3_tags import find_forbidden_control_tokens, strip_inline_tags
+from yomibuta_cli.plan import ALLOWED_SETTINGS_KEYS
 
 DEFAULT_TEXT = "窓の外では静かに雨が降り続いていた。これからどこへ向かうつもりなのか、落ち着いた声が静かな部屋に柔らかく響く。"
 
@@ -58,46 +60,84 @@ PRESETS: dict[str, dict[str, str]] = {
 
 def _adopt_seed(args: argparse.Namespace) -> int:
     identifier(args.profile, "voice profile", 40)
+    if args.profile == "none":
+        print("ERROR: 'none' は予約語のためプロファイル名に使用できません", file=sys.stderr)
+        return 2
     src_dir = args.from_out.resolve()
     cand_json = src_dir / "candidates.json"
     if not cand_json.is_file():
         print(f"ERROR: candidates.json が見つかりません: {cand_json}", file=sys.stderr)
         return 1
-    meta = json.loads(cand_json.read_text(encoding="utf-8"))
-    chosen = next((c for c in meta.get("candidates", []) if c.get("seed") == args.adopt), None)
+    try:
+        meta = load_json(cand_json)
+        if not isinstance(meta, dict) or not isinstance(meta.get("candidates"), list):
+            raise ValueError("candidates.json の構造が不正です")
+    except (OSError, ValueError) as exc:
+        print(f"ERROR: candidates.json の読み込みに失敗しました: {exc}", file=sys.stderr)
+        return 2
+
+    chosen = next(
+        (
+            c
+            for c in meta["candidates"]
+            if isinstance(c, dict) and type(c.get("seed")) is int and c.get("seed") == args.adopt
+        ),
+        None,
+    )
     if chosen is None:
         print(f"ERROR: シード {args.adopt} が candidates.json に見つかりません", file=sys.stderr)
         return 1
-    src_wav = src_dir / chosen["file"]
-    if not src_wav.is_file():
+    cand_file = chosen.get("file")
+    if not isinstance(cand_file, str) or not cand_file.strip():
+        print("ERROR: 候補エントリに有効な file 名がありません", file=sys.stderr)
+        return 2
+    cand_rel = Path(cand_file)
+    if cand_rel.is_absolute() or ".." in cand_rel.parts:
+        print(f"ERROR: candidates.json 内の不正なファイルパスを拒否しました: {cand_file!r}", file=sys.stderr)
+        return 2
+    src_wav = (src_dir / cand_rel).resolve()
+    if not src_wav.is_relative_to(src_dir) or not src_wav.is_file():
         print(f"ERROR: 候補WAVが見つかりません: {src_wav}", file=sys.stderr)
         return 1
 
     save_to = args.save_to.resolve()
+    if save_to.suffix.lower() != ".wav":
+        print(f"ERROR: --save-to には .wav ファイルパスを指定してください: {save_to}", file=sys.stderr)
+        return 2
     voice_meta_path = save_to.with_suffix(".voice_meta.json")
     settings_path = args.write_settings.resolve() if args.write_settings else None
+    if settings_path is not None and settings_path == save_to:
+        print("ERROR: --save-to と --write-settings に同じパスは指定できません", file=sys.stderr)
+        return 2
 
-    # Pre-check all target paths BEFORE writing any file to avoid partial-apply states.
+    # Pre-check all target paths (including broken symlinks) BEFORE writing any file.
     if not args.overwrite:
-        if save_to.exists():
+        if save_to.exists() or save_to.is_symlink():
             print(f"ERROR: 保存先WAVが既に存在します（--overwrite で上書き可）: {save_to}", file=sys.stderr)
             return 1
-        if voice_meta_path.exists():
+        if voice_meta_path.exists() or voice_meta_path.is_symlink():
             print(f"ERROR: メタデータが既に存在します（--overwrite で上書き可）: {voice_meta_path}", file=sys.stderr)
             return 1
-        if settings_path is not None and settings_path.exists():
+        if settings_path is not None and (settings_path.exists() or settings_path.is_symlink()):
             print(f"ERROR: settings.json が既に存在します（--overwrite で上書き可）: {settings_path}", file=sys.stderr)
             return 1
 
+    clean_transcript = strip_inline_tags(str(meta.get("text") or "")).strip()
+    if not clean_transcript:
+        print("ERROR: candidates.json の文字起こしテキストが空です", file=sys.stderr)
+        return 2
+
     save_to.parent.mkdir(parents=True, exist_ok=True)
+    if save_to.is_symlink():
+        save_to.unlink()
     shutil.copy2(src_wav, save_to)
 
     voice_meta = {
         "engine": "drama3",
         "seed": chosen["seed"],
-        "caption": meta.get("caption", ""),
-        "transcript": meta.get("text", ""),
-        "source_wav": chosen["file"],
+        "caption": str(meta.get("caption") or ""),
+        "transcript": clean_transcript,
+        "source_wav": cand_file,
     }
     voice_meta_path.write_text(json.dumps(voice_meta, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(f"ADOPTED_WAV {save_to}")
@@ -109,38 +149,51 @@ def _adopt_seed(args: argparse.Namespace) -> int:
             rel_wav = Path(os.path.relpath(save_to, settings_path.parent)).as_posix()
         except ValueError:
             rel_wav = str(save_to)
-        existing_voices: dict = {}
+
+        prev_doc: dict = {}
         if settings_path.is_file():
             try:
-                prev_doc = json.loads(settings_path.read_text(encoding="utf-8"))
-                if isinstance(prev_doc, dict) and isinstance(prev_doc.get("voices"), dict):
-                    existing_voices = dict(prev_doc["voices"])
+                loaded_prev = load_json(settings_path)
+                if isinstance(loaded_prev, dict):
+                    prev_doc = {k: v for k, v in loaded_prev.items() if k in ALLOWED_SETTINGS_KEYS}
             except Exception:
                 pass
+        existing_voices = dict(prev_doc.get("voices")) if isinstance(prev_doc.get("voices"), dict) else {}
         existing_voices[args.profile] = [
             {
                 "wav": rel_wav,
-                "transcript": meta.get("text", ""),
+                "transcript": clean_transcript,
             }
         ]
-        settings_doc = {
-            "title": args.title or "新しい朗読",
+        reading_mode = prev_doc.get("reading") if prev_doc.get("reading") in ("shared", "cast") else ("cast" if len(existing_voices) > 1 else "shared")
+        if len(existing_voices) > 1:
+            reading_mode = "cast"
+
+        settings_doc: dict = {
+            "title": args.title or prev_doc.get("title") or "新しい朗読",
             "ttsEngine": "drama3",
             "ttsModel": "Aratako/Drama-3-Japanese",
             "backend": "speech_cpp_gguf",
             "quant": "IQ3_XXS",
             "sampleRate": 44100,
             "normalizeRmsDb": -18.0,
-            "reading": "cast" if len(existing_voices) > 1 else "shared",
+            **prev_doc,
+            "reading": reading_mode,
             "voiceMode": "clone",
-            "cloneCaption": False,
+            "cloneCaption": bool(prev_doc.get("cloneCaption", False)),
             "voices": existing_voices,
-            "acting": True,
-            "emotion": True,
-            "narratorEmotion": True,
+            "acting": bool(prev_doc.get("acting", True)),
+            "emotion": bool(prev_doc.get("emotion", True)),
+            "narratorEmotion": bool(prev_doc.get("narratorEmotion", True)),
             "seed": chosen["seed"],
-            "pause": 0.28,
+            "pause": prev_doc.get("pause", 0.28),
         }
+        settings_doc.pop("baseCaption", None)
+        if reading_mode == "cast":
+            prev_sv = dict(prev_doc.get("speakerVoices")) if isinstance(prev_doc.get("speakerVoices"), dict) else {}
+            for prof_key in existing_voices:
+                prev_sv.setdefault(prof_key, prof_key)
+            settings_doc["speakerVoices"] = prev_sv
         settings_path.write_text(json.dumps(settings_doc, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         print(f"SETTINGS_WRITTEN {settings_path}")
     return 0
@@ -158,8 +211,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--job-prefix", default="vk")
     parser.add_argument("--gpu", default="T4")
     parser.add_argument("--new", action="store_true")
+    parser.add_argument("--prebuilt-bin", type=Path, help="Optional custom prebuilt speech binary path")
     parser.add_argument("--skip-binary-upload", action="store_true")
     parser.add_argument("--keep-session", action="store_true")
+    parser.add_argument("--keep-on-error", action="store_true")
+    parser.add_argument("--timeout", type=int, default=1800)
     parser.add_argument("--dry-run", action="store_true")
     # Adopt mode
     parser.add_argument("--from-out", type=Path, help="Audition output directory containing candidates.json")
@@ -188,8 +244,10 @@ def main(argv: list[str] | None = None) -> int:
     caption = args.caption or (PRESETS[args.preset]["caption"] if args.preset else "")
     if not caption or not caption.strip():
         parser.error("--preset または空でない --caption を指定してください")
-    if not isinstance(args.text, str) or not args.text.strip():
-        parser.error("--text に空でない試聴セリフを指定してください")
+    if not isinstance(args.text, str) or not strip_inline_tags(args.text).strip():
+        parser.error("--text に読み上げ文字を含む試聴セリフを指定してください")
+    if find_forbidden_control_tokens(caption) or find_forbidden_control_tokens(args.text):
+        parser.error("--caption または --text に使用禁止の制御トークン <|...|> が含まれています")
     try:
         seeds = [int(s.strip()) for s in args.seeds.split(",") if s.strip()]
     except ValueError:
@@ -236,39 +294,49 @@ def main(argv: list[str] | None = None) -> int:
     if not args.out:
         parser.error("--out を指定してください")
     out_dir = args.out.resolve()
-    if out_dir.exists() and any(out_dir.iterdir()):
-        print(f"ERROR: 出力先フォルダーが空ではありません: {out_dir}", file=sys.stderr)
-        return 1
+    if out_dir.exists():
+        if not out_dir.is_dir() or any(out_dir.iterdir()):
+            print(f"ERROR: 出力先フォルダーが既に存在し空ではありません: {out_dir}", file=sys.stderr)
+            return 1
+
+    run_work = out_dir / "_cli_batch"
     out_dir.mkdir(parents=True, exist_ok=True)
-
     candidates = []
-    with tempfile.TemporaryDirectory() as td:
-        tmp = Path(td)
-        sc_path = tmp / "audition_scenario.json"
-        st_path = tmp / "audition_settings.json"
-        run_out = tmp / "run_batch"
-        sc_path.write_text(json.dumps(scenario, ensure_ascii=False, indent=2), encoding="utf-8")
-        st_path.write_text(json.dumps(st_doc, ensure_ascii=False, indent=2), encoding="utf-8")
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            sc_path = tmp / "audition_scenario.json"
+            st_path = tmp / "audition_settings.json"
+            sc_path.write_text(json.dumps(scenario, ensure_ascii=False, indent=2), encoding="utf-8")
+            st_path.write_text(json.dumps(st_doc, ensure_ascii=False, indent=2), encoding="utf-8")
 
-        cmd = [
-            sys.executable, str(CLI_SCRIPT),
-            "--scenario", str(sc_path),
-            "--settings", str(st_path),
-            "--session", args.session,
-            "--job", f"{args.job_prefix}batch",
-            "--out", str(run_out),
-            "--gpu", args.gpu,
-        ]
-        if args.new:
-            cmd.append("--new")
-        if args.skip_binary_upload:
-            cmd.append("--skip-binary-upload")
-        if not args.keep_session:
-            cmd.append("--stop-after-download")
-        subprocess.run(cmd, check=True)
+            cmd = [
+                sys.executable, str(CLI_SCRIPT),
+                "--scenario", str(sc_path),
+                "--settings", str(st_path),
+                "--session", args.session,
+                "--job", f"{args.job_prefix}batch",
+                "--out", str(run_work),
+                "--gpu", args.gpu,
+                "--timeout", str(args.timeout),
+            ]
+            if args.new:
+                cmd.append("--new")
+            if args.prebuilt_bin:
+                cmd.extend(["--prebuilt-bin", str(args.prebuilt_bin)])
+            if args.skip_binary_upload:
+                cmd.append("--skip-binary-upload")
+            if args.keep_on_error:
+                cmd.append("--keep-on-error")
+            if not args.keep_session:
+                cmd.append("--stop-after-download")
+            proc = subprocess.run(cmd, check=False)
+            if proc.returncode != 0:
+                print(f"ERROR: 候補音声の生成に失敗しました (詳細: {run_work / 'pipeline.json'})", file=sys.stderr)
+                return proc.returncode
 
         # Extract raw per-seed WAVs from segments.zip
-        with zipfile.ZipFile(run_out / "segments.zip", "r") as zf:
+        with zipfile.ZipFile(run_work / "segments.zip", "r") as zf:
             names = zf.namelist()
             for idx, seed in enumerate(seeds, 1):
                 seg_id = f"cand_{idx:02d}"
@@ -278,9 +346,13 @@ def main(argv: list[str] | None = None) -> int:
                 cand_name = f"candidate_{idx:02d}_seed{seed}.wav"
                 (out_dir / cand_name).write_bytes(zf.read(matched))
                 candidates.append({"index": idx, "seed": seed, "file": cand_name})
+        shutil.rmtree(run_work, ignore_errors=True)
+    except Exception as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
 
     (out_dir / "candidates.json").write_text(
-        json.dumps({"caption": caption, "text": args.text, "candidates": candidates}, ensure_ascii=False, indent=2) + "\n",
+        json.dumps({"caption": caption, "text": strip_inline_tags(args.text).strip(), "candidates": candidates}, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
     print(f"VOICE_KIT_READY {out_dir} ({len(candidates)} candidates)")

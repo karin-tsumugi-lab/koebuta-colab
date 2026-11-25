@@ -91,11 +91,16 @@ def _download_chunked(session: str, chunks: list[dict], dest: Path) -> None:
     try:
         with tmp_dest.open("wb") as out:
             for idx, item in enumerate(chunks):
+                if not isinstance(item, dict) or not isinstance(item.get("remote"), str):
+                    raise RuntimeError(f"不正なチャンク情報です: {item!r}")
+                rem_path = item["remote"]
+                if not rem_path.startswith(("/content/", "/tmp/")) or ".." in Path(rem_path).parts:
+                    raise RuntimeError(f"許可されていない遠隔チャンクパスです: {rem_path!r}")
                 part_local = dest.parent / f"_dlchunk_{idx:03d}.bin"
                 try:
-                    _run_colab(["download", "-s", session, item["remote"], str(part_local)], timeout=300)
-                    if file_hash(part_local) != item["sha256"]:
-                        raise RuntimeError(f"ダウンロードチャンクのSHA256不一致: {item['remote']}")
+                    _run_colab(["download", "-s", session, rem_path, str(part_local)], timeout=300)
+                    if file_hash(part_local) != item.get("sha256"):
+                        raise RuntimeError(f"ダウンロードチャンクのSHA256不一致: {rem_path}")
                     with part_local.open("rb") as src:
                         shutil.copyfileobj(src, out)
                 finally:
@@ -114,9 +119,15 @@ def _verify_and_collect(
     expected_job: str,
     expected_plan_signature: str,
     expected_sample_rate: int,
-    expected_nonce: str | None,
-) -> tuple[bool, list[dict]]:
-    """Download manifest + artifacts and strictly verify identity, signature, hashes, and WAV format."""
+    expected_nonce: str,
+) -> tuple[str, list[dict], list[dict]]:
+    """Download manifest + artifacts and strictly verify identity, signature, hashes, and WAV format.
+
+    Returns `(remote_status, warnings, remote_errors)`.
+    """
+    if not isinstance(expected_nonce, str) or len(expected_nonce) < 4:
+        raise RuntimeError("manifest 照合用の nonce が不正または欠落しています")
+    out_dir.mkdir(parents=True, exist_ok=True)
     manifest_local = out_dir / "manifest.json"
     _run_colab(["download", "-s", session, remote_manifest, str(manifest_local)], timeout=120)
     manifest = load_json(manifest_local)
@@ -126,35 +137,48 @@ def _verify_and_collect(
         raise RuntimeError(f"manifest の契約が一致しません: {manifest.get('contract')!r}")
     if manifest.get("job_id") != expected_job:
         raise RuntimeError(f"manifest の job_id が一致しません (期待={expected_job}, 実体={manifest.get('job_id')})")
-    if expected_nonce is not None and manifest.get("nonce") != expected_nonce:
+    if manifest.get("nonce") != expected_nonce:
         raise RuntimeError(
             "manifest の実行受付ID (nonce) が一致しません（古いジョブ結果の誤回収を防止しました）"
         )
-    if manifest.get("status") != "complete":
-        return False, manifest.get("warnings") or []
+    warnings = manifest.get("warnings") if isinstance(manifest.get("warnings"), list) else []
+    remote_errors = manifest.get("errors") if isinstance(manifest.get("errors"), list) else []
+    status = str(manifest.get("status") or "unknown")
+    if status != "complete":
+        return status, warnings, remote_errors
     if manifest.get("plan_signature") != expected_plan_signature:
         raise RuntimeError("manifest の plan_signature が現在の生成計画と一致しません")
 
     dl_chunks = manifest.get("download_chunks") or {}
+    tmp_wav = out_dir / "_verify_result.wav.tmp"
+    tmp_zip = out_dir / "_verify_segments.zip.tmp"
     result_wav = out_dir / "result.wav"
     seg_zip = out_dir / "segments.zip"
 
-    _download_chunked(session, dl_chunks.get("result.wav"), result_wav)
-    _download_chunked(session, dl_chunks.get("segments.zip"), seg_zip)
+    try:
+        _download_chunked(session, dl_chunks.get("result.wav"), tmp_wav)
+        _download_chunked(session, dl_chunks.get("segments.zip"), tmp_zip)
 
-    comb = manifest["combined"]
-    actual = wav_info(result_wav)
-    if (
-        actual["sha256"] != comb["sha256"]
-        or actual["frames"] != comb["frames"]
-        or actual["sample_rate"] != expected_sample_rate
-        or actual["channels"] != 1
-        or actual["sampwidth"] != 2
-    ):
-        raise RuntimeError(f"回収した result.wav の検証に失敗しました: {actual}")
-    if file_hash(seg_zip) != manifest["segments_zip"]["sha256"]:
-        raise RuntimeError("回収した segments.zip のSHA256が一致しません")
-    return True, manifest.get("warnings") or []
+        comb = manifest["combined"]
+        actual = wav_info(tmp_wav)
+        if (
+            actual["sha256"] != comb["sha256"]
+            or actual["frames"] != comb["frames"]
+            or actual["sample_rate"] != expected_sample_rate
+            or actual["channels"] != 1
+            or actual["sampwidth"] != 2
+        ):
+            raise RuntimeError(f"回収した result.wav の検証に失敗しました: {actual}")
+        if file_hash(tmp_zip) != manifest["segments_zip"]["sha256"]:
+            raise RuntimeError("回収した segments.zip のSHA256が一致しません")
+
+        tmp_wav.replace(result_wav)
+        tmp_zip.replace(seg_zip)
+    except BaseException:
+        tmp_wav.unlink(missing_ok=True)
+        tmp_zip.unlink(missing_ok=True)
+        raise
+    return "complete", warnings, remote_errors
 
 
 def _write_remote_bootstrap(
@@ -166,6 +190,7 @@ def _write_remote_bootstrap(
     timeout_sec: int,
     job_dir_remote: str,
     plan_remote: str,
+    plan_parts: int,
     bin_gz_remote: str,
     bin_parts: int,
     voice_parts: dict[str, int],
@@ -173,13 +198,15 @@ def _write_remote_bootstrap(
 ) -> None:
     voice_parts_json = json.dumps(voice_parts, ensure_ascii=False)
     script = f"""#!/usr/bin/env python3
-import os, sys, zipfile
+import os, shutil, sys, zipfile
 from pathlib import Path
 
 code_root = Path('/content/yomibuta_code')
+shutil.rmtree(code_root, ignore_errors=True)
 code_root.mkdir(parents=True, exist_ok=True)
 with zipfile.ZipFile({code_zip_remote!r}, 'r') as zf:
     zf.extractall(code_root)
+Path({code_zip_remote!r}).unlink(missing_ok=True)
 
 for mod_name in [k for k in list(sys.modules) if k == 'yomibuta_cli' or k.startswith('yomibuta_cli.')]:
     sys.modules.pop(mod_name, None)
@@ -190,6 +217,7 @@ os.environ['YOMIBUTA_REMOTE_NONCE'] = {nonce!r}
 os.environ['YOMIBUTA_REMOTE_TIMEOUT'] = {str(timeout_sec)!r}
 os.environ['YOMIBUTA_REMOTE_JOB_DIR'] = {job_dir_remote!r}
 os.environ['YOMIBUTA_REMOTE_PLAN'] = {plan_remote!r}
+os.environ['YOMIBUTA_REMOTE_PLAN_PARTS'] = {str(plan_parts)!r}
 os.environ['YOMIBUTA_REMOTE_BIN_GZ'] = {bin_gz_remote!r}
 os.environ['YOMIBUTA_REMOTE_BIN_PARTS'] = {str(bin_parts)!r}
 os.environ['YOMIBUTA_REMOTE_VOICE_PARTS'] = {voice_parts_json!r}
@@ -215,33 +243,75 @@ def _run_recover_mode(args: argparse.Namespace) -> int:
         print("ERROR: 'colab' CLI not found in PATH", file=sys.stderr)
         return 1
 
-    inv = load_json(inv_path)
-    plan = load_json(plan_path)
-    if not isinstance(inv, dict) or not isinstance(plan, dict):
-        print("ERROR: invocation.json または plan.json が不正です", file=sys.stderr)
+    try:
+        inv = load_json(inv_path)
+        plan = load_json(plan_path)
+        if not isinstance(inv, dict) or not isinstance(plan, dict):
+            raise ValueError("invocation.json または plan.json がオブジェクトではありません")
+        if inv.get("contract") != CONTRACT or plan.get("contract") != CONTRACT:
+            raise ValueError("契約バージョンが一致しません")
+        session = identifier(args.session or inv.get("session"), "session", 60)
+        job = identifier(inv.get("job"), "job", 60)
+        nonce = inv.get("nonce")
+        if not isinstance(nonce, str) or len(nonce) < 4:
+            raise ValueError("invocation.json に有効な nonce がありません")
+        plan_sig = plan["plan_signature"]
+        if inv.get("plan_signature") != plan_sig:
+            raise ValueError("invocation.json と plan.json の plan_signature が一致しません")
+        remote_manifest = inv.get("remote_manifest") or f"/content/yomibuta_{job}_manifest.json"
+        if not isinstance(remote_manifest, str) or not remote_manifest.startswith(("/content/", "/tmp/")) or ".." in Path(remote_manifest).parts:
+            raise ValueError(f"不正な remote_manifest パスです: {remote_manifest!r}")
+        expected_sr = int(plan["settings"]["sampleRate"])
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        print(f"INPUT_ERROR: {exc}", file=sys.stderr)
         return 2
-    session = args.session or inv.get("session")
-    job = inv.get("job")
-    nonce = inv.get("nonce")
-    remote_manifest = inv.get("remote_manifest") or f"/content/yomibuta_{job}_manifest.json"
-    expected_sr = int(plan["settings"]["sampleRate"])
 
+    remote_status = "unknown"
     verified = False
     error_detail: str | None = None
     warnings_out: list[dict] = []
+    remote_errors: list[dict] = []
     try:
-        verified, warnings_out = _verify_and_collect(
+        remote_status, warnings_out, remote_errors = _verify_and_collect(
             session=session,
             remote_manifest=remote_manifest,
             out_dir=out_dir,
             expected_job=job,
-            expected_plan_signature=plan["plan_signature"],
+            expected_plan_signature=plan_sig,
             expected_sample_rate=expected_sr,
             expected_nonce=nonce,
         )
+        verified = remote_status == "complete"
     except Exception as exc:
         error_detail = str(exc)
         print(f"ERROR: {exc}", file=sys.stderr)
+
+    # CRITICAL (C-1): Never stop an actively running Colab job during `--recover`!
+    if remote_status in ("started", "running"):
+        print(
+            f"JOB_STILL_RUNNING 遠隔ジョブはまだ推論実行中です (status={remote_status})。ランタイムを維持しましたので、完了後に再度 --recover を実行してください。",
+            file=sys.stderr,
+        )
+        atomic_json(
+            out_dir / "pipeline.json",
+            {
+                "mode": "recover",
+                "status": "running",
+                "session": session,
+                "job": job,
+                "nonce": nonce,
+                "verified": False,
+                "session_stopped": False,
+                "stop_failed": False,
+            },
+        )
+        return 1
+
+    for r_err in remote_errors:
+        if isinstance(r_err, dict) and r_err.get("error"):
+            print(f"[REMOTE_ERROR] {r_err['error']}", file=sys.stderr)
+            if not error_detail:
+                error_detail = str(r_err["error"])
 
     stop_failed = False
     session_stopped = False
@@ -254,6 +324,7 @@ def _run_recover_mode(args: argparse.Namespace) -> int:
     pipeline_record: dict[str, object] = {
         "mode": "recover",
         "status": "complete" if (verified and not stop_failed) else "failed",
+        "remote_status": remote_status,
         "session": session,
         "job": job,
         "nonce": nonce,
@@ -263,6 +334,8 @@ def _run_recover_mode(args: argparse.Namespace) -> int:
     }
     if error_detail:
         pipeline_record["error"] = error_detail
+    if remote_errors:
+        pipeline_record["remote_errors"] = [e.get("error") for e in remote_errors if isinstance(e, dict) and e.get("error")]
     atomic_json(out_dir / "pipeline.json", pipeline_record)
 
     if verified and not stop_failed:
@@ -303,13 +376,14 @@ def main(argv: list[str] | None = None) -> int:
         print(f"INPUT_ERROR: {exc}", file=sys.stderr)
         return 2
 
-    selected_ids = [s.strip() for s in args.ids.split(",") if s.strip()] if args.ids else None
+    selected_ids = [s.strip() for s in args.ids.split(",") if s.strip()] if args.ids is not None else None
 
     try:
         plan = build_plan(
             scenario,
             settings,
             base_dir=args.settings.resolve().parent,
+            scenario_base_dir=args.scenario.resolve().parent,
             selected_ids=selected_ids,
         )
     except PlanError as exc:
@@ -325,6 +399,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if not args.session or not args.job or not args.out:
         parser.error("実行時には --session, --job, --out が必要です")
+    if args.timeout < 30:
+        print("INPUT_ERROR: --timeout には 30 秒以上を指定してください", file=sys.stderr)
+        return 2
     try:
         identifier(args.session, "session", 60)
         identifier(args.job, "job", 60)
@@ -337,9 +414,13 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     out_dir = args.out.resolve()
-    if out_dir.exists() and any(out_dir.iterdir()):
-        print(f"ERROR: 出力先フォルダーは既に存在し空ではありません（上書き保護）: {out_dir}", file=sys.stderr)
-        return 1
+    if out_dir.exists():
+        if not out_dir.is_dir():
+            print(f"ERROR: 出力先パスに通常のファイルが既に存在します: {out_dir}", file=sys.stderr)
+            return 1
+        if any(out_dir.iterdir()):
+            print(f"ERROR: 出力先フォルダーは既に存在し空ではありません（上書き保護）: {out_dir}", file=sys.stderr)
+            return 1
 
     need_prebuilt_bin = (plan["settings"]["backend"] == "speech_cpp_gguf") and (not args.skip_binary_upload)
     if need_prebuilt_bin:
@@ -379,11 +460,13 @@ def main(argv: list[str] | None = None) -> int:
 
     code_zip_local = out_dir / "_code.zip"
     bootstrap_local = out_dir / "_bootstrap.py"
+    remote_status = "unknown"
     verified = False
     session_ready = not args.new
     exec_returncode: int | None = None
     error_detail: str | None = None
     warnings_out: list[dict] = []
+    remote_errors: list[dict] = []
 
     try:
         _pack_code_zip(code_zip_local)
@@ -393,14 +476,21 @@ def main(argv: list[str] | None = None) -> int:
             session_ready = True
 
         _run_colab(["upload", "-s", args.session, str(code_zip_local), remote_code_zip], timeout=120)
-        _run_colab(["upload", "-s", args.session, str(plan_local), remote_plan], timeout=120)
+        plan_parts = _upload_file_or_chunked(args.session, plan_local, remote_plan, out_dir)
 
         bin_parts = 0
         if need_prebuilt_bin:
             bin_parts = _upload_file_or_chunked(args.session, args.prebuilt_bin, remote_bin_gz, out_dir)
 
+        used_profiles = {
+            r["request"]["voice_profile"]
+            for r in plan.get("requests", [])
+            if r["request"].get("voice_profile") and r["request"]["voice_profile"] != "none"
+        }
         voice_parts: dict[str, int] = {}
         for profile, clips in (plan.get("voices") or {}).items():
+            if profile not in used_profiles:
+                continue
             for idx, clip in enumerate(clips):
                 key = f"{profile}_{idx}"
                 remote_wav = f"/content/yomibuta_{args.job}_voice_{key}.wav"
@@ -416,6 +506,7 @@ def main(argv: list[str] | None = None) -> int:
             timeout_sec=args.timeout,
             job_dir_remote=remote_job_dir,
             plan_remote=remote_plan,
+            plan_parts=plan_parts,
             bin_gz_remote=remote_bin_gz,
             bin_parts=bin_parts,
             voice_parts=voice_parts,
@@ -429,7 +520,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         exec_returncode = exec_proc.returncode
 
-        verified, warnings_out = _verify_and_collect(
+        remote_status, warnings_out, remote_errors = _verify_and_collect(
             session=args.session,
             remote_manifest=remote_manifest,
             out_dir=out_dir,
@@ -438,8 +529,14 @@ def main(argv: list[str] | None = None) -> int:
             expected_sample_rate=int(plan["settings"]["sampleRate"]),
             expected_nonce=nonce,
         )
+        verified = remote_status == "complete"
+        for r_err in remote_errors:
+            if isinstance(r_err, dict) and r_err.get("error"):
+                print(f"[REMOTE_ERROR] {r_err['error']}", file=sys.stderr)
+                if not error_detail:
+                    error_detail = str(r_err["error"])
         if not verified and exec_returncode != 0 and not error_detail:
-            error_detail = f"remote worker exited with status != complete (rc={exec_returncode})"
+            error_detail = f"remote worker exited with status={remote_status!r} (rc={exec_returncode})"
     except Exception as exc:
         error_detail = str(exc)
         print(f"ERROR: {exc}", file=sys.stderr)
@@ -458,6 +555,7 @@ def main(argv: list[str] | None = None) -> int:
 
         pipeline_record: dict[str, object] = {
             "status": "complete" if (verified and not stop_failed) else "failed",
+            "remote_status": remote_status,
             "session": args.session,
             "job": args.job,
             "nonce": nonce,
@@ -468,6 +566,8 @@ def main(argv: list[str] | None = None) -> int:
         }
         if error_detail:
             pipeline_record["error"] = error_detail
+        if remote_errors:
+            pipeline_record["remote_errors"] = [e.get("error") for e in remote_errors if isinstance(e, dict) and e.get("error")]
         if not verified and not session_stopped:
             pipeline_record["recovery_hint"] = f"python3 cli/yomibuta_generate.py --recover {out_dir}"
         atomic_json(out_dir / "pipeline.json", pipeline_record)

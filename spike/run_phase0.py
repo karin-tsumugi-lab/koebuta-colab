@@ -65,51 +65,60 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    if args.new:
-        run_colab(["new", "-s", args.session, "--gpu", args.gpu], timeout=240)
-
-    exec_proc = run_colab(exec_args, check=False, timeout=args.timeout + 60)
-
+    session_ready = not args.new
     downloaded = False
+    exec_rc: int | None = None
     try:
-        run_colab(["download", "-s", args.session, REMOTE_ZIP, str(local_zip)], timeout=300)
-        downloaded = local_zip.is_file()
-    except subprocess.SubprocessError as exc:
-        print(f"WARNING: failed to download artifacts: {exc}", file=sys.stderr)
+        if args.new:
+            run_colab(["new", "-s", args.session, "--gpu", args.gpu], timeout=240)
+            session_ready = True
 
-    if downloaded:
-        with zipfile.ZipFile(local_zip, "r") as zf:
-            zf.extractall(out_dir)
-        report_path = out_dir / "spike_report.json"
-        if report_path.is_file():
-            report = json.loads(report_path.read_text(encoding="utf-8"))
-            print("\n=== Phase 0 Summary ===", flush=True)
-            print("status:", report.get("status"))
-            steps = report.get("steps", {})
-            if "cmake_build" in steps:
-                print("cmake_build:", steps["cmake_build"].get("returncode"), f"{steps['cmake_build'].get('elapsed_sec')}s")
-            if "gguf_download" in steps:
-                dl = steps["gguf_download"]
-                print("gguf:", dl.get("filename"), f"{dl.get('bytes', 0) / (1024**3):.2f} GiB", f"{dl.get('elapsed_sec')}s")
-            if "tts_test_1" in steps:
-                t1 = steps["tts_test_1"]
-                print("tts_test_1:", "rc=", t1.get("returncode"), f"elapsed={t1.get('elapsed_sec')}s", f"peak_vram={t1.get('peak_vram_mb')}MB")
-                if "wav" in t1:
-                    w = t1["wav"]
-                    print("wav:", f"{w.get('sample_rate')}Hz {w.get('channels')}ch", f"dur={w.get('duration_sec')}s", f"rtfx={w.get('rtfx')}", f"rms_active={w.get('rms_active_dbfs')}dBFS")
-            if "tts_test_2_clone" in steps:
-                t2 = steps["tts_test_2_clone"]
-                w2 = t2.get("wav") or {}
-                print("tts_test_2_clone:", "rc=", t2.get("returncode"), f"dur={w2.get('duration_sec')}s", f"rtfx={w2.get('rtfx')}")
-            print("outputs:", out_dir)
+        exec_proc = run_colab(exec_args, check=False, timeout=args.timeout + 60)
+        exec_rc = exec_proc.returncode
 
-    if not args.keep_session:
+        try:
+            run_colab(["download", "-s", args.session, REMOTE_ZIP, str(local_zip)], timeout=300)
+            downloaded = local_zip.is_file()
+        except subprocess.SubprocessError as exc:
+            print(f"WARNING: failed to download artifacts: {exc}", file=sys.stderr)
+
         if downloaded:
-            run_colab(["stop", "-s", args.session], check=False, timeout=120)
-        else:
-            print("NOTE: Artifacts were not downloaded; keeping Colab session alive for inspection.", file=sys.stderr)
+            with zipfile.ZipFile(local_zip, "r") as zf:
+                for member in zf.namelist():
+                    dest = (out_dir / member).resolve()
+                    if not dest.is_relative_to(out_dir):
+                        raise ValueError(f"Unsafe zip member path: {member!r}")
+                zf.extractall(out_dir)
+            report_path = out_dir / "spike_report.json"
+            if report_path.is_file():
+                report = json.loads(report_path.read_text(encoding="utf-8"))
+                print("\n=== Phase 0 Summary ===", flush=True)
+                print("status:", report.get("status"))
+                steps = report.get("steps", {})
+                if "cmake_build" in steps:
+                    print("cmake_build:", steps["cmake_build"].get("returncode"), f"{steps['cmake_build'].get('elapsed_sec')}s")
+                if "gguf_download" in steps:
+                    dl = steps["gguf_download"]
+                    print("gguf:", dl.get("filename"), f"{dl.get('bytes', 0) / (1024**3):.2f} GiB", f"{dl.get('elapsed_sec')}s")
+                if "tts_test_1" in steps:
+                    t1 = steps["tts_test_1"]
+                    print("tts_test_1:", "rc=", t1.get("returncode"), f"elapsed={t1.get('elapsed_sec')}s", f"peak_vram={t1.get('peak_vram_mb')}MB")
+                    if "wav" in t1:
+                        w = t1["wav"]
+                        print("wav:", f"{w.get('sample_rate')}Hz {w.get('channels')}ch", f"dur={w.get('duration_sec')}s", f"rtfx={w.get('rtfx')}", f"rms_active={w.get('rms_active_dbfs')}dBFS")
+                if "tts_test_2_clone" in steps:
+                    t2 = steps["tts_test_2_clone"]
+                    w2 = t2.get("wav") or {}
+                    print("tts_test_2_clone:", "rc=", t2.get("returncode"), f"dur={w2.get('duration_sec')}s", f"rtfx={w2.get('rtfx')}")
+                print("outputs:", out_dir)
+    finally:
+        if session_ready and not args.keep_session:
+            try:
+                run_colab(["stop", "-s", args.session], check=False, timeout=120)
+            except (subprocess.SubprocessError, OSError) as exc:
+                print(f"WARNING: failed to stop Colab session '{args.session}': {exc}", file=sys.stderr)
 
-    return 0 if (downloaded and exec_proc.returncode == 0) else 1
+    return 0 if (downloaded and exec_rc == 0) else 1
 
 
 if __name__ == "__main__":

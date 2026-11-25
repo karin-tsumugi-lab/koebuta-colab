@@ -323,6 +323,64 @@ class TestAudioMix(unittest.TestCase):
         max_step = max(abs(loop_l[i] - loop_l[i - 1]) for i in range(1, len(loop_l)))
         self.assertLess(max_step, 0.02)
 
+    def test_strict_types_truncated_wav_extensible_guid_and_local_override(self):
+        # 1. Truncated WAV data chunk rejected
+        fmt_chunk = struct.pack("<HHIIHH", 1, 1, 44100, 88200, 2, 16)
+        trunc_wav = b"RIFF" + struct.pack("<I", 100) + b"WAVEfmt " + struct.pack("<I", 16) + fmt_chunk + b"data" + struct.pack("<I", 64) + b"\x00\x00" * 4
+        with self.assertRaisesRegex(ValueError, "切断"):
+            ym.read_wav_bytes(trunc_wav, "trunc.wav")
+
+        # 2. Invalid WAVE_FORMAT_EXTENSIBLE GUID tail rejected
+        ext_body = struct.pack("<HHIIHHHHI", 0xFFFE, 1, 44100, 88200, 2, 16, 22, 16, 4) + struct.pack("<I", 1) + b"\x99" * 12
+        ext_wav = b"RIFF" + struct.pack("<I", 12 + len(ext_body) + 8) + b"WAVEfmt " + struct.pack("<I", len(ext_body)) + ext_body + b"data" + struct.pack("<I", 0)
+        with self.assertRaisesRegex(ValueError, "GUID"):
+            ym.read_wav_bytes(ext_wav, "bad_guid.wav")
+
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            u1 = tmp / "u1.wav"
+            _write_pcm16_wav(u1, [4000, -4000] * 2205)
+
+            # 3. sample_rate=0, bools, NaN, and positive duck_db rejected with ValueError
+            for bad_doc in (
+                {"sample_rate": 0, "utterances": [{"id": "t1", "file": str(u1)}]},
+                {"sample_rate": True, "utterances": [{"id": "t1", "file": str(u1)}]},
+                {"utterances": [{"id": "t1", "file": str(u1), "pause_after_ms": True}]},
+                {"utterances": [{"id": "t1", "file": str(u1)}], "overlays": [{"wav": str(u1), "loop": "false"}]},
+                {"utterances": [{"id": "t1", "file": str(u1)}], "overlays": [{"wav": str(u1), "duck_db": 4.0}]},
+            ):
+                p = tmp / "bad.json"
+                p.write_text(json.dumps(bad_doc), encoding="utf-8")
+                with self.assertRaises(ValueError):
+                    ym.run_mix(p, None, dry_run=True)
+
+            p_nan = tmp / "nan.json"
+            p_nan.write_text(f'{{"tts_gain_db": NaN, "utterances": [{{"id": "t1", "file": {json.dumps(str(u1))}}}]}}', encoding="utf-8")
+            with self.assertRaises(ValueError):
+                ym.run_mix(p_nan, None, dry_run=True)
+
+            # 4. Local retake WAV overrides segments_zip cleanly
+            with zipfile.ZipFile(tmp / "segments.zip", "w") as zf:
+                zf.write(u1, "audio/t1_orig.wav")
+            retake_dir = tmp / "retake"
+            retake_dir.mkdir()
+            _write_pcm16_wav(retake_dir / "t2_fixed.wav", [4000, -4000] * 2205)
+            p_override = tmp / "override.json"
+            p_override.write_text(
+                json.dumps(
+                    {
+                        "segments_zip": "segments.zip",
+                        "utterances": [
+                            {"id": "t1", "file": "audio/t1_orig.wav"},
+                            {"id": "t2", "file": "retake/t2_fixed.wav"},
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with mock.patch("sys.stdout", io.StringIO()):
+                self.assertEqual(ym.run_mix(p_override, None, dry_run=True), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

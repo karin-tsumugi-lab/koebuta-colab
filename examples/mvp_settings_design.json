@@ -5,7 +5,7 @@
   "backend": "speech_cpp_gguf",
   "quant": "IQ3_XXS",
   "sampleRate": 44100,
-  "reading": "shared",
+  "reading": "cast",
   "voiceMode": "design",
   "baseCaption": "落ち着いた明瞭な声の成人女性。丁寧で自然な日本語の朗読。",
   "acting": true,
@@ -14,11 +14,11 @@
   "seed": 42,
   "pause": 0.28,
   "engineOptions": {
-    "temperature": 1.0,
-    "top_p": 0.9,
+    "temperature": 0.8,
+    "top_p": 0.85,
     "top_k": 30,
     "max_seconds": 47.55,
-    "max_pause_frames": 18,
+    "max_pause_frames": 36,
     "experts_on_cpu": false
   }
 }

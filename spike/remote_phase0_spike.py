@@ -26,7 +26,13 @@ WORK = Path(os.environ.get("YOMIBUTA_PHASE0_WORK", "/content/yomibuta_phase0"))
 SPEECH_REPO = os.environ.get("YOMIBUTA_SPEECH_CPP_REPO", "https://github.com/nyosegawa/speech.cpp.git")
 SPEECH_TAG = os.environ.get("YOMIBUTA_SPEECH_CPP_TAG", "v0.11.2")
 GGUF_REPO = os.environ.get("YOMIBUTA_GGUF_REPO", "StudioYebisu-ship-it/Drama-3-Japanese-speech-cpp-gguf")
-GGUF_FILE = os.environ.get("YOMIBUTA_GGUF_FILE", "Drama-35B-A3B-Japanese-v3-small-IQ3_XXS.gguf")
+_QUANT_PAT = os.environ.get("YOMIBUTA_QUANT_PATTERN", "IQ3_XXS")
+GGUF_FILE = os.environ.get(
+    "YOMIBUTA_GGUF_FILE",
+    "Drama-35B-A3B-Japanese-v3-small-IQ3_XXS.gguf"
+    if _QUANT_PAT == "IQ3_XXS"
+    else f"Drama-35B-A3B-Japanese-v3-{_QUANT_PAT}.gguf",
+)
 PATCH_FILE = os.environ.get("YOMIBUTA_PATCH_FILE", "drama3-speechcpp-fast.patch")
 CUDA_ARCHS = os.environ.get("YOMIBUTA_CUDA_ARCHS", "75;89")
 TEST_TEXT = os.environ.get(
@@ -141,7 +147,7 @@ def analyze_wav(path: Path) -> dict:
         "duration_sec": round(duration, 3),
         "sha256": sha256_file(path),
     }
-    if sw == 2 and frames > 0:
+    if sw == 2 and frames > 0 and len(raw) == frames * ch * 2:
         samples = struct.unpack(f"<{frames * ch}h", raw)
         peak = max(abs(s) for s in samples) / 32768.0
         active = [s / 32768.0 for s in samples if abs(s) >= 184]
@@ -299,10 +305,12 @@ def main() -> int:
 
         gguf_path = model_dir / GGUF_FILE
         sidecar_path = model_dir / (GGUF_FILE + ".json")
-        if not gguf_path.exists():
-            os.symlink(gguf_cached, gguf_path)
-        if not sidecar_path.exists():
-            os.symlink(sidecar_cached, sidecar_path)
+        if gguf_path.exists() or gguf_path.is_symlink():
+            gguf_path.unlink()
+        if sidecar_path.exists() or sidecar_path.is_symlink():
+            sidecar_path.unlink()
+        os.symlink(gguf_cached, gguf_path)
+        os.symlink(sidecar_cached, sidecar_path)
         collected_files.append((sidecar_cached, GGUF_FILE + ".json"))
 
         report["steps"]["gguf_download"] = {
@@ -332,7 +340,7 @@ def main() -> int:
         t1_ok = False
         if r1["returncode"] == 0 and out_wav1.is_file():
             w1 = analyze_wav(out_wav1)
-            if w1["duration_sec"] > 0:
+            if w1["duration_sec"] > 0 and r1["elapsed_sec"] > 0:
                 w1["rtfx"] = round(w1["duration_sec"] / r1["elapsed_sec"], 3)
                 t1_ok = True
             t1_rec["wav"] = w1
@@ -376,7 +384,7 @@ def main() -> int:
                 }
                 if r2["returncode"] == 0 and out_wav2.is_file():
                     w2 = analyze_wav(out_wav2)
-                    if w2["duration_sec"] > 0:
+                    if w2["duration_sec"] > 0 and r2["elapsed_sec"] > 0:
                         w2["rtfx"] = round(w2["duration_sec"] / r2["elapsed_sec"], 3)
                         clone_ok = True
                     t2_rec["wav"] = w2

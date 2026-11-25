@@ -332,9 +332,13 @@ class TestYomibutaPlanAndValidation(unittest.TestCase):
         self.assertEqual(narou_out, "彼はエクス・カリバーと（括弧）を抜いた。")
         self.assertEqual(nw, [])
 
-        kaku_out, kw = expand_inline_ruby("《《強調》》と｜《エスケープと｜硝子《ガラス》。", "kakuyomu")
-        self.assertEqual(kaku_out, "強調と《エスケープとガラス。")
+        kaku_out, kw = expand_inline_ruby("《《強調》》と｜《聖剣》と｜硝子《ガラス》。", "kakuyomu")
+        self.assertEqual(kaku_out, "強調と《聖剣》とガラス。")
         self.assertEqual(kw, [])
+
+        aozora_compat, aw = expand_inline_ruby("神社《じんじゃ》と三ヵ月《さんかげつ》と屡〻《しばしば》。", "aozora")
+        self.assertEqual(aozora_compat, "じんじゃとさんかげつとしばしば。")
+        self.assertEqual(aw, [])
 
         pixiv_out, pw = expand_inline_ruby("これは[[rb:運命 > さだめ]]だ。", "pixiv")
         self.assertEqual(pixiv_out, "これはさだめだ。")
@@ -432,6 +436,115 @@ class TestYomibutaPlanAndValidation(unittest.TestCase):
             self._base_settings(reading="shared", voiceMode="design"),
         )
         self.assertIn("W_SPEAKER_VOICE_CAPTION_IGNORED", [d["code"] for d in plan_w["diagnostics"]])
+
+    def test_cast_clone_without_speaker_voices_caption_brackets_empty_plan_and_official_defaults(self):
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            _make_wav(tmp / "narrator.wav")
+            _make_wav(tmp / "aoi.wav")
+            # C-2: reading='cast' + voices without explicit speakerVoices auto-maps spk_id -> voices[spk_id]
+            plan_cast = build_plan(
+                {
+                    "schema_version": 2,
+                    "speakers": {
+                        "narrator": {"name": "語り手", "kind": "narrator"},
+                        "aoi": {"name": "葵", "kind": "character"},
+                    },
+                    "segments": [
+                        {"id": "t0010", "speaker_id": "narrator", "text": "地の文です。"},
+                        {"id": "t0020", "speaker_id": "aoi", "text": "「🥤ありがとう👌」", "emotion": "joy"},
+                    ],
+                },
+                self._base_settings(
+                    reading="cast",
+                    voiceMode="clone",
+                    voices={
+                        "narrator": [{"wav": "narrator.wav", "transcript": "参照1"}],
+                        "aoi": [{"wav": "aoi.wav", "transcript": "参照2"}],
+                    },
+                ),
+                base_dir=tmp,
+            )
+            self.assertEqual(plan_cast["requests"][0]["request"]["voice_profile"], "narrator")
+            self.assertEqual(plan_cast["requests"][1]["request"]["voice_profile"], "aoi")
+            # Emojis 🥤 and 👌 converted to official tags without double [嬉しそうに] after 「
+            self.assertIn("[水音]", plan_cast["requests"][1]["request"]["spoken_text"])
+            self.assertIn("[相槌]", plan_cast["requests"][1]["request"]["spoken_text"])
+
+            # Reserved 'none' profile rejected
+            with self.assertRaises(PlanError):
+                build_plan(
+                    {
+                        "schema_version": 2,
+                        "speakers": {"narrator": {"name": "語り手", "kind": "narrator"}},
+                        "segments": [{"id": "t0010", "speaker_id": "narrator", "text": "テスト。"}],
+                    },
+                    self._base_settings(voiceMode="clone", voices={"none": [{"wav": "narrator.wav", "transcript": "参照"}]}),
+                    base_dir=tmp,
+                )
+
+            # Non-WAV file rejected as reference clip at plan time
+            (tmp / "not_a_wav.txt").write_text("plain text", encoding="utf-8")
+            with self.assertRaises(PlanError):
+                build_plan(
+                    {
+                        "schema_version": 2,
+                        "speakers": {"narrator": {"name": "語り手", "kind": "narrator"}},
+                        "segments": [{"id": "t0010", "speaker_id": "narrator", "text": "テスト。"}],
+                    },
+                    self._base_settings(voiceMode="clone", voices={"narrator": [{"wav": "not_a_wav.txt", "transcript": "参照"}]}),
+                    base_dir=tmp,
+                )
+
+        # M-1: brackets inside acting_description must never leak internal `]` into prompt
+        plan_cap = build_plan(
+            {
+                "schema_version": 2,
+                "scene_caption": "静かな書斎",
+                "speakers": {"narrator": {"name": "語り手", "kind": "narrator"}},
+                "segments": [
+                    {"id": "t0010", "speaker_id": "narrator", "text": "こんにちは。", "acting_description": "[小声で] 優しく"}
+                ],
+            },
+            self._base_settings(voiceMode="design"),
+        )
+        prompt_str = plan_cap["requests"][0]["request"]["prompt"]
+        self.assertEqual(prompt_str.count("["), 1)
+        self.assertEqual(prompt_str.count("]"), 1)
+        self.assertTrue(prompt_str.endswith("] こんにちは。"))
+
+        # M-3: separator-only scenario or empty --ids rejected at plan time
+        with self.assertRaises(PlanError):
+            build_plan(
+                {
+                    "schema_version": 2,
+                    "speakers": {"narrator": {"name": "語り手", "kind": "narrator"}},
+                    "segments": [{"id": "sep1", "segment_type": "separator"}],
+                },
+                self._base_settings(),
+            )
+        with self.assertRaises(PlanError):
+            build_plan(
+                {
+                    "schema_version": 2,
+                    "speakers": {"narrator": {"name": "語り手", "kind": "narrator"}},
+                    "segments": [{"id": "t1", "speaker_id": "narrator", "text": "テスト。"}],
+                },
+                self._base_settings(),
+                selected_ids=[],
+            )
+
+        # M-7: backend='official' defaults quant to 'none' when omitted and accepts repetition_penalty
+        plan_off = build_plan(
+            {
+                "schema_version": 2,
+                "speakers": {"narrator": {"name": "語り手", "kind": "narrator"}},
+                "segments": [{"id": "t1", "speaker_id": "narrator", "text": "テスト。"}],
+            },
+            {"ttsEngine": "drama3", "backend": "official", "engineOptions": {"repetition_penalty": 1.1}},
+        )
+        self.assertEqual(plan_off["settings"]["quant"], "none")
+        self.assertEqual(plan_off["settings"]["engineOptions"]["repetition_penalty"], 1.1)
 
     def test_sglang_pip_spec_rejects_unpinned_git_branch(self):
         scenario = {
@@ -692,7 +805,7 @@ class TestCliRecoveryManifestAndStopSafety(unittest.TestCase):
                 # 4. Exact match succeeds
                 atomic_json(manifest_remote, base_manifest)
                 (tmp / "o4").mkdir()
-                ok, _ = yomibuta_generate._verify_and_collect(
+                status_ok, _, _ = yomibuta_generate._verify_and_collect(
                     session="s1",
                     remote_manifest=str(manifest_remote),
                     out_dir=tmp / "o4",
@@ -701,7 +814,96 @@ class TestCliRecoveryManifestAndStopSafety(unittest.TestCase):
                     expected_sample_rate=44100,
                     expected_nonce="nonce_good",
                 )
-                self.assertTrue(ok)
+                self.assertEqual(status_ok, "complete")
+
+    def test_recover_mode_preserves_running_session_and_collects_completed_job(self):
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            sc, st = self._write_scenario_and_settings(tmp)
+            plan = build_plan(load_json(sc), load_json(st))
+            out_dir = tmp / "rec_run"
+            out_dir.mkdir()
+            remote_dir = tmp / "remote"
+            remote_dir.mkdir()
+            manifest_remote = remote_dir / "manifest.json"
+            atomic_json(out_dir / "plan.json", plan)
+            atomic_json(
+                out_dir / "invocation.json",
+                {
+                    "contract": CONTRACT,
+                    "session": "sess_rec",
+                    "job": "job_rec",
+                    "nonce": "nonce_rec_1234",
+                    "plan_signature": plan["plan_signature"],
+                    "remote_manifest": str(manifest_remote),
+                },
+            )
+
+            # Case A (C-1): Remote job is still "running" -> --recover --stop-after-download MUST NOT stop session!
+            atomic_json(
+                manifest_remote,
+                {
+                    "contract": CONTRACT,
+                    "job_id": "job_rec",
+                    "nonce": "nonce_rec_1234",
+                    "plan_signature": plan["plan_signature"],
+                    "status": "running",
+                    "warnings": [],
+                    "errors": [],
+                },
+            )
+            calls: list[list[str]] = []
+
+            def fake_colab(args, *, check=True, timeout=None):
+                calls.append(args)
+                if args[0] == "download":
+                    shutil.copy2(args[3], args[4])
+                return subprocess.CompletedProcess(["colab", *args], 0)
+
+            with (
+                mock.patch("shutil.which", return_value="/usr/bin/colab"),
+                mock.patch.object(yomibuta_generate, "_run_colab", side_effect=fake_colab),
+                mock.patch("sys.stderr", io.StringIO()),
+            ):
+                rc_run = yomibuta_generate.main(["--recover", str(out_dir), "--stop-after-download"])
+            self.assertEqual(rc_run, 1)
+            self.assertFalse(any(c[0] == "stop" for c in calls))
+            self.assertEqual(load_json(out_dir / "pipeline.json")["status"], "running")
+
+            # Case B: Remote job finishes ("complete") -> --recover collects result.wav and stops session
+            valid_wav = remote_dir / "res.part000"
+            _make_wav(valid_wav, frames=4410, sr=44100)
+            seg_zip = remote_dir / "seg.part000"
+            seg_zip.write_bytes(b"PK\x05\x06" + b"\x00" * 18)
+            w_meta = wav_info(valid_wav)
+            atomic_json(
+                manifest_remote,
+                {
+                    "contract": CONTRACT,
+                    "job_id": "job_rec",
+                    "nonce": "nonce_rec_1234",
+                    "plan_signature": plan["plan_signature"],
+                    "status": "complete",
+                    "warnings": [],
+                    "errors": [],
+                    "download_chunks": {
+                        "result.wav": [{"remote": str(valid_wav), "bytes": w_meta["bytes"], "sha256": w_meta["sha256"]}],
+                        "segments.zip": [{"remote": str(seg_zip), "bytes": seg_zip.stat().st_size, "sha256": file_hash(seg_zip)}],
+                    },
+                    "combined": {"file": "result.wav", **w_meta},
+                    "segments_zip": {"file": "segments.zip", "bytes": seg_zip.stat().st_size, "sha256": file_hash(seg_zip)},
+                },
+            )
+            calls.clear()
+            with (
+                mock.patch("shutil.which", return_value="/usr/bin/colab"),
+                mock.patch.object(yomibuta_generate, "_run_colab", side_effect=fake_colab),
+                mock.patch("sys.stdout", io.StringIO()),
+            ):
+                rc_ok = yomibuta_generate.main(["--recover", str(out_dir), "--stop-after-download"])
+            self.assertEqual(rc_ok, 0)
+            self.assertTrue((out_dir / "result.wav").is_file())
+            self.assertTrue(any(c[0] == "stop" for c in calls))
 
     def test_stop_after_download_stops_session_on_worker_failure_and_recover_works(self):
         with tempfile.TemporaryDirectory() as td:
@@ -812,6 +1014,7 @@ class TestCliRecoveryManifestAndStopSafety(unittest.TestCase):
             # Synthesize short WAV (0.1s < min_expected_sec) so early EOS warning is recorded
             def fake_cli_synth(speech_bin, model_path, voice_files, prompt, voice_profile, seed, eo, out_wav, deadline):
                 _make_wav(out_wav, frames=4410, sr=44100)  # 0.10s for >20 spoken chars
+                return True, False
 
             env_vars = {
                 "YOMIBUTA_RUNTIME_ROOT": str(tmp / "rt"),
@@ -820,29 +1023,41 @@ class TestCliRecoveryManifestAndStopSafety(unittest.TestCase):
                 "YOMIBUTA_REMOTE_NONCE": "nonce_123",
                 "YOMIBUTA_REMOTE_PLAN": str(plan_file),
                 "YOMIBUTA_REMOTE_MANIFEST": str(manifest_out),
+                "YOMIBUTA_REMOTE_ARTIFACT_PREFIX": str(tmp / "dl_art"),
                 "YOMIBUTA_REMOTE_TIMEOUT": "120",
             }
+            # C-4: Verify that a socket TimeoutError inside urllib.request.urlopen falls back to CLI instead of crashing!
+            srv_alive = {"v": False}
+
+            def fake_srv_start(_self, _deadline, startup_timeout=120.0):
+                srv_alive["v"] = True
+                return True
+
+            def fake_srv_stop(_self):
+                srv_alive["v"] = False
+
             with (
                 mock.patch.dict(os.environ, env_vars, clear=False),
                 mock.patch.object(remote_worker, "_ensure_speech_binary", return_value=tmp / "speech"),
                 mock.patch.object(remote_worker, "_ensure_gguf_model", return_value=tmp / "m.gguf"),
                 mock.patch.object(remote_worker, "_prepare_voice_profiles", return_value={}),
-                mock.patch.object(remote_worker._ResidentSpeechServer, "start", return_value=False) as srv_start_mock,
-                mock.patch.object(remote_worker._ResidentSpeechServer, "is_alive", return_value=False),
+                mock.patch.object(remote_worker._ResidentSpeechServer, "start", autospec=True, side_effect=fake_srv_start) as srv_start_mock,
+                mock.patch.object(remote_worker._ResidentSpeechServer, "stop", autospec=True, side_effect=fake_srv_stop),
+                mock.patch.object(remote_worker._ResidentSpeechServer, "is_alive", autospec=True, side_effect=lambda _s: srv_alive["v"]),
+                mock.patch("urllib.request.urlopen", side_effect=TimeoutError("socket timed out")),
                 mock.patch.object(remote_worker, "_synthesize_cli", side_effect=fake_cli_synth) as synth_mock,
-                mock.patch.object(remote_worker, "_split_for_download", return_value=[]),
             ):
                 rc1 = remote_worker.main()
                 self.assertEqual(rc1, 0)
-                # N-01: initial server.start() failed once, so it must NOT spin server.start() on each of the 3 retries!
-                self.assertEqual(srv_start_mock.call_count, 1)
-                self.assertEqual(synth_mock.call_count, 3)  # Retried 3 times due to short audio
+                # Initial start (1) + at most 1 restart (1) = 2 total, never spinning per retry!
+                self.assertEqual(srv_start_mock.call_count, 2)
+                self.assertEqual(synth_mock.call_count, 3)  # Fell back to CLI & retried 3 times due to short audio
                 mf1 = load_json(manifest_out)
                 self.assertEqual(mf1["nonce"], "nonce_123")
                 self.assertTrue(mf1["takes"][0]["early_eos_suspected"])
                 self.assertEqual(mf1["warnings"][0]["code"], "W_EARLY_EOS_SUSPECTED")
 
-                # Second run with same plan reuses takes_state.json with 0 synthesis calls!
+                # Second run with same plan reuses takes_state.json with 0 synthesis calls AND preserves warnings!
                 atomic_json(plan_file, plan)
                 synth_mock.reset_mock()
                 rc2 = remote_worker.main()
@@ -850,6 +1065,7 @@ class TestCliRecoveryManifestAndStopSafety(unittest.TestCase):
                 self.assertEqual(synth_mock.call_count, 0)
                 mf2 = load_json(manifest_out)
                 self.assertEqual(mf2["takes"][0]["mode"], "reused")
+                self.assertEqual(mf2["warnings"][0]["code"], "W_EARLY_EOS_SUSPECTED")
 
 
 class TestVoiceKitAndInspectorHygiene(unittest.TestCase):
@@ -875,7 +1091,7 @@ class TestVoiceKitAndInspectorHygiene(unittest.TestCase):
             save_wav = tmp / "work" / "voices" / "narrator.wav"
             settings_out = tmp / "work" / "settings.json"
             settings_out.parent.mkdir(parents=True, exist_ok=True)
-            settings_out.write_text('{"existing": true}\n', encoding="utf-8")
+            settings_out.write_text('{"existing": true, "pause": 0.45}\n', encoding="utf-8")
 
             # Must fail BEFORE copying save_wav or writing .voice_meta.json!
             with mock.patch("sys.stderr", io.StringIO()):
@@ -905,6 +1121,39 @@ class TestVoiceKitAndInspectorHygiene(unittest.TestCase):
             self.assertTrue(save_wav.is_file())
             written = load_json(settings_out)
             self.assertEqual(written["voices"]["narrator"][0]["transcript"], "試聴用の参照セリフです。")
+
+            # Adopting a 2nd speaker with --overwrite switches to 'cast' AND writes speakerVoices so build_plan passes!
+            save_wav2 = tmp / "work" / "voices" / "aoi.wav"
+            rc_spk2 = vk.main(
+                [
+                    "--from-out", str(try_dir),
+                    "--adopt", "303",
+                    "--profile", "aoi",
+                    "--save-to", str(save_wav2),
+                    "--write-settings", str(settings_out),
+                    "--overwrite",
+                ]
+            )
+            self.assertEqual(rc_spk2, 0)
+            written2 = load_json(settings_out)
+            self.assertEqual(written2["reading"], "cast")
+            self.assertEqual(written2["speakerVoices"], {"narrator": "narrator", "aoi": "aoi"})
+            plan_vk = build_plan(
+                {
+                    "schema_version": 2,
+                    "speakers": {
+                        "narrator": {"name": "語り手", "kind": "narrator"},
+                        "aoi": {"name": "葵", "kind": "character"},
+                    },
+                    "segments": [
+                        {"id": "t0010", "speaker_id": "narrator", "text": "地の文。"},
+                        {"id": "t0020", "speaker_id": "aoi", "text": "台詞。"},
+                    ],
+                },
+                written2,
+                base_dir=settings_out.parent,
+            )
+            self.assertEqual(len(plan_vk["requests"]), 2)
 
     def test_inspector_html_guards_and_cli_export_present(self):
         html_text = (REPO_ROOT / "Yomibuta_Scenario_Inspector_v4.html").read_text(encoding="utf-8")

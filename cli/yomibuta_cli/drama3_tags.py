@@ -117,14 +117,23 @@ EMOJI_TO_DRAMA3: dict[str, str] = {
     "💪": "[力を込めて]",
     "📖": "[ナレーション]",
     "⏸️": "[少し間を置いて]",
+    "⏸": "[少し間を置いて]",
     "🌬️": "[吐息]",
+    "🌬": "[吐息]",
     "😮": "[息をのむ]",
     "💋": "[キス音]",
+    "🥤": "[水音]",
     "🤧": "[咳払い]",
+    "👌": "[相槌]",
     "👃": "[鼻をすする音]",
+    "🥱": "[あくび]",
+    "😒": "[不満げに]",
+    "👅": "[舌なめずり]",
+    "🤐": "[口を塞がれて]",
 }
 
 _EMOJI_RE = re.compile("|".join(re.escape(k) for k in sorted(EMOJI_TO_DRAMA3, key=len, reverse=True)))
+_MIXED_BRACKET_RE = re.compile(r"\[[^\[\]\r\n]*］|［[^［］\r\n]*\]")
 
 
 def find_forbidden_control_tokens(text: str) -> list[str]:
@@ -138,6 +147,15 @@ def find_inline_brackets(text: str) -> list[str]:
 def find_unknown_inline_tags(text: str) -> list[str]:
     """Return bracketed expressions in `text` that are not in official TAG_LIST.md."""
     return [tag for tag in INLINE_TAG_RE.findall(text) if tag not in KNOWN_DRAMA3_TAGS]
+
+
+def find_malformed_inline_tags(text: str) -> list[str]:
+    """Detect half/full-width mixed brackets (e.g. `[囁き］`) or unclosed `[` / `]`."""
+    issues = _MIXED_BRACKET_RE.findall(text)
+    remainder = _MIXED_BRACKET_RE.sub("", INLINE_TAG_RE.sub("", text))
+    if "[" in remainder or "]" in remainder:
+        issues.append("unclosed_halfwidth_bracket")
+    return issues
 
 
 def convert_v1_emojis_to_drama3(text: str) -> tuple[str, int]:

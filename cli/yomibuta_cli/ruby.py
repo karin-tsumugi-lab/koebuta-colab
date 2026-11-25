@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 
 FORMATS = ("none", "aozora", "narou", "kakuyomu", "pixiv")
-KANJI = r"\u3400-\u9fff\U00020000-\U0002ffff々〆〇ヶヵ"
+KANJI = r"\u3400-\u9fff\uf900-\ufaff\U00020000-\U0002ffff々〆〇ヶヵ〻"
 NAROU_KANA = r"ぁ-ゖァ-ヺー・ヴゝゞヽヾ　 "
 _AOZORA_NOTE_RE = re.compile(r"［＃([^［］\n]*)］")
 _KNOWN_AOZORA_LAYOUT = re.compile(
@@ -46,10 +46,11 @@ def expand_inline_ruby(body: str, fmt: str = "aozora") -> tuple[str, list[str]]:
             text = re.sub(r"※［＃小書き平仮名([ぁ-ゖ])、[0-9０-９]+[-－][0-9０-９]+］", lambda m: m[1], text)
             text = strip_aozora_layout(text)
         if fmt == "kakuyomu":
-            text = text.replace("｜《", marker + "a")
+            text = re.sub(r"｜《([^《》\n]*)》", lambda m: f"{marker}O;{m[1]}{marker}C;", text)
+            text = text.replace("｜《", f"{marker}A;")
             text = re.sub(r"《《([^《》\n]+)》》", r"\1", text)
         if fmt == "narou":
-            text = re.sub(r"[｜|]([（(])", lambda m: marker + ("b" if m[1] == "(" else "c"), text)
+            text = re.sub(r"[｜|]([（(])", lambda m: f"{marker}{'P;' if m[1] == '(' else 'F;'}", text)
         bars = "｜" if fmt == "aozora" else "｜|"
         text = re.sub(rf"[{bars}]([^｜|《》\n]+)《([^《》\n]+)》", lambda m: m[2], text)
         text = re.sub(rf"[{KANJI}]+《([^《》\n]+)》", lambda m: m[1], text)
@@ -58,7 +59,13 @@ def expand_inline_ruby(body: str, fmt: str = "aozora") -> tuple[str, list[str]]:
             text = re.sub(rf"[{KANJI}]+（([{NAROU_KANA}]+)）", lambda m: m[1].strip(), text)
         if any(mark in text for mark in ("《", "》", "［＃", "｜", "］")):
             warnings.append("未対応または不正なルビ・注記があります")
-        text = text.replace(marker + "a", "《").replace(marker + "b", "(").replace(marker + "c", "（")
+        text = (
+            text.replace(f"{marker}O;", "《")
+            .replace(f"{marker}C;", "》")
+            .replace(f"{marker}A;", "《")
+            .replace(f"{marker}P;", "(")
+            .replace(f"{marker}F;", "（")
+        )
     return text, warnings
 
 

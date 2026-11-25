@@ -8,8 +8,8 @@
 
 1. **パイプライン骨格の完全継承**
    - Colab CLI のセッション管理、忠実生成契約（ホスト／遠隔の計画署名一致）、発話単位の部分再生成（`--ids`）、WAV 検証（SHA256・フレーム数）、中断リカバリ、効果音ミキシング（`audio_mix`）はそのまま流用する。
-2. **マルチエンジン共存と下位互換**
-   - `schema_version: 1` の既存シナリオおよび Irodori-TTS バックエンドの動作を壊さず、エンジン層を抽象化して Drama-3 バックエンドを追加する。
+2. **Drama-3 専用クリーンルーム構成と `schema_version: 1` 下位互換**
+   - Koebuta v3 の `schema_version: 1` シナリオ（34種 `emotion`・絵文字タグ・ルビ形式・`separator` ポーズ規則）を下位互換でそのまま読み込み、Drama-3 の公式日本語インラインタグへ自動変換する（本リポジトリの CLI は `ttsEngine: "drama3"`・`44100 Hz` 専用として構成し、Irodori-TTS 48 kHz 実行系は `koebuta-colab` 側と役割分担する）。
 3. **サンプリングレート統一（44.1 kHz）**
    - Drama-3（Fish Audio コーデック）のネイティブ出力である **44.1 kHz** を Yomibuta（Drama-3 系統）の標準サンプリングレートとして統一する。不要なリサンプルによる音質劣化を避け、結合処理および `audio_mix` も 44.1 kHz 基準で動作させる（Irodori 48 kHz 出力との共存時はジョブの `sample_rate` メタデータに追従する設計とする）。
 4. **電子透かしチェック（SilentCipher）の分離**
@@ -58,9 +58,8 @@ Drama-3 は総パラメータ約 35B（アクティブ約 3B）の MoE モデル
    - `tts_text` 未指定で原文 `text` に半角 `[...]`（例：`[注]`、`[転送]`）が含まれている場合、モデルが演技タグと誤認する恐れがあるため、`--dry-run` 時に警告（`W_RAW_BRACKET_IN_TEXT`）を出す（必要なら `tts_text` で全角 `［...］` へ逃がす運用とする）。
 2. **ベースモデル特殊トークンの混入禁止**：
    - Fish Audio Drama 3 ベースモデルの複数話者トークン（`<|speaker:0|>` 〜 `<|speaker:15|>`）や特殊制御トークン `<|...|>` が `text` / `tts_text` に含まれる場合、`Aratako/Drama-3-Japanese`（単一話者特化）での誤動作を防ぐため、計画段階でエラー（`E_FORBIDDEN_CONTROL_TOKEN`）とする。
-3. **エンジン間フォールバック規則**：
-   - **v1 シナリオ → Drama-3**：`emotion` を新設の `drama3_tags.py` で日本語インラインタグへ自動変換する（`settings.emotion: true` 時）。テキスト中の Irodori 用絵文字は対応タグへ置換または除去し、診断ログに記録する。
-   - **v2 シナリオ → Irodori-TTS**：既定では `[...]` タグが含まれる場合はエラー（`E_UNSUPPORTED_TAG`）とし、明示オプション指定時のみタグ除去フォールバックを許可する。
+3. **エンジン間互換変換規則**：
+   - **v1 シナリオ → Drama-3**：`emotion` を `drama3_tags.py` で日本語インラインタグへ自動変換する（`settings.emotion: true` 時）。テキスト中の Koebuta v1 用絵文字は対応する公式タグへ自動置換し、診断ログ（`W_V1_EMOJI_CONVERTED`）に記録する。
 
 ### 3.3 `schema_version: 2` シナリオ記述例
 
@@ -148,18 +147,22 @@ Drama-3 のゼロショット／フューショット音声クローンは、**�
   - Koebuta の忠実生成ポリシーに従い、`ttsEngine == "drama3"` かつ `voiceMode == "clone"` の場合、各参照クリップの `transcript` が空または未指定であれば **`--dry-run` 時点でエラー（`E_REFERENCE_TRANSCRIPT_REQUIRED`）** とする（無断の自動文字起こしや空文字フォールバックは行わない）。
 * **`voice_kit` 連携**：`voice_kit` で試作・採用した参照 WAV には試聴セリフ（`--text`）が `voice_meta.json` に記録されているため、`--write-settings` 時に `transcript` を自動転記する。
 
-### 4.3 エンジン別パラメータ検証
-- `steps`（`20 / 40 / 60`）：`ttsEngine == "irodori"` のみ検証対象。
+### 4.3 パラメータ検証と追加設定キー
+- トップレベル設定キー：
+  - `normalizeRmsDb`（既定 `-18.0`、`null` または `-36.0〜-6.0`）：結合 `result.wav` 生成時の発話ごとアクティブ RMS 正規化目標値（`segments.zip` 内の個別 WAV は生波形のまま保持）。
+  - `speakerVoices`（任意オブジェクト）：`reading == "cast"` かつ `voiceMode == "clone"` 時の `speaker_id -> voice_profile` 対応表（省略時は `voices` 内に同名 `speaker_id` キーがあれば自動対応付け）。
+  - `textOptions`（既定 `{"format": "aozora"}`）：原文ルビ形式（`none` / `aozora` / `narou` / `kakuyomu` / `pixiv`）。
 - `engineOptions`（`ttsEngine == "drama3"`、`plan.py` 実装および `speech.cpp` 実測チューニング準拠）：
   - `temperature`（既定 `0.8`、範囲 `0.0 < x <= 2.0`）：`IQ3_XXS` での読み崩れを抑える安定値。
   - `top_p`（既定 `0.85`、範囲 `0.0 < x <= 1.0`）
   - `top_k`（既定 `30`、範囲 `1〜4097`）
-  - **`max_seconds`**（既定 `47.55`、範囲 `0.0 < x <= 95.11`）：自己回帰モデルの暴走・無限無音を防ぐための必須安全上限。
+  - **`max_seconds`**（既定 `47.55`、範囲 `0.0 < x <= 95.10`）：自己回帰モデルの暴走・無限無音を防ぐための必須安全上限。
   - `max_pause_frames`（既定 `36`）：環境変数 `SPEECH_DRAMA3_MAX_PAUSE_FRAMES` による長無音クランプ（`18` では読点での早期 EOS 切断が起きやすいため `36` を既定とする）。
   - `experts_on_cpu`（既定 `false`）：GPU 全載せ指定（`speech.cpp` 既定は `true` のため明示的に `false` を渡す）。
+  - `repetition_penalty`（既定 `null`、範囲 `0.5〜2.0`）：`backend == "official"` 専用（`speech_cpp_gguf` ではモデル非対応のためエラー）。
+  - `sglang_pip_spec`（既定 `"sglang-omni[fishaudio]==0.1.0"`）：公式バックエンドのパッケージ固定指定。
   - ※`cloneCaption`（トップレベル設定、既定 `false`）：`voiceMode == "clone"` 時に自由記述 `[caption]` を先頭付与すると読み誤りを誘発するため、クローン時は既定で抑制し `TAG_LIST.md` の公式インラインタグのみで演出する。
-  - ※`repetition_penalty` は `speech.cpp` の Drama-3 モデルでは非対応（渡すとエラーになるため、公式推論バックエンド専用とする）。
-- `sampleRate`：Drama-3 の既定は `44100`（Irodori は `48000`）。
+- `sampleRate`：Drama-3 の標準 `44100` Hz 統一。
 - **発話間ポーズ解決規則（Koebuta `faithful.py` 厳密互換）**：
   1. 発話に `pause_after_ms`（`0〜10000` ms）が明示されていればその値を最優先する。
   2. 未指定かつ直後に `segment_type: "separator"` があり、そこに `pause_after_ms` が明示されていれば、その最大値（共通ポーズ未満の短ポーズも含む）を適用する。競合がある場合は `W_PAUSE_CONFLICT` 警告を出す。
@@ -182,21 +185,22 @@ Drama-3 のゼロショット／フューショット音声クローンは、**�
 
 ---
 
-## 6. モジュール移植・変更影響マップ
+## 6. 実装モジュール構成マップ
 
-`koebuta-colab/cli/` の構造をベースに、Yomibuta 側での責務分離を以下の方針で行う。
+`Yomibuta-colab` における各モジュールの責務分担は以下のとおりである。
 
-| コンポーネント | 方針 | 変更内容 |
+| コンポーネント | パス | 責務 |
 |---|---|---|
-| `connection.py` / `jobs.py` / `recovery.py` / `terminal.py` / `colab_usage.py` | **流用** | ほぼ無改造でそのまま使用（ジョブ管理・転送・WAV検証・リカバリ） |
-| `environments.py` | **拡張** | `ENGINES` に `'drama3_gguf'` / `'drama3_official'` を追加。バージョン・ハッシュ固定契約を定義 |
-| `prepare.py` | **拡張** | `drama3_gguf` 用に `speech.cpp` の取得・CUDA ビルド（または検証済みバイナリ配置）と GGUF 取得手順を追加 |
-| `faithful.py` | **拡張** | `schema_version: 2` 受理、`[...]` 保護・`<|...|>` 禁止、`scene_caption` 結合、`ttsEngine` 別の設定検証、`voices` の配列・`transcript` 必須チェック |
-| `drama3_tags.py` | **新規** | Drama-3 日本語インラインタグの正規表現パターン、`spoken_length` 計算、v1 `emotion` → Drama-3 タグ変換マップ |
-| `faithful_worker.py` | **拡張** | `runtime_infer` を `ttsEngine` でディスパッチ。Drama-3 時は SilentCipher チェックを通さず `drama3_worker` へ委譲 |
-| `drama3_worker.py` | **新規** | `speech.cpp`（`speech voice` による話者プロファイル前処理＋常駐 `speech serve` 推論）および将来の公式推論アダプタを実装。出力 WAV（44.1 kHz / PCM_16）を保証 |
-| `ruby_bridge.py` / `ruby_core.py` | **段階対応** | Phase 1 では Drama-3 実行時の `auto_select` を無効化し、`kana` / `surface` / 作者ルビのみ展開＋`W_RUBY_AUTO_DEFERRED` 警告 |
-| `audio_mix/irodori_mix.py` | **小改修** | 44.1 kHz を標準対応（`mix_plan.json` の `sample_rate` をジョブ出力から自動引き継ぎ） |
+| ホスト CLI 本体 | `cli/yomibuta_generate.py` | Colab セッション管理、チャンク転送、`invocation.json` / `--recover` 回収、`nonce`・`plan_signature`・WAV 二重検証、ランタイム停止保護 |
+| 定数・ハッシュ・JSON 検証 | `cli/yomibuta_cli/core.py` | 契約識別子、事前ビルド済みバイナリ／GGUF SHA-256 固定、重複キー・非有限値拒否 JSON ローダ、原子的書き込み |
+| 計画構築・入力検証 | `cli/yomibuta_cli/plan.py` | `schema_version: 1 / 2` 検証、`[...]` 検査・`<|...|>` 禁止、`scene_caption` 合成、3クリップ＋`transcript` 検証、ポーズ解決 |
+| タグ定義・v1 変換 | `cli/yomibuta_cli/drama3_tags.py` | `TAG_LIST.md` 全155タグ定義、未学習・閉じ忘れタグ検出、v1 `emotion`／絵文字→Drama-3 タグ変換 |
+| ルビ解決 | `cli/yomibuta_cli/ruby.py` | 青空文庫・なろう・カクヨム・pixiv ルビ展開、`koebuta_added_ruby`（`kana` / `surface` / `auto` 警告） |
+| 音声検査・正規化・結合 | `cli/yomibuta_cli/audio.py` | 44.1 kHz ストリーム WAV 検査（省メモリ）、発話単位アクティブ RMS 正規化、`result.wav` 結合、`segments.zip` 作成 |
+| Colab リモートワーカー | `cli/yomibuta_cli/remote_worker.py` | バイナリ展開・GGUF 検証・`.voice.gguf` 原子的抽出、常駐 `speech serve`／単発 CLI／公式 `sgl-omni` 推論、逐次状態保存・再開 |
+| シナリオエディタ | `Yomibuta_Scenario_Inspector_v4.html` | ブラウザ単体動作の `schema_version: 1 / 2` 編集・検査・参照クリップ管理・CLI 用 `settings.json` エクスポート |
+| 参照音声作成キット | `voice_kit/yomibuta_voice_kit.py` | 複数シード一括試聴生成、`--adopt` による `transcript` 自動転記・`settings.json` 生成 |
+| 効果音・環境音ミキサー | `audio_mix/yomibuta_mix.py` | 44.1 kHz ステレオ合成、トゥルーピーク計測、電力重み付き TTS ゲイン、ダッキング、ループ継ぎ目クロスフェード |
 
 ---
 

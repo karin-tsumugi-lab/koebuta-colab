@@ -5,6 +5,7 @@ import math
 import re
 from pathlib import Path
 
+from .audio import wav_info
 from .core import (
     CONTRACT,
     DEFAULT_BACKEND,
@@ -14,7 +15,6 @@ from .core import (
     DEFAULT_SGLANG_PIP_SPEC,
     GGUF_SPECS,
     digest,
-    file_hash,
     identifier,
 )
 from .drama3_tags import (
@@ -22,6 +22,7 @@ from .drama3_tags import (
     convert_v1_emojis_to_drama3,
     find_forbidden_control_tokens,
     find_inline_brackets,
+    find_malformed_inline_tags,
     find_unknown_inline_tags,
     spoken_length,
     strip_inline_tags,
@@ -82,6 +83,7 @@ DEFAULT_ENGINE_OPTIONS = {
     "max_seconds": 47.55,
     "max_pause_frames": 36,
     "experts_on_cpu": False,
+    "repetition_penalty": None,
     "sglang_pip_spec": DEFAULT_SGLANG_PIP_SPEC,
 }
 
@@ -123,7 +125,15 @@ class PlanError(ValueError):
         super().__init__("\n".join(lines))
 
 
-def _normalize_voice_clips(profile: str, raw_entry: object, base_dir: Path, require_transcript: bool, add_error) -> list[dict]:
+def _normalize_voice_clips(
+    profile: str,
+    raw_entry: object,
+    base_dir: Path,
+    require_transcript: bool,
+    add_error,
+    *,
+    contain_to_base: bool = False,
+) -> list[dict]:
     items = raw_entry if isinstance(raw_entry, list) else [raw_entry]
     if not items or len(items) > 3:
         add_error(f"voices.{profile}", "参照音声は1〜3クリップの範囲で指定してください", code="E_REFERENCE")
@@ -144,9 +154,31 @@ def _normalize_voice_clips(profile: str, raw_entry: object, base_dir: Path, requ
         if not wav_rel:
             add_error(f"voices.{profile}[{idx}]", "wav パスが空です", code="E_REFERENCE")
             continue
-        wav_path = (base_dir / wav_rel).resolve()
+        p_obj = Path(wav_rel)
+        if contain_to_base and (p_obj.is_absolute() or ".." in p_obj.parts):
+            add_error(
+                f"voices.{profile}[{idx}]",
+                f"シナリオ内の reference_clips にはシナリオ基準の安全な相対パスのみ指定できます: {wav_rel!r}",
+                code="E_REFERENCE",
+            )
+            continue
+        wav_path = (p_obj if p_obj.is_absolute() else (base_dir / p_obj)).resolve()
+        if contain_to_base and not wav_path.is_relative_to(base_dir):
+            add_error(
+                f"voices.{profile}[{idx}]",
+                f"参照WAVパスがシナリオフォルダー外を指しています: {wav_rel!r}",
+                code="E_REFERENCE",
+            )
+            continue
         if not wav_path.is_file():
             add_error(f"voices.{profile}[{idx}]", f"参照WAVが見つかりません: {wav_path}", code="E_REFERENCE")
+            continue
+        try:
+            w_meta = wav_info(wav_path)
+            if w_meta["frames"] <= 0 or w_meta["sampwidth"] not in (1, 2, 3, 4):
+                raise ValueError("空または未対応のWAVです")
+        except Exception as exc:
+            add_error(f"voices.{profile}[{idx}]", f"有効なWAVファイルではありません ({wav_path.name}): {exc}", code="E_REFERENCE")
             continue
         if require_transcript and not transcript:
             add_error(
@@ -159,7 +191,7 @@ def _normalize_voice_clips(profile: str, raw_entry: object, base_dir: Path, requ
             {
                 "wav": str(wav_path),
                 "wav_rel": wav_rel,
-                "wav_sha256": file_hash(wav_path),
+                "wav_sha256": w_meta["sha256"],
                 "transcript": transcript,
             }
         )
@@ -167,8 +199,8 @@ def _normalize_voice_clips(profile: str, raw_entry: object, base_dir: Path, requ
 
 
 def _compose_caption(parts: list[str]) -> str:
-    cleaned = [p.strip().strip("[]") for p in parts if isinstance(p, str) and p.strip()]
-    return " ".join(cleaned)
+    cleaned = [re.sub(r"[\[\]\r\n]+", " ", p).strip() for p in parts if isinstance(p, str) and p.strip()]
+    return " ".join(c for c in cleaned if c)
 
 
 def build_plan(
@@ -176,10 +208,12 @@ def build_plan(
     settings: dict,
     *,
     base_dir: str | Path = ".",
+    scenario_base_dir: str | Path | None = None,
     selected_ids: list[str] | None = None,
 ) -> dict:
     diagnostics: list[dict] = []
     base = Path(base_dir).resolve()
+    sc_base = Path(scenario_base_dir).resolve() if scenario_base_dir is not None else base
 
     def add(level: str, code: str, field: str, message: str, sid: str | None = None) -> None:
         diagnostics.append(
@@ -202,6 +236,8 @@ def build_plan(
         error(key, "未対応の生成設定です", code="E_SETTINGS")
 
     cfg = {**DEFAULT_SETTINGS, **settings}
+    if "quant" not in settings and cfg.get("backend") == "official":
+        cfg["quant"] = "none"
     if cfg["ttsEngine"] != "drama3":
         error("ttsEngine", "Yomibutaでは ttsEngine='drama3' のみ対応しています", code="E_SETTINGS")
     if not isinstance(cfg["backend"], str) or cfg["backend"] not in ("speech_cpp_gguf", "official"):
@@ -217,8 +253,11 @@ def build_plan(
     if type(cfg["sampleRate"]) is not int or cfg["sampleRate"] != DEFAULT_SAMPLE_RATE:
         error("sampleRate", f"Drama-3は {DEFAULT_SAMPLE_RATE} Hz 統一です", code="E_SETTINGS")
     norm_rms = cfg.get("normalizeRmsDb")
-    if norm_rms is not None and (not _is_finite_num(norm_rms) or not (-36.0 <= float(norm_rms) <= -6.0)):
-        error("normalizeRmsDb", "null または -36.0〜-6.0 の有限数値を指定してください", code="E_SETTINGS")
+    if norm_rms is not None:
+        if not _is_finite_num(norm_rms) or not (-36.0 <= float(norm_rms) <= -6.0):
+            error("normalizeRmsDb", "null または -36.0〜-6.0 の有限数値を指定してください", code="E_SETTINGS")
+        else:
+            cfg["normalizeRmsDb"] = float(norm_rms)
     if not isinstance(cfg["reading"], str) or cfg["reading"] not in ("shared", "cast"):
         error("reading", "'shared' または 'cast' を指定してください", code="E_SETTINGS")
     if not isinstance(cfg["voiceMode"], str) or cfg["voiceMode"] not in ("design", "clone"):
@@ -256,8 +295,18 @@ def build_plan(
         error("engineOptions.max_pause_frames", "1〜200の整数が必要です", code="E_SETTINGS")
     if type(eo["experts_on_cpu"]) is not bool:
         error("engineOptions.experts_on_cpu", "真偽値が必要です", code="E_SETTINGS")
+    rep_pen = eo.get("repetition_penalty")
+    if rep_pen is not None:
+        if cfg["backend"] != "official":
+            error("engineOptions.repetition_penalty", "repetition_penalty は backend='official' 専用です", code="E_SETTINGS")
+        elif not _is_finite_num(rep_pen) or not (0.5 <= float(rep_pen) <= 2.0):
+            error("engineOptions.repetition_penalty", "0.5〜2.0 の有限数値が必要です", code="E_SETTINGS")
+        else:
+            eo["repetition_penalty"] = float(rep_pen)
     if not isinstance(eo["sglang_pip_spec"], str) or not eo["sglang_pip_spec"].strip():
         error("engineOptions.sglang_pip_spec", "空でないパッケージ指定文字列が必要です", code="E_SETTINGS")
+    elif eo["sglang_pip_spec"].strip().startswith("-"):
+        error("engineOptions.sglang_pip_spec", "ハイフン始まりのオプションは指定できません", code="E_SETTINGS")
     elif "git+" in eo["sglang_pip_spec"]:
         git_tail = eo["sglang_pip_spec"].split("git+", 1)[1]
         ref = git_tail.rsplit("@", 1)[1] if "@" in git_tail else ""
@@ -276,6 +325,10 @@ def build_plan(
     if type(schema_version) is not int or schema_version not in (1, 2):
         error("schema_version", f"対応する schema_version は 1 または 2 です: {schema_version!r}")
         stop_if_errors()
+
+    global_scene_caption = scenario.get("scene_caption")
+    if global_scene_caption is not None and not isinstance(global_scene_caption, str):
+        error("scene_caption", "トップレベルの scene_caption は文字列が必要です")
 
     speakers = scenario.get("speakers")
     segments = scenario.get("segments")
@@ -299,6 +352,23 @@ def build_plan(
         if not isinstance(spk.get("name"), str) or not spk["name"].strip():
             error("speakers", "話者には空でない name が必要です", str(spk_id))
             continue
+        spk_kind = spk.get("kind")
+        if spk_kind is not None and (not isinstance(spk_kind, str) or spk_kind not in ("narrator", "character")):
+            error("speakers.kind", "話者の kind は 'narrator' または 'character' を指定してください", str(spk_id))
+            continue
+        for cfield in ("voice_caption", "acting_description"):
+            cval = spk.get(cfield)
+            if cval is not None and not isinstance(cval, str):
+                error(f"speakers.{cfield}", "文字列が必要です", str(spk_id))
+                id_ok = False
+            elif isinstance(cval, str) and find_forbidden_control_tokens(cval):
+                error(
+                    f"speakers.{cfield}",
+                    f"制御トークンは指定できません: {find_forbidden_control_tokens(cval)}",
+                    str(spk_id),
+                    code="E_FORBIDDEN_CONTROL_TOKEN",
+                )
+                id_ok = False
         if id_ok:
             valid_speakers[spk_id] = spk
 
@@ -311,11 +381,13 @@ def build_plan(
 
     effective_declared = dict(declared_voices)
     effective_speaker_voices = dict(speaker_voices)
+    from_scenario_clips = False
     if cfg["voiceMode"] == "clone" and not effective_declared:
         # Bridge from Inspector v4 `speakers[spk_id].reference_clips` when `settings.voices` is omitted
         for spk_id, spk in valid_speakers.items():
             if isinstance(spk.get("reference_clips"), list) and spk["reference_clips"]:
                 effective_declared[spk_id] = spk["reference_clips"]
+                from_scenario_clips = True
                 if cfg["reading"] == "cast" and spk_id not in effective_speaker_voices:
                     effective_speaker_voices[spk_id] = spk_id
 
@@ -323,13 +395,24 @@ def build_plan(
     if cfg["voiceMode"] == "clone":
         if not effective_declared:
             error("voices", "voiceMode='clone' では settings.voices（または speakers[].reference_clips）の指定が必須です", code="E_REFERENCE")
+        voice_root = sc_base if from_scenario_clips else base
         for profile, raw_entry in effective_declared.items():
             try:
                 identifier(profile, "voice profile", 40)
             except ValueError as exc:
                 error(f"voices.{profile}", str(exc), code="E_REFERENCE")
                 continue
-            clips = _normalize_voice_clips(profile, raw_entry, base, True, error)
+            if profile == "none":
+                error("voices.none", "'none' は予約語のためプロファイル名に使用できません", code="E_REFERENCE")
+                continue
+            clips = _normalize_voice_clips(
+                profile,
+                raw_entry,
+                voice_root,
+                True,
+                error,
+                contain_to_base=from_scenario_clips,
+            )
             if clips:
                 normalized_voices[profile] = clips
 
@@ -385,6 +468,26 @@ def build_plan(
         if not isinstance(raw_text, str) or not raw_text.strip():
             error("text", "発話には空でない text が必要です", sid)
             continue
+        if find_forbidden_control_tokens(raw_text):
+            error("text", f"制御トークンは指定できません: {find_forbidden_control_tokens(raw_text)}", sid, code="E_FORBIDDEN_CONTROL_TOKEN")
+            continue
+
+        notes_val = seg.get("notes")
+        if notes_val is not None and (not isinstance(notes_val, list) or any(not isinstance(n, str) for n in notes_val)):
+            error("notes", "notes は文字列の配列が必要です", sid)
+            continue
+        for sfield in ("scene_caption", "acting_description"):
+            sval = seg.get(sfield)
+            if sval is not None and not isinstance(sval, str):
+                error(sfield, f"{sfield} は文字列が必要です", sid)
+                continue
+            if isinstance(sval, str) and find_forbidden_control_tokens(sval):
+                error(sfield, f"制御トークンは指定できません: {find_forbidden_control_tokens(sval)}", sid, code="E_FORBIDDEN_CONTROL_TOKEN")
+                continue
+        if any(seg.get(f) is not None and not isinstance(seg.get(f), str) for f in ("scene_caption", "acting_description")):
+            continue
+        if any(isinstance(seg.get(f), str) and find_forbidden_control_tokens(seg.get(f)) for f in ("scene_caption", "acting_description")):
+            continue
 
         emotion = seg.get("emotion")
         if schema_version == 1 and emotion is None:
@@ -433,6 +536,15 @@ def build_plan(
             resolved_text, r_warns = expand_inline_ruby(explicit_tts, "aozora")
             for w in r_warns:
                 add("warning", "W_RUBY_SYNTAX", "tts_text", w, sid)
+            malformed_tags = find_malformed_inline_tags(resolved_text)
+            if malformed_tags:
+                add(
+                    "warning",
+                    "W_MALFORMED_INLINE_TAG",
+                    "tts_text",
+                    f"閉じ忘れまたは全半角が混在した角括弧があります: {malformed_tags}",
+                    sid,
+                )
             unknown_tags = find_unknown_inline_tags(resolved_text)
             if unknown_tags:
                 add(
@@ -462,12 +574,12 @@ def build_plan(
         if emoji_count:
             add("warning", "W_V1_EMOJI_CONVERTED", "tts_text", f"Irodori用絵文字 {emoji_count} 件をDrama-3タグへ変換しました", sid)
 
-        # Prepend v1 emotion tag if enabled and not already tagged at start
+        # Prepend v1 emotion tag if enabled and not already tagged at start (even after opening quote)
         is_narrator = spk.get("kind") == "narrator"
         use_emotion = cfg["emotion"] and (cfg["narratorEmotion"] or not is_narrator)
         if use_emotion and emotion != "neutral":
             mapped_tag = V1_EMOTION_TO_DRAMA3[emotion]
-            if mapped_tag and not resolved_text.lstrip().startswith("["):
+            if mapped_tag and not resolved_text.lstrip(" \t　「『（(“\"").startswith("["):
                 resolved_text = mapped_tag + resolved_text
 
         caption_parts: list[str] = []
@@ -494,11 +606,15 @@ def build_plan(
             if cfg["acting"]:
                 if spk.get("acting_description"):
                     caption_parts.append(spk["acting_description"])
+                if isinstance(global_scene_caption, str) and global_scene_caption.strip():
+                    caption_parts.append(global_scene_caption)
                 if seg.get("scene_caption"):
                     caption_parts.append(seg["scene_caption"])
                 if seg.get("acting_description"):
                     caption_parts.append(seg["acting_description"])
         elif cfg["cloneCaption"] and cfg["acting"]:
+            if isinstance(global_scene_caption, str) and global_scene_caption.strip():
+                caption_parts.append(global_scene_caption)
             if seg.get("scene_caption"):
                 caption_parts.append(seg["scene_caption"])
             if seg.get("acting_description"):
@@ -527,14 +643,18 @@ def build_plan(
             if cfg["reading"] == "shared":
                 voice_profile = next(iter(normalized_voices)) if normalized_voices else "none"
             else:
-                vp_raw = effective_speaker_voices.get(spk_id, "")
-                voice_profile = vp_raw if isinstance(vp_raw, str) else ""
+                vp_raw = effective_speaker_voices.get(spk_id)
+                if vp_raw is None and spk_id in normalized_voices:
+                    # Auto-map speaker_id -> voices[speaker_id] when speakerVoices omits an identity mapping
+                    voice_profile = spk_id
+                else:
+                    voice_profile = vp_raw if isinstance(vp_raw, str) else ""
                 if not voice_profile or voice_profile not in normalized_voices:
                     error("speakerVoices", f"話者 '{spk_id}' の参照音声プロファイルが未設定です", sid, code="E_REFERENCE")
                     continue
             plain_utterance = strip_inline_tags(resolved_text)
             for clip in normalized_voices.get(voice_profile, []):
-                if plain_utterance and plain_utterance == clip["transcript"].strip():
+                if plain_utterance and plain_utterance == strip_inline_tags(clip["transcript"]).strip():
                     add(
                         "warning",
                         "W_SAME_AS_REFERENCE_TRANSCRIPT",
@@ -594,7 +714,6 @@ def build_plan(
             "caption": caption,
             "voice_profile": voice_profile,
             "seed": seg_seed,
-            "engine_options": eo,
         }
         speech_rows.append(
             {
@@ -609,6 +728,7 @@ def build_plan(
                         "model": cfg["ttsModel"],
                         "backend": cfg["backend"],
                         "quant": cfg.get("quant"),
+                        "engine_options": eo,
                         "request": req,
                         "voice_hashes": [c["wav_sha256"] for c in normalized_voices.get(voice_profile, [])],
                         "voice_transcripts": [c["transcript"] for c in normalized_voices.get(voice_profile, [])],
@@ -620,6 +740,9 @@ def build_plan(
     stop_if_errors()
 
     if selected_ids is not None:
+        if not selected_ids:
+            error("ids", "対象の発話IDが1件も指定されていません", code="E_SELECTION")
+            stop_if_errors()
         wanted = set(selected_ids)
         found = {r["segment_id"] for r in speech_rows}
         missing = sorted(wanted - found)
@@ -627,6 +750,10 @@ def build_plan(
             error("ids", f"存在しない発話IDが指定されました: {missing}", code="E_SELECTION")
             stop_if_errors()
         speech_rows = [r for r in speech_rows if r["segment_id"] in wanted]
+
+    if not speech_rows:
+        error("segments", "合成対象の発話 (segment_type='speech') が1件もありません", code="E_STRUCTURE")
+        stop_if_errors()
 
     plan = {
         "contract": CONTRACT,

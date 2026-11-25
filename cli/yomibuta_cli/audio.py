@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import array
 import math
-import struct
 import sys
 import wave
 import zipfile
@@ -17,15 +16,50 @@ from pathlib import Path
 
 from .core import DEFAULT_SAMPLE_RATE, file_hash
 
+_STREAM_FRAMES = 262144  # ~512 KiB per chunk (16-bit mono), keeping peak RAM < 4 MiB even on multi-hour WAVs
+
 
 def wav_info(path: str | Path) -> dict:
     p = Path(path)
+    peak_int = 0
+    active_sq = 0.0
+    active_cnt = 0
+    actual_frames = 0
+
     with wave.open(str(p), "rb") as wf:
         ch = wf.getnchannels()
         sw = wf.getsampwidth()
         sr = wf.getframerate()
         frames = wf.getnframes()
-        raw = wf.readframes(frames)
+        frame_bytes = ch * sw
+        if ch <= 0 or sw <= 0 or sr <= 0:
+            raise ValueError(f"不正なWAVヘッダです: {p}")
+
+        while True:
+            chunk = wf.readframes(_STREAM_FRAMES)
+            if not chunk:
+                break
+            if len(chunk) % frame_bytes != 0:
+                raise ValueError(f"WAVフレーム境界が途中で切断されています: {p}")
+            actual_frames += len(chunk) // frame_bytes
+            if sw == 2:
+                buf = array.array("h")
+                buf.frombytes(chunk)
+                if sys.byteorder != "little":
+                    buf.byteswap()
+                if buf:
+                    chunk_peak = max(abs(min(buf)), abs(max(buf)))
+                    if chunk_peak > peak_int:
+                        peak_int = chunk_peak
+                    for s in buf:
+                        if abs(s) >= 184:
+                            v = s / 32768.0
+                            active_sq += v * v
+                            active_cnt += 1
+
+    if actual_frames != frames:
+        raise ValueError(f"WAVデータ長がヘッダと一致しません (header={frames}, actual={actual_frames}): {p}")
+
     duration = frames / sr if sr else 0.0
     info = {
         "bytes": p.stat().st_size,
@@ -37,10 +71,8 @@ def wav_info(path: str | Path) -> dict:
         "sha256": file_hash(p),
     }
     if sw == 2 and frames > 0:
-        samples = struct.unpack(f"<{frames * ch}h", raw)
-        peak = max(abs(s) for s in samples) / 32768.0
-        active = [s / 32768.0 for s in samples if abs(s) >= 184]
-        rms_active = math.sqrt(sum(v * v for v in active) / len(active)) if active else 0.0
+        peak = peak_int / 32768.0
+        rms_active = math.sqrt(active_sq / active_cnt) if active_cnt else 0.0
         info["peak_dbfs"] = round(20 * math.log10(peak), 2) if peak > 0 else -120.0
         info["rms_active_dbfs"] = round(20 * math.log10(rms_active), 2) if rms_active > 0 else -120.0
     return info
@@ -57,6 +89,8 @@ def _normalize_pcm16_bytes(
     """Apply bounded active-RMS loudness normalization with a soft tanh limiter."""
     if not raw:
         return raw, 0.0
+    if len(raw) % 2 != 0:
+        raise ValueError("16bit PCMデータのバイト長が奇数です")
 
     ceiling = 10.0 ** (limiter_db / 20.0)
     knee = ceiling * 0.85
@@ -147,6 +181,10 @@ def assemble_wavs(
                     )
                 frames = src.getnframes()
                 pcm = src.readframes(frames)
+                if len(pcm) != frames * 2:
+                    raise ValueError(
+                        f"WAVデータが途中切断されています ({take['segment_id']}): expected {frames * 2}B, got {len(pcm)}B"
+                    )
                 if normalize_rms_db is not None:
                     pcm, gain_db = _normalize_pcm16_bytes(pcm, target_rms_db=float(normalize_rms_db))
                     applied_gains[take["segment_id"]] = gain_db

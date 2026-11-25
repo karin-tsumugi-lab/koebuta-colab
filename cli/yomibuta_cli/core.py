@@ -52,7 +52,7 @@ def identifier(value: object, label: str, max_len: int = 64) -> str:
     return value
 
 
-def load_json(path: str | Path) -> object:
+def load_json(path: str | Path, *, max_bytes: int = 32 * 1024 * 1024) -> object:
     def _pairs(items: list[tuple[str, object]]) -> dict[str, object]:
         out: dict[str, object] = {}
         for k, v in items:
@@ -62,8 +62,8 @@ def load_json(path: str | Path) -> object:
         return out
 
     p = Path(path)
-    if p.stat().st_size > 10 * 1024 * 1024:
-        raise ValueError("JSONは10MiB以内にしてください")
+    if p.stat().st_size > max_bytes:
+        raise ValueError(f"JSONは{max_bytes // (1024 * 1024)}MiB以内にしてください")
     return json.loads(
         p.read_text(encoding="utf-8-sig"),
         object_pairs_hook=_pairs,
