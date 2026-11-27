@@ -49,6 +49,350 @@ CATEGORIES: dict[str, dict[str, float | bool]] = {
     },
 }
 
+# Binaural / ASMR spatial presets (pan: -1.0=left, 0.0=center, +1.0=right)
+SPATIAL_PRESETS: dict[str, dict[str, float]] = {
+    'center': {'pan_start': 0.0, 'pan_end': 0.0, 'proximity': 0.0, 'distance_db': 0.0, 'far_lpf_hz': 0.0},
+    'far_center': {'pan_start': 0.0, 'pan_end': 0.0, 'proximity': 0.0, 'distance_db': -4.5, 'far_lpf_hz': 4200.0},
+    'left_mid': {'pan_start': -0.60, 'pan_end': -0.60, 'proximity': 0.35, 'distance_db': 0.0, 'far_lpf_hz': 0.0},
+    'right_mid': {'pan_start': 0.60, 'pan_end': 0.60, 'proximity': 0.35, 'distance_db': 0.0, 'far_lpf_hz': 0.0},
+    'left_close': {'pan_start': -0.92, 'pan_end': -0.92, 'proximity': 1.0, 'distance_db': 0.0, 'far_lpf_hz': 0.0},
+    'right_close': {'pan_start': 0.92, 'pan_end': 0.92, 'proximity': 1.0, 'distance_db': 0.0, 'far_lpf_hz': 0.0},
+    'move_center_to_right': {'pan_start': 0.0, 'pan_end': 0.80, 'proximity': 0.65, 'distance_db': 0.0, 'far_lpf_hz': 0.0},
+    'move_center_to_left': {'pan_start': 0.0, 'pan_end': -0.80, 'proximity': 0.65, 'distance_db': 0.0, 'far_lpf_hz': 0.0},
+    'move_right_to_left': {'pan_start': 0.85, 'pan_end': -0.85, 'proximity': 0.85, 'distance_db': 0.0, 'far_lpf_hz': 0.0},
+    'move_left_to_right': {'pan_start': -0.85, 'pan_end': 0.85, 'proximity': 0.85, 'distance_db': 0.0, 'far_lpf_hz': 0.0},
+}
+
+SPATIAL_KEYS: frozenset[str] = frozenset({
+    'preset',
+    'pan_start',
+    'pan_end',
+    'proximity',
+    'distance_db',
+    'far_lpf_hz',
+})
+
+
+def _coerce_finite_float(val: object, field_name: str) -> float:
+    if isinstance(val, bool) or not isinstance(val, (int, float)) or not math.isfinite(val):
+        raise ValueError(f'position.{field_name} には有限の数値を指定してください: {val!r}')
+    return float(val)
+
+
+def parse_spatial_spec(position: str | dict | None) -> dict[str, float] | None:
+    """Validate and normalize a spatial preset name or custom parameter dict."""
+    if position is None:
+        return None
+    if isinstance(position, str):
+        if position not in SPATIAL_PRESETS:
+            raise ValueError(f'未対応の空間プリセットです: {position}（選択可能: {", ".join(SPATIAL_PRESETS)}）')
+        return dict(SPATIAL_PRESETS[position])
+    if isinstance(position, dict):
+        if not position:
+            raise ValueError('position オブジェクトが空です')
+        unknown = sorted(set(position.keys()) - SPATIAL_KEYS)
+        if unknown:
+            raise ValueError(
+                f'position に未対応のキーがあります: {", ".join(unknown)}'
+                f'（使用可能: {", ".join(sorted(SPATIAL_KEYS))}）'
+            )
+        preset_name = position.get('preset', 'center')
+        if not isinstance(preset_name, str) or preset_name not in SPATIAL_PRESETS:
+            raise ValueError(f'未対応の空間プリセットです: {preset_name}（選択可能: {", ".join(SPATIAL_PRESETS)}）')
+        base = SPATIAL_PRESETS[preset_name]
+
+        pan_start = _coerce_finite_float(position.get('pan_start', base['pan_start']), 'pan_start')
+        if 'pan_end' in position:
+            pan_end = _coerce_finite_float(position['pan_end'], 'pan_end')
+        elif 'preset' in position:
+            pan_end = base['pan_end']
+        else:
+            pan_end = pan_start
+        proximity = _coerce_finite_float(position.get('proximity', base['proximity']), 'proximity')
+        distance_db = _coerce_finite_float(position.get('distance_db', base['distance_db']), 'distance_db')
+        far_lpf_hz = _coerce_finite_float(position.get('far_lpf_hz', base['far_lpf_hz']), 'far_lpf_hz')
+        if far_lpf_hz < 0.0:
+            raise ValueError(f'position.far_lpf_hz は 0 以上で指定してください: {far_lpf_hz}')
+
+        return {
+            'pan_start': max(-1.0, min(1.0, pan_start)),
+            'pan_end': max(-1.0, min(1.0, pan_end)),
+            'proximity': max(0.0, min(1.0, proximity)),
+            'distance_db': distance_db,
+            'far_lpf_hz': far_lpf_hz,
+        }
+    raise ValueError('position はプリセット名またはオブジェクトで指定してください')
+
+
+def _is_noop_spatial(cfg: dict[str, float]) -> bool:
+    return (
+        abs(cfg['pan_start']) < 1e-4
+        and abs(cfg['pan_end']) < 1e-4
+        and cfg['proximity'] < 1e-4
+        and abs(cfg['distance_db']) < 0.05
+        and cfg['far_lpf_hz'] <= 0.0
+    )
+
+
+def _is_true_stereo(left: array, right: array) -> bool:
+    """Detect whether L/R contain genuinely distinct stereo/binaural channels rather than dual-mono."""
+    n = len(left)
+    if n == 0 or n != len(right):
+        return False
+    stride = max(1, n // 4096)
+    max_diff = 0.0
+    diff_sq = 0.0
+    sum_sq = 0.0
+    for i in range(0, n, stride):
+        lv = left[i]
+        rv = right[i]
+        d = abs(lv - rv)
+        if d > max_diff:
+            max_diff = d
+        diff_sq += (lv - rv) * (lv - rv)
+        sum_sq += lv * lv + rv * rv
+    return max_diff > 1e-3 and diff_sq > 1e-4 * max(1e-12, sum_sq)
+
+
+def _head_shadow_one_pole_beta(sr: int, shadow_mix: float) -> float:
+    """Compute 1st-order LPF coefficient beta without comb-filtering; approaches exact 1.0 as shadow_mix -> 0."""
+    if shadow_mix <= 1e-4:
+        return 1.0
+    # At shadow_mix=1.0 -> fc=1600Hz; as shadow_mix->0 -> omega->inf -> beta->1.0 smoothly
+    omega = (2.0 * math.pi * 1600.0 / sr) / (shadow_mix ** 1.2)
+    if omega >= 36.0:
+        return 1.0
+    return 1.0 - math.exp(-omega)
+
+
+def _equal_power_binaural_gains(apan: float, max_ild_db: float) -> tuple[float, float]:
+    """Compute equal-power-normalized near and far ear gains preserving ILD ratio and center loudness."""
+    far_rel = db_to_lin(-apan * max_ild_db)
+    near_gain = min(1.35, math.sqrt(2.0 / (1.0 + far_rel * far_rel)))
+    return near_gain, near_gain * far_rel
+
+
+def _apply_biquad(samples: array, b0: float, b1: float, b2: float, a1: float, a2: float) -> array:
+    out = array('f', [0.0]) * len(samples)
+    x1 = x2 = y1 = y2 = 0.0
+    for i, x0 in enumerate(samples):
+        y0 = b0 * x0 + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2
+        out[i] = y0
+        x2, x1 = x1, x0
+        y2, y1 = y1, y0
+    return out
+
+
+def apply_lowpass_biquad(samples: array, sr: int, cutoff_hz: float, q: float = 0.707) -> array:
+    if cutoff_hz <= 0.0 or cutoff_hz >= sr * 0.48 or not samples:
+        return samples
+    w0 = 2.0 * math.pi * cutoff_hz / sr
+    cw = math.cos(w0)
+    alpha = math.sin(w0) / (2.0 * q)
+    b0 = (1.0 - cw) * 0.5
+    b1 = 1.0 - cw
+    b2 = b0
+    a0 = 1.0 + alpha
+    a1 = -2.0 * cw
+    a2 = 1.0 - alpha
+    return _apply_biquad(samples, b0 / a0, b1 / a0, b2 / a0, a1 / a0, a2 / a0)
+
+
+def apply_shelf_biquad(samples: array, sr: int, freq_hz: float, gain_db: float, *, high: bool = False, q: float = 0.707) -> array:
+    if abs(gain_db) < 0.05 or freq_hz <= 0.0 or freq_hz >= sr * 0.48 or not samples:
+        return samples
+    amp = 10.0 ** (gain_db / 40.0)
+    w0 = 2.0 * math.pi * freq_hz / sr
+    cw = math.cos(w0)
+    alpha = math.sin(w0) / (2.0 * q)
+    two_sqrt_a_alpha = 2.0 * math.sqrt(amp) * alpha
+    if not high:
+        b0 = amp * ((amp + 1.0) - (amp - 1.0) * cw + two_sqrt_a_alpha)
+        b1 = 2.0 * amp * ((amp - 1.0) - (amp + 1.0) * cw)
+        b2 = amp * ((amp + 1.0) - (amp - 1.0) * cw - two_sqrt_a_alpha)
+        a0 = (amp + 1.0) + (amp - 1.0) * cw + two_sqrt_a_alpha
+        a1 = -2.0 * ((amp - 1.0) + (amp + 1.0) * cw)
+        a2 = (amp + 1.0) + (amp - 1.0) * cw - two_sqrt_a_alpha
+    else:
+        b0 = amp * ((amp + 1.0) + (amp - 1.0) * cw + two_sqrt_a_alpha)
+        b1 = -2.0 * amp * ((amp - 1.0) + (amp + 1.0) * cw)
+        b2 = amp * ((amp + 1.0) + (amp - 1.0) * cw - two_sqrt_a_alpha)
+        a0 = (amp + 1.0) - (amp - 1.0) * cw + two_sqrt_a_alpha
+        a1 = 2.0 * ((amp - 1.0) - (amp + 1.0) * cw)
+        a2 = (amp + 1.0) - (amp - 1.0) * cw - two_sqrt_a_alpha
+    return _apply_biquad(samples, b0 / a0, b1 / a0, b2 / a0, a1 / a0, a2 / a0)
+
+
+def apply_peaking_biquad(samples: array, sr: int, freq_hz: float, gain_db: float, q: float = 2.2) -> array:
+    if abs(gain_db) < 0.05 or freq_hz <= 0.0 or freq_hz >= sr * 0.48 or not samples:
+        return samples
+    amp = 10.0 ** (gain_db / 40.0)
+    w0 = 2.0 * math.pi * freq_hz / sr
+    cw = math.cos(w0)
+    alpha = math.sin(w0) / (2.0 * q)
+    b0 = 1.0 + alpha * amp
+    b1 = -2.0 * cw
+    b2 = 1.0 - alpha * amp
+    a0 = 1.0 + alpha / amp
+    a1 = -2.0 * cw
+    a2 = 1.0 - alpha / amp
+    return _apply_biquad(samples, b0 / a0, b1 / a0, b2 / a0, a1 / a0, a2 / a0)
+
+
+def _apply_distance_and_proximity_chain(
+    samples: array,
+    sr: int,
+    dist_db: float,
+    far_lpf: float,
+    prox: float,
+) -> array:
+    out = array('f', samples)
+    if far_lpf > 0.0:
+        out = apply_lowpass_biquad(out, sr, far_lpf)
+    if abs(dist_db) >= 0.05:
+        dg = db_to_lin(dist_db)
+        for i in range(len(out)):
+            out[i] *= dg
+    if prox > 0.01:
+        out = apply_shelf_biquad(out, sr, 180.0, 3.0 * prox, high=False)
+        out = apply_shelf_biquad(out, sr, 9500.0, 2.5 * prox, high=True)
+        out = apply_peaking_biquad(out, sr, 6200.0, -2.5 * prox, q=2.4)
+    return out
+
+
+def apply_binaural_spatial(left: array, right: array, sr: int, position: str | dict | None) -> tuple[array, array]:
+    """Render mono/stereo audio into binaural ASMR space using ITD, equal-power ILD, 1-pole head shadow, and proximity EQ."""
+    cfg = parse_spatial_spec(position)
+    if cfg is None or _is_noop_spatial(cfg):
+        return left, right
+
+    n = len(left)
+    if n == 0:
+        return left, right
+
+    dist_db = cfg['distance_db']
+    far_lpf = cfg['far_lpf_hz']
+    prox = cfg['proximity']
+    pan_start = cfg['pan_start']
+    pan_end = cfg['pan_end']
+
+    # Protect pre-recorded 2ch binaural/stereo assets from destructive mono collapse
+    if _is_true_stereo(left, right):
+        print(
+            'WARNING: 2chステレオ素材に position が指定されました。'
+            '元のバイノーラル位相を保護するためモノラル統合をスキップし、距離減衰・EQ・音量バランスのみ適用します。',
+            file=sys.stderr,
+        )
+        out_l = _apply_distance_and_proximity_chain(left, sr, dist_db, far_lpf, prox)
+        out_r = _apply_distance_and_proximity_chain(right, sr, dist_db, far_lpf, prox)
+        if abs(pan_start) >= 0.01 or abs(pan_end) >= 0.01:
+            inv_n = 1.0 / max(1, n - 1)
+            moving_st = abs(pan_end - pan_start) > 1e-4
+            if not moving_st:
+                atten = db_to_lin(-abs(pan_start) * 6.0)
+                if pan_start > 0.0:
+                    for i in range(n):
+                        out_l[i] *= atten
+                else:
+                    for i in range(n):
+                        out_r[i] *= atten
+            else:
+                for b0 in range(0, n, 32):
+                    b1 = min(n, b0 + 32)
+                    t_mid = 0.5 - 0.5 * math.cos(math.pi * ((0.5 * (b0 + b1 - 1)) * inv_n))
+                    pan_m = pan_start + (pan_end - pan_start) * t_mid
+                    atten = db_to_lin(-abs(pan_m) * 6.0)
+                    if pan_m >= 0.0:
+                        for i in range(b0, b1):
+                            out_l[i] *= atten
+                    else:
+                        for i in range(b0, b1):
+                            out_r[i] *= atten
+        return out_l, out_r
+
+    # Mix dual-mono source to single buffer for point-source HRTF rendering
+    mono = array('f', (0.5 * (left[i] + right[i]) for i in range(n)))
+    mono = _apply_distance_and_proximity_chain(mono, sr, dist_db, far_lpf, prox)
+
+    if abs(pan_start) < 0.01 and abs(pan_end) < 0.01:
+        return mono, array('f', mono)
+
+    # Max ITD ~ 0.60 ms (approx 29 samples at 48kHz)
+    max_itd_samples = 0.00060 * sr
+    # Max ILD ratio on far ear relative to near ear: up to 11.5 dB when close to ear
+    max_ild_db = 8.0 + 3.5 * prox
+    shadow_scale = 0.70 + 0.30 * prox
+
+    out_l = array('f', [0.0]) * n
+    out_r = array('f', [0.0]) * n
+    moving = abs(pan_end - pan_start) > 1e-4
+
+    # Fast path for static positioning: precompute all constants outside the sample loop
+    if not moving:
+        pan = pan_start
+        apan = abs(pan)
+        delay = apan * max_itd_samples
+        near_gain, far_gain = _equal_power_binaural_gains(apan, max_ild_db)
+        beta = _head_shadow_one_pole_beta(sr, min(1.0, apan * shadow_scale))
+        lp_state = 0.0
+
+        if pan >= 0.0:
+            near_out, far_out = out_r, out_l
+        else:
+            near_out, far_out = out_l, out_r
+
+        for i in range(n):
+            near_out[i] = mono[i] * near_gain
+            src_pos = i - delay
+            if src_pos <= 0.0:
+                delayed = 0.0
+            else:
+                idx = int(src_pos)
+                frac = src_pos - idx
+                delayed = mono[idx] * (1.0 - frac) + mono[idx + 1] * frac if idx + 1 < n else mono[n - 1]
+            lp_state += beta * (delayed - lp_state)
+            far_out[i] = lp_state * far_gain
+        return out_l, out_r
+
+    # Moving trajectory path: 32-sample (~0.67ms) control-rate coefficient updates with per-sample smooth ITD
+    inv_n = 1.0 / max(1, n - 1)
+    lp_state = 0.0
+    for b0 in range(0, n, 32):
+        b1 = min(n, b0 + 32)
+        t0 = 0.5 - 0.5 * math.cos(math.pi * (b0 * inv_n))
+        t1 = 0.5 - 0.5 * math.cos(math.pi * (min(n - 1, b1) * inv_n))
+        pan0 = pan_start + (pan_end - pan_start) * t0
+        pan1 = pan_start + (pan_end - pan_start) * t1
+        d_pan = (pan1 - pan0) / max(1, b1 - b0)
+
+        pan_mid = 0.5 * (pan0 + pan1)
+        apan_mid = abs(pan_mid)
+        near_gain, far_gain = _equal_power_binaural_gains(apan_mid, max_ild_db)
+        beta = _head_shadow_one_pole_beta(sr, min(1.0, apan_mid * shadow_scale))
+
+        pan = pan0
+        for i in range(b0, b1):
+            delay = abs(pan) * max_itd_samples
+            src_pos = i - delay
+            if src_pos <= 0.0:
+                delayed = 0.0
+            else:
+                idx = int(src_pos)
+                frac = src_pos - idx
+                delayed = mono[idx] * (1.0 - frac) + mono[idx + 1] * frac if idx + 1 < n else mono[n - 1]
+            lp_state += beta * (delayed - lp_state)
+            near_sample = mono[i] * near_gain
+            far_sample = lp_state * far_gain
+            if pan >= 0.0:
+                out_r[i] = near_sample
+                out_l[i] = far_sample
+            else:
+                out_l[i] = near_sample
+                out_r[i] = far_sample
+            pan += d_pan
+
+    return out_l, out_r
+
 
 def db_to_lin(db: float) -> float:
     return 10.0 ** (db / 20.0)
@@ -466,9 +810,16 @@ def run_mix(plan_path: Path, out_path: Path | None, *, dry_run: bool = False) ->
         utt_spans: dict[str, tuple[int, int]] = {}
         speech_regions: list[tuple[int, int]] = []
         se_reports = []
+        utt_positions: dict[str, str | dict] = {}
 
         for idx, (u, l_arr, r_arr, _, _) in enumerate(loaded_utts):
             uid = u['id']
+            pos_spec = u.get('position') if 'position' in u else u.get('spatial')
+            if pos_spec is not None:
+                parsed_pos = parse_spatial_spec(pos_spec)
+                utt_positions[uid] = pos_spec
+                if not dry_run and parsed_pos is not None:
+                    l_arr, r_arr = apply_binaural_spatial(l_arr, r_arr, sr, parsed_pos)
             start_frame = cursor
             end_frame = cursor + len(l_arr)
             utt_spans[uid] = (start_frame, end_frame)
@@ -482,6 +833,8 @@ def run_mix(plan_path: Path, out_path: Path | None, *, dry_run: bool = False) ->
                     cat = ins.get('category', 'action')
                     pre_ms = int(ins.get('pre_gap_ms', 200))
                     post_ms = int(ins.get('post_gap_ms', 250))
+                    se_pos = ins.get('position') if 'position' in ins else ins.get('spatial')
+                    parsed_se_pos = parse_spatial_spec(se_pos) if se_pos is not None else None
                     se_l, se_r, se_desc = load_audio_source(ins['wav'], from_zip=False)
                     se_l, se_r = slice_audio(se_l, se_r, sr, ins.get('trim_start_ms'), ins.get('trim_end_ms'))
                     hpf_hz = float(ins.get('hpf_hz', CATEGORIES[cat]['hpf_hz']))
@@ -496,18 +849,21 @@ def run_mix(plan_path: Path, out_path: Path | None, *, dry_run: bool = False) ->
                         gain_offset_db=float(ins.get('gain_offset_db', 0.0)),
                         max_gain_db=ins.get('max_gain_db'),
                     )
-                    apply_fade(se_l, se_r, sr, int(ins.get('fade_in_ms', 30)), int(ins.get('fade_out_ms', 50)))
-                    g_lin = db_to_lin(gain_db)
-                    for i in range(len(se_l)):
-                        se_l[i] *= g_lin
-                        se_r[i] *= g_lin
+                    if not dry_run:
+                        apply_fade(se_l, se_r, sr, int(ins.get('fade_in_ms', 30)), int(ins.get('fade_out_ms', 50)))
+                        g_lin = db_to_lin(gain_db)
+                        for i in range(len(se_l)):
+                            se_l[i] *= g_lin
+                            se_r[i] *= g_lin
+                        if parsed_se_pos is not None:
+                            se_l, se_r = apply_binaural_spatial(se_l, se_r, sr, parsed_se_pos)
 
                     cursor += max(0, int(sr * pre_ms / 1000))
                     se_start = cursor
                     se_end = cursor + len(se_l)
                     timeline_items.append(('se', ins['wav'], se_start, se_end, se_l, se_r))
                     cursor = se_end + max(0, int(sr * post_ms / 1000))
-                    se_reports.append({
+                    se_entry = {
                         'type': 'insert_after',
                         'after_id': uid,
                         'wav': ins['wav'],
@@ -517,7 +873,10 @@ def run_mix(plan_path: Path, out_path: Path | None, *, dry_run: bool = False) ->
                         'applied_gain_db': gain_db,
                         'gain_capped': capped,
                         'duration_seconds': round(len(se_l) / sr, 3),
-                    })
+                    }
+                    if se_pos is not None:
+                        se_entry['position'] = se_pos
+                    se_reports.append(se_entry)
             else:
                 if idx < len(loaded_utts) - 1:
                     cursor += max(0, int(sr * int(u.get('pause_after_ms', 280)) / 1000))
@@ -569,7 +928,7 @@ def run_mix(plan_path: Path, out_path: Path | None, *, dry_run: bool = False) ->
                 'span_seconds': round((ov_end - ov_start) / sr, 3),
             })
 
-        report = {
+        report: dict[str, object] = {
             'status': 'dry_run_ok' if dry_run else 'mixed',
             'sample_rate': sr,
             'channels': 2,
@@ -580,6 +939,8 @@ def run_mix(plan_path: Path, out_path: Path | None, *, dry_run: bool = False) ->
             'total_duration_seconds': round(total_frames / sr, 3),
             'tracks': se_reports,
         }
+        if utt_positions:
+            report['utterance_positions'] = utt_positions
         if dry_run:
             print(json.dumps(report, ensure_ascii=False, indent=2))
             return 0

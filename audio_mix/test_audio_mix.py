@@ -8,7 +8,7 @@ import tempfile
 import unittest
 import wave
 import zipfile
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 
 import irodori_mix as amix
 
@@ -163,6 +163,106 @@ class AudioMixTests(unittest.TestCase):
                 self.assertEqual(w.getnchannels(), 2)
                 self.assertEqual(w.getframerate(), 48000)
                 self.assertAlmostEqual(w.getnframes() / 48000, 1.2, delta=0.05)
+
+    def test_binaural_spatial_creates_ild_itd_and_movement(self):
+        raw = make_pcm16_wav_bytes(48000, 1, 0.2, 1000.0, 0.5)
+        sr, _, l_in, r_in, _ = amix.read_wav_bytes(raw, 'tone.wav')
+
+        # right_close: right ear must be significantly louder than left ear (ILD + head shadow)
+        l_rc, r_rc = amix.apply_binaural_spatial(l_in, r_in, sr, 'right_close')
+        rms_l = math.sqrt(sum(v * v for v in l_rc) / len(l_rc))
+        rms_r = math.sqrt(sum(v * v for v in r_rc) / len(r_rc))
+        self.assertGreater(amix.lin_to_db(rms_r) - amix.lin_to_db(rms_l), 8.0)
+
+        # move_left_to_right: first quarter louder on left, last quarter louder on right
+        l_mv, r_mv = amix.apply_binaural_spatial(l_in, r_in, sr, 'move_left_to_right')
+        q = len(l_mv) // 4
+        self.assertGreater(sum(v * v for v in l_mv[:q]), sum(v * v for v in r_mv[:q]))
+        self.assertGreater(sum(v * v for v in r_mv[-q:]), sum(v * v for v in l_mv[-q:]))
+
+    def test_head_shadow_has_monotonic_rolloff_without_comb_notch(self):
+        sr = 48000
+        far_rms_by_freq: list[float] = []
+        # Test intermediate pan ('left_mid' -> right ear is far ear) where dry+2nd-order LPF previously notched
+        for freq in (400.0, 1500.0, 3200.0, 7000.0):
+            raw = make_pcm16_wav_bytes(sr, 1, 0.15, freq, 0.5)
+            _, _, l_in, r_in, _ = amix.read_wav_bytes(raw, f'{freq}.wav')
+            # Zero proximity so we measure pure head-shadow frequency response
+            _, r_far = amix.apply_binaural_spatial(
+                l_in, r_in, sr, {'pan_start': -0.60, 'pan_end': -0.60, 'proximity': 0.0}
+            )
+            steady = r_far[200:]
+            rms = math.sqrt(sum(v * v for v in steady) / len(steady))
+            far_rms_by_freq.append(rms)
+
+        self.assertGreater(far_rms_by_freq[0], far_rms_by_freq[1])
+        self.assertGreater(far_rms_by_freq[1], far_rms_by_freq[2])
+        self.assertGreater(far_rms_by_freq[2], far_rms_by_freq[3])
+
+    def test_equal_power_movement_has_no_center_loudness_bulge(self):
+        sr = 48000
+        raw = make_pcm16_wav_bytes(sr, 1, 0.4, 440.0, 0.5)
+        _, _, l_in, r_in, _ = amix.read_wav_bytes(raw, 'move440.wav')
+        l_mv, r_mv = amix.apply_binaural_spatial(
+            l_in, r_in, sr, {'pan_start': 0.85, 'pan_end': -0.85, 'proximity': 0.0}
+        )
+        n = len(l_mv)
+        edge_slice = range(64, int(n * 0.15))
+        center_slice = range(int(n * 0.45), int(n * 0.55))
+        edge_power = sum(0.5 * (l_mv[i] ** 2 + r_mv[i] ** 2) for i in edge_slice) / len(edge_slice)
+        center_power = sum(0.5 * (l_mv[i] ** 2 + r_mv[i] ** 2) for i in center_slice) / len(center_slice)
+        diff_db = abs(10.0 * math.log10(center_power / edge_power))
+        self.assertLess(diff_db, 0.4)
+
+    def test_true_stereo_input_preserves_phase_without_mono_collapse(self):
+        sr = 48000
+        n = int(sr * 0.1)
+        # Anti-phase stereo signal: 0.5*(L+R) would annihilate to 0.0 if collapsed to mono
+        l_in = array('f', (0.5 * math.sin(2.0 * math.pi * 440.0 * i / sr) for i in range(n)))
+        r_in = array('f', (-v for v in l_in))
+        err_buf = io.StringIO()
+        with redirect_stderr(err_buf):
+            out_l, out_r = amix.apply_binaural_spatial(l_in, r_in, sr, 'right_close')
+        self.assertIn('WARNING', err_buf.getvalue())
+        rms_l = math.sqrt(sum(v * v for v in out_l) / n)
+        rms_r = math.sqrt(sum(v * v for v in out_r) / n)
+        self.assertGreater(rms_r, 0.25)
+        self.assertGreater(rms_l, 0.10)
+
+    def test_strict_spatial_validation_and_dry_run_reporting(self):
+        with self.assertRaises(ValueError):
+            amix.parse_spatial_spec('unknown_preset')
+        with self.assertRaises(ValueError):
+            amix.parse_spatial_spec({'pan_start': 0.5, 'typo_key': 1.0})
+        with self.assertRaises(ValueError):
+            amix.parse_spatial_spec({'pan_start': True})
+
+        # Single pan_start without pan_end or preset should stay static at pan_start
+        cfg = amix.parse_spatial_spec({'pan_start': 0.75})
+        self.assertEqual(cfg['pan_start'], 0.75)
+        self.assertEqual(cfg['pan_end'], 0.75)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            wav_path = root / 'u1.wav'
+            wav_path.write_bytes(make_pcm16_wav_bytes(48000, 1, 0.2, 440.0, 0.4))
+            bad_plan = root / 'bad_plan.json'
+            bad_plan.write_text(json.dumps({
+                'utterances': [{'id': 't0010', 'file': str(wav_path), 'position': {'bad_key': 1}}],
+            }), encoding='utf-8')
+            with self.assertRaises(ValueError):
+                amix.run_mix(bad_plan, None, dry_run=True)
+
+            good_plan = root / 'good_plan.json'
+            good_plan.write_text(json.dumps({
+                'utterances': [{'id': 't0010', 'file': str(wav_path), 'position': 'right_close'}],
+            }), encoding='utf-8')
+            dry_buf = io.StringIO()
+            with redirect_stdout(dry_buf):
+                rc = amix.run_mix(good_plan, None, dry_run=True)
+            self.assertEqual(rc, 0)
+            rep = json.loads(dry_buf.getvalue())
+            self.assertEqual(rep['utterance_positions'], {'t0010': 'right_close'})
 
 
 if __name__ == '__main__':
