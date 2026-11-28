@@ -80,14 +80,24 @@ def _coerce_finite_float(val: object, field_name: str) -> float:
     return float(val)
 
 
+def _default_micro_motion(pan_start: float, pan_end: float, proximity: float) -> float:
+    if abs(pan_end - pan_start) > 1e-4:
+        return 0.0
+    return 0.045 * proximity if (proximity >= 0.3 and abs(pan_start) >= 0.4) else 0.0
+
+
 def parse_spatial_spec(position: str | dict | None) -> dict[str, float] | None:
-    """Validate and normalize a spatial preset name or custom parameter dict."""
+    """Validate and normalize a spatial preset name or custom parameter dict (idempotent)."""
     if position is None:
         return None
     if isinstance(position, str):
         if position not in SPATIAL_PRESETS:
             raise ValueError(f'未対応の空間プリセットです: {position}（選択可能: {", ".join(SPATIAL_PRESETS)}）')
-        return {**SPATIAL_PRESETS[position], 'micro_motion': -1.0}
+        base = SPATIAL_PRESETS[position]
+        return {
+            **base,
+            'micro_motion': _default_micro_motion(base['pan_start'], base['pan_end'], base['proximity']),
+        }
     if isinstance(position, dict):
         if not position:
             raise ValueError('position オブジェクトが空です')
@@ -114,17 +124,23 @@ def parse_spatial_spec(position: str | dict | None) -> dict[str, float] | None:
         far_lpf_hz = _coerce_finite_float(position.get('far_lpf_hz', base['far_lpf_hz']), 'far_lpf_hz')
         if far_lpf_hz < 0.0:
             raise ValueError(f'position.far_lpf_hz は 0 以上で指定してください: {far_lpf_hz}')
+
+        c_pan_start = max(-1.0, min(1.0, pan_start))
+        c_pan_end = max(-1.0, min(1.0, pan_end))
+        c_prox = max(0.0, min(1.0, proximity))
+
         if 'micro_motion' in position:
-            micro_motion = _coerce_finite_float(position['micro_motion'], 'micro_motion')
-            if micro_motion < 0.0 or micro_motion > 0.25:
-                raise ValueError(f'position.micro_motion は 0.0〜0.25 の範囲で指定してください: {micro_motion}')
+            raw_mm = _coerce_finite_float(position['micro_motion'], 'micro_motion')
+            if raw_mm < 0.0 or raw_mm > 0.25:
+                raise ValueError(f'position.micro_motion は 0.0〜0.25 の範囲で指定してください: {raw_mm}')
+            micro_motion = 0.0 if abs(c_pan_end - c_pan_start) > 1e-4 else raw_mm
         else:
-            micro_motion = -1.0
+            micro_motion = _default_micro_motion(c_pan_start, c_pan_end, c_prox)
 
         return {
-            'pan_start': max(-1.0, min(1.0, pan_start)),
-            'pan_end': max(-1.0, min(1.0, pan_end)),
-            'proximity': max(0.0, min(1.0, proximity)),
+            'pan_start': c_pan_start,
+            'pan_end': c_pan_end,
+            'proximity': c_prox,
             'distance_db': distance_db,
             'far_lpf_hz': far_lpf_hz,
             'micro_motion': micro_motion,
@@ -139,6 +155,7 @@ def _is_noop_spatial(cfg: dict[str, float]) -> bool:
         and cfg['proximity'] < 1e-4
         and abs(cfg['distance_db']) < 0.05
         and cfg['far_lpf_hz'] <= 0.0
+        and cfg.get('micro_motion', 0.0) < 1e-5
     )
 
 
@@ -317,7 +334,7 @@ def apply_binaural_spatial(left: array, right: array, sr: int, position: str | d
     prox = cfg['proximity']
     pan_start = cfg['pan_start']
     pan_end = cfg['pan_end']
-    raw_micro = cfg.get('micro_motion', -1.0)
+    micro_motion_cfg = cfg['micro_motion']
 
     # Protect pre-recorded 2ch binaural/stereo assets from destructive mono collapse
     if _is_true_stereo(left, right):
@@ -357,7 +374,7 @@ def apply_binaural_spatial(left: array, right: array, sr: int, position: str | d
     mono = array('f', (0.5 * (left[i] + right[i]) for i in range(n)))
     mono = _apply_distance_and_proximity_chain(mono, sr, dist_db, far_lpf, prox)
 
-    if abs(pan_start) < 0.01 and abs(pan_end) < 0.01:
+    if abs(pan_start) < 0.01 and abs(pan_end) < 0.01 and micro_motion_cfg < 1e-5:
         return mono, array('f', mono)
 
     # Near-ear frontal pinna presence (3.2 kHz boost), scaled proportionally by |pan| so pan=0 crossing is exact
@@ -378,13 +395,7 @@ def apply_binaural_spatial(left: array, right: array, sr: int, position: str | d
     out_l = array('f', [0.0]) * n
     out_r = array('f', [0.0]) * n
     moving = abs(pan_end - pan_start) > 1e-4
-    # Subtle breathing-rate micro-motion on close static side presets to break front-back confusion
-    if moving:
-        micro_motion_amp = 0.0
-    elif raw_micro >= 0.0:
-        micro_motion_amp = raw_micro
-    else:
-        micro_motion_amp = 0.045 * prox if (prox >= 0.3 and abs(pan_start) >= 0.4) else 0.0
+    micro_motion_amp = 0.0 if moving else micro_motion_cfg
 
     # Fast path for static positioning without micro-motion: precompute all constants outside the sample loop
     if not moving and micro_motion_amp == 0.0:

@@ -242,10 +242,18 @@ class AudioMixTests(unittest.TestCase):
         self.assertEqual(cfg['pan_start'], 0.75)
         self.assertEqual(cfg['pan_end'], 0.75)
 
+        # Idempotency check: re-parsing an already normalized spec must succeed and return identical values
+        for preset_name in amix.SPATIAL_PRESETS:
+            once = amix.parse_spatial_spec(preset_name)
+            twice = amix.parse_spatial_spec(once)
+            self.assertEqual(once, twice)
+
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             wav_path = root / 'u1.wav'
+            se_path = root / 'se1.wav'
             wav_path.write_bytes(make_pcm16_wav_bytes(48000, 1, 0.2, 440.0, 0.4))
+            se_path.write_bytes(make_pcm16_wav_bytes(48000, 1, 0.15, 800.0, 0.3))
             bad_plan = root / 'bad_plan.json'
             bad_plan.write_text(json.dumps({
                 'utterances': [{'id': 't0010', 'file': str(wav_path), 'position': {'bad_key': 1}}],
@@ -255,14 +263,39 @@ class AudioMixTests(unittest.TestCase):
 
             good_plan = root / 'good_plan.json'
             good_plan.write_text(json.dumps({
-                'utterances': [{'id': 't0010', 'file': str(wav_path), 'position': 'right_close'}],
+                'utterances': [
+                    {
+                        'id': 't0010',
+                        'file': str(wav_path),
+                        'position': 'right_close',
+                        'insert_after': [
+                            {'wav': str(se_path), 'category': 'foley', 'position': 'left_mid'},
+                        ],
+                    },
+                    {
+                        'id': 't0020',
+                        'file': str(wav_path),
+                        'position': {'preset': 'left_close', 'pan_start': -0.80},
+                    },
+                ],
             }), encoding='utf-8')
             dry_buf = io.StringIO()
             with redirect_stdout(dry_buf):
                 rc = amix.run_mix(good_plan, None, dry_run=True)
             self.assertEqual(rc, 0)
             rep = json.loads(dry_buf.getvalue())
-            self.assertEqual(rep['utterance_positions'], {'t0010': 'right_close'})
+            self.assertEqual(
+                rep['utterance_positions'],
+                {'t0010': 'right_close', 't0020': {'preset': 'left_close', 'pan_start': -0.80}},
+            )
+
+            # Full non-dry-run mix path must also succeed without double-parse errors
+            out_wav = root / 'spatial_mixed.wav'
+            mix_buf = io.StringIO()
+            with redirect_stdout(mix_buf):
+                rc_full = amix.run_mix(good_plan, out_wav, dry_run=False)
+            self.assertEqual(rc_full, 0)
+            self.assertTrue(out_wav.is_file())
 
     def test_close_preset_applies_front_pinna_presence_and_micro_motion(self):
         sr = 48000
