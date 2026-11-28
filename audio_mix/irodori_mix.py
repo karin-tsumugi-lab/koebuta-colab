@@ -53,10 +53,10 @@ CATEGORIES: dict[str, dict[str, float | bool]] = {
 SPATIAL_PRESETS: dict[str, dict[str, float]] = {
     'center': {'pan_start': 0.0, 'pan_end': 0.0, 'proximity': 0.0, 'distance_db': 0.0, 'far_lpf_hz': 0.0},
     'far_center': {'pan_start': 0.0, 'pan_end': 0.0, 'proximity': 0.0, 'distance_db': -4.5, 'far_lpf_hz': 4200.0},
-    'left_mid': {'pan_start': -0.60, 'pan_end': -0.60, 'proximity': 0.35, 'distance_db': 0.0, 'far_lpf_hz': 0.0},
-    'right_mid': {'pan_start': 0.60, 'pan_end': 0.60, 'proximity': 0.35, 'distance_db': 0.0, 'far_lpf_hz': 0.0},
-    'left_close': {'pan_start': -0.92, 'pan_end': -0.92, 'proximity': 1.0, 'distance_db': 0.0, 'far_lpf_hz': 0.0},
-    'right_close': {'pan_start': 0.92, 'pan_end': 0.92, 'proximity': 1.0, 'distance_db': 0.0, 'far_lpf_hz': 0.0},
+    'left_mid': {'pan_start': -0.58, 'pan_end': -0.58, 'proximity': 0.40, 'distance_db': 0.0, 'far_lpf_hz': 0.0},
+    'right_mid': {'pan_start': 0.58, 'pan_end': 0.58, 'proximity': 0.40, 'distance_db': 0.0, 'far_lpf_hz': 0.0},
+    'left_close': {'pan_start': -0.82, 'pan_end': -0.82, 'proximity': 1.0, 'distance_db': 0.0, 'far_lpf_hz': 0.0},
+    'right_close': {'pan_start': 0.82, 'pan_end': 0.82, 'proximity': 1.0, 'distance_db': 0.0, 'far_lpf_hz': 0.0},
     'move_center_to_right': {'pan_start': 0.0, 'pan_end': 0.80, 'proximity': 0.65, 'distance_db': 0.0, 'far_lpf_hz': 0.0},
     'move_center_to_left': {'pan_start': 0.0, 'pan_end': -0.80, 'proximity': 0.65, 'distance_db': 0.0, 'far_lpf_hz': 0.0},
     'move_right_to_left': {'pan_start': 0.85, 'pan_end': -0.85, 'proximity': 0.85, 'distance_db': 0.0, 'far_lpf_hz': 0.0},
@@ -70,6 +70,7 @@ SPATIAL_KEYS: frozenset[str] = frozenset({
     'proximity',
     'distance_db',
     'far_lpf_hz',
+    'micro_motion',
 })
 
 
@@ -86,7 +87,7 @@ def parse_spatial_spec(position: str | dict | None) -> dict[str, float] | None:
     if isinstance(position, str):
         if position not in SPATIAL_PRESETS:
             raise ValueError(f'未対応の空間プリセットです: {position}（選択可能: {", ".join(SPATIAL_PRESETS)}）')
-        return dict(SPATIAL_PRESETS[position])
+        return {**SPATIAL_PRESETS[position], 'micro_motion': -1.0}
     if isinstance(position, dict):
         if not position:
             raise ValueError('position オブジェクトが空です')
@@ -113,6 +114,12 @@ def parse_spatial_spec(position: str | dict | None) -> dict[str, float] | None:
         far_lpf_hz = _coerce_finite_float(position.get('far_lpf_hz', base['far_lpf_hz']), 'far_lpf_hz')
         if far_lpf_hz < 0.0:
             raise ValueError(f'position.far_lpf_hz は 0 以上で指定してください: {far_lpf_hz}')
+        if 'micro_motion' in position:
+            micro_motion = _coerce_finite_float(position['micro_motion'], 'micro_motion')
+            if micro_motion < 0.0 or micro_motion > 0.25:
+                raise ValueError(f'position.micro_motion は 0.0〜0.25 の範囲で指定してください: {micro_motion}')
+        else:
+            micro_motion = -1.0
 
         return {
             'pan_start': max(-1.0, min(1.0, pan_start)),
@@ -120,6 +127,7 @@ def parse_spatial_spec(position: str | dict | None) -> dict[str, float] | None:
             'proximity': max(0.0, min(1.0, proximity)),
             'distance_db': distance_db,
             'far_lpf_hz': far_lpf_hz,
+            'micro_motion': micro_motion,
         }
     raise ValueError('position はプリセット名またはオブジェクトで指定してください')
 
@@ -254,10 +262,44 @@ def _apply_distance_and_proximity_chain(
         for i in range(len(out)):
             out[i] *= dg
     if prox > 0.01:
-        out = apply_shelf_biquad(out, sr, 180.0, 3.0 * prox, high=False)
-        out = apply_shelf_biquad(out, sr, 9500.0, 2.5 * prox, high=True)
-        out = apply_peaking_biquad(out, sr, 6200.0, -2.5 * prox, q=2.4)
+        out = apply_shelf_biquad(out, sr, 180.0, 2.4 * prox, high=False)
+        out = apply_shelf_biquad(out, sr, 9500.0, 2.2 * prox, high=True)
+        out = apply_peaking_biquad(out, sr, 7400.0, -1.8 * prox, q=3.0)
     return out
+
+
+def _add_subtle_early_reflections(
+    out_l: array,
+    out_r: array,
+    mono: array,
+    sr: int,
+    prox: float,
+    pan_bias: float = 0.0,
+) -> None:
+    """Add ultra-subtle, direction-aware short early reflections (-25 dB) to relieve in-head/back localization."""
+    n = len(mono)
+    if n == 0 or prox <= 0.01:
+        return
+    er_src = apply_lowpass_biquad(mono, sr, 3400.0, q=0.707)
+    scale = 0.55 + 0.45 * prox
+    far_er_atten = 1.0 - 0.35 * min(1.0, abs(pan_bias))
+    primary_taps = ((int(sr * 0.0074), 0.038 * scale), (int(sr * 0.0136), -0.026 * scale))
+    secondary_taps = (
+        (int(sr * 0.0097), 0.036 * scale * far_er_atten),
+        (int(sr * 0.0168), -0.024 * scale * far_er_atten),
+    )
+    if pan_bias >= 0.0:
+        r_taps, l_taps = primary_taps, secondary_taps
+    else:
+        l_taps, r_taps = primary_taps, secondary_taps
+    for d, g in l_taps:
+        if 0 < d < n:
+            for i in range(d, n):
+                out_l[i] += er_src[i - d] * g
+    for d, g in r_taps:
+        if 0 < d < n:
+            for i in range(d, n):
+                out_r[i] += er_src[i - d] * g
 
 
 def apply_binaural_spatial(left: array, right: array, sr: int, position: str | dict | None) -> tuple[array, array]:
@@ -275,6 +317,7 @@ def apply_binaural_spatial(left: array, right: array, sr: int, position: str | d
     prox = cfg['proximity']
     pan_start = cfg['pan_start']
     pan_end = cfg['pan_end']
+    raw_micro = cfg.get('micro_motion', -1.0)
 
     # Protect pre-recorded 2ch binaural/stereo assets from destructive mono collapse
     if _is_true_stereo(left, right):
@@ -317,24 +360,45 @@ def apply_binaural_spatial(left: array, right: array, sr: int, position: str | d
     if abs(pan_start) < 0.01 and abs(pan_end) < 0.01:
         return mono, array('f', mono)
 
+    # Near-ear frontal pinna presence (3.2 kHz boost), scaled proportionally by |pan| so pan=0 crossing is exact
+    has_pinna = prox > 0.01
+    pinna_diff = (
+        array('f', (b - m for m, b in zip(mono, apply_peaking_biquad(mono, sr, 3200.0, 2.6 * prox, q=1.2))))
+        if has_pinna
+        else None
+    )
+
     # Max ITD ~ 0.60 ms (approx 29 samples at 48kHz)
     max_itd_samples = 0.00060 * sr
-    # Max ILD ratio on far ear relative to near ear: up to 11.5 dB when close to ear
-    max_ild_db = 8.0 + 3.5 * prox
+    # Max ILD ratio on far ear relative to near ear: up to 12.5 dB when close to ear
+    max_ild_db = 8.0 + 4.5 * prox
     shadow_scale = 0.70 + 0.30 * prox
+    pan_bias = 0.5 * (pan_start + pan_end)
 
     out_l = array('f', [0.0]) * n
     out_r = array('f', [0.0]) * n
     moving = abs(pan_end - pan_start) > 1e-4
+    # Subtle breathing-rate micro-motion on close static side presets to break front-back confusion
+    if moving:
+        micro_motion_amp = 0.0
+    elif raw_micro >= 0.0:
+        micro_motion_amp = raw_micro
+    else:
+        micro_motion_amp = 0.045 * prox if (prox >= 0.3 and abs(pan_start) >= 0.4) else 0.0
 
-    # Fast path for static positioning: precompute all constants outside the sample loop
-    if not moving:
+    # Fast path for static positioning without micro-motion: precompute all constants outside the sample loop
+    if not moving and micro_motion_amp == 0.0:
         pan = pan_start
         apan = abs(pan)
         delay = apan * max_itd_samples
         near_gain, far_gain = _equal_power_binaural_gains(apan, max_ild_db)
         beta = _head_shadow_one_pole_beta(sr, min(1.0, apan * shadow_scale))
         lp_state = 0.0
+        near_src = (
+            array('f', (mono[i] + apan * pinna_diff[i] for i in range(n)))
+            if pinna_diff is not None
+            else mono
+        )
 
         if pan >= 0.0:
             near_out, far_out = out_r, out_l
@@ -342,7 +406,7 @@ def apply_binaural_spatial(left: array, right: array, sr: int, position: str | d
             near_out, far_out = out_l, out_r
 
         for i in range(n):
-            near_out[i] = mono[i] * near_gain
+            near_out[i] = near_src[i] * near_gain
             src_pos = i - delay
             if src_pos <= 0.0:
                 delayed = 0.0
@@ -352,17 +416,23 @@ def apply_binaural_spatial(left: array, right: array, sr: int, position: str | d
                 delayed = mono[idx] * (1.0 - frac) + mono[idx + 1] * frac if idx + 1 < n else mono[n - 1]
             lp_state += beta * (delayed - lp_state)
             far_out[i] = lp_state * far_gain
+        _add_subtle_early_reflections(out_l, out_r, mono, sr, prox, pan_bias)
         return out_l, out_r
 
-    # Moving trajectory path: 32-sample (~0.67ms) control-rate coefficient updates with per-sample smooth ITD
+    # Moving or micro-motion trajectory path: 32-sample (~0.67ms) control-rate updates with per-sample smooth ITD
     inv_n = 1.0 / max(1, n - 1)
+    micro_w = 2.0 * math.pi * 0.28 / sr
     lp_state = 0.0
     for b0 in range(0, n, 32):
         b1 = min(n, b0 + 32)
-        t0 = 0.5 - 0.5 * math.cos(math.pi * (b0 * inv_n))
-        t1 = 0.5 - 0.5 * math.cos(math.pi * (min(n - 1, b1) * inv_n))
-        pan0 = pan_start + (pan_end - pan_start) * t0
-        pan1 = pan_start + (pan_end - pan_start) * t1
+        if moving:
+            t0 = 0.5 - 0.5 * math.cos(math.pi * (b0 * inv_n))
+            t1 = 0.5 - 0.5 * math.cos(math.pi * (min(n - 1, b1) * inv_n))
+            pan0 = pan_start + (pan_end - pan_start) * t0
+            pan1 = pan_start + (pan_end - pan_start) * t1
+        else:
+            pan0 = max(-1.0, min(1.0, pan_start + micro_motion_amp * math.sin(micro_w * b0)))
+            pan1 = max(-1.0, min(1.0, pan_start + micro_motion_amp * math.sin(micro_w * min(n - 1, b1))))
         d_pan = (pan1 - pan0) / max(1, b1 - b0)
 
         pan_mid = 0.5 * (pan0 + pan1)
@@ -372,7 +442,8 @@ def apply_binaural_spatial(left: array, right: array, sr: int, position: str | d
 
         pan = pan0
         for i in range(b0, b1):
-            delay = abs(pan) * max_itd_samples
+            apan = abs(pan)
+            delay = apan * max_itd_samples
             src_pos = i - delay
             if src_pos <= 0.0:
                 delayed = 0.0
@@ -381,7 +452,8 @@ def apply_binaural_spatial(left: array, right: array, sr: int, position: str | d
                 frac = src_pos - idx
                 delayed = mono[idx] * (1.0 - frac) + mono[idx + 1] * frac if idx + 1 < n else mono[n - 1]
             lp_state += beta * (delayed - lp_state)
-            near_sample = mono[i] * near_gain
+            near_val = mono[i] + apan * pinna_diff[i] if pinna_diff is not None else mono[i]
+            near_sample = near_val * near_gain
             far_sample = lp_state * far_gain
             if pan >= 0.0:
                 out_r[i] = near_sample
@@ -391,6 +463,7 @@ def apply_binaural_spatial(left: array, right: array, sr: int, position: str | d
                 out_r[i] = far_sample
             pan += d_pan
 
+    _add_subtle_early_reflections(out_l, out_r, mono, sr, prox, pan_bias)
     return out_l, out_r
 
 

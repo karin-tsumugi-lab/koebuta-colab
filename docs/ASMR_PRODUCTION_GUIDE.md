@@ -158,16 +158,16 @@ python3 audio_mix/irodori_mix.py \
 |---|---|---|
 | `center` | 正面中央（既定） | 加工なし（L=R） |
 | `far_center` | 少し離れた正面・扉越し | 音量 `-4.5 dB` ＋ 高域ローパス（`4.2 kHz`）で距離感を演出 |
-| `left_mid` / `right_mid` | 左斜め ／ 右斜め（会話距離） | 中程度のITD・等パワーILD・1次頭部陰影LPF ＋ 軽い近接感（`proximity: 0.35`） |
-| `left_close` / `right_close` | **左耳元 ／ 右耳元（極近接）** | 最大級のITD・等パワーILD・1次頭部陰影LPF（約 `1.7 kHz`）＋ 近接低域（`180 Hz`）・吐息Air（`9.5 kHz`）強調・歯擦音抑制（`6.2 kHz`） |
+| `left_mid` / `right_mid` | 左斜め前 ／ 右斜め前（会話距離） | 中程度のITD・等パワーILD・1次頭部陰影LPF ＋ 前方耳介EQ・軽い近接感（`proximity: 0.40`） |
+| `left_close` / `right_close` | **左耳元 ／ 右耳元（極近接）** | 斜め前寄り配置（`pan: ±0.82`）＋ 強ILD・1次頭部陰影LPF ＋ **近耳前方プレゼンス（`3.2 kHz`）・極微初期反射・呼吸レベルの微小揺らぎ**（後頭部寄りへの前後混同を防止）＋ 近接低域（`180 Hz`）・吐息Air（`9.5 kHz`）・歯擦音抑制（`7.4 kHz`） |
 | `move_center_to_right` | 正面 → 右側へ移動 | 発話中に中央から右へ等パワーのまま滑らかに移動（cosイージング） |
 | `move_center_to_left` | 正面 → 左側へ移動 | 発話中に中央から左へ等パワーのまま滑らかに移動 |
-| `move_right_to_left` | 右耳元 → 左耳元へ移動 | 発話中に右耳側から正面を通って左耳側へ音量膨張なく回り込む |
-| `move_left_to_right` | 左耳元 → 右耳元へ移動 | 発話中に左耳側から正面を通って右耳側へ音量膨張なく回り込む |
+| `move_right_to_left` | 右耳元 → 左耳元へ移動 | 発話中に右耳側から正面を通って左耳側へ音量膨張・位相段差なく回り込む |
+| `move_left_to_right` | 左耳元 → 右耳元へ移動 | 発話中に左耳側から正面を通って右耳側へ音量膨張・位相段差なく回り込む |
 
-さらに細かく指定したい場合は、オブジェクト形式で直接パラメータを渡せます（使用可能キー：`preset`, `pan_start`, `pan_end`, `proximity`, `distance_db`, `far_lpf_hz`。未定義キーや不正なプリセット名は `--dry-run` 時点で検証エラーになります）。
+さらに細かく指定したい場合は、オブジェクト形式で直接パラメータを渡せます（使用可能キー：`preset`, `pan_start`, `pan_end`, `proximity`, `distance_db`, `far_lpf_hz`, `micro_motion`。未定義キーや不正なプリセット名は `--dry-run` 時点で検証エラーになります）。時計の秒針やオルゴールなど、人間のような呼吸揺らぎを止めたい近接モノラルSEには `"micro_motion": 0.0` を併用してください。
 ```json
-"position": {"preset": "right_close", "pan_start": 0.75, "pan_end": 0.95, "proximity": 0.9, "distance_db": 0.0}
+"position": {"preset": "right_close", "pan_start": 0.78, "pan_end": 0.86, "proximity": 0.9, "distance_db": 0.0}
 ```
 
 ### Step 4：ステレオWAVへ書き出してイヤホンで試聴する

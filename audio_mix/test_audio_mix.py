@@ -264,6 +264,46 @@ class AudioMixTests(unittest.TestCase):
             rep = json.loads(dry_buf.getvalue())
             self.assertEqual(rep['utterance_positions'], {'t0010': 'right_close'})
 
+    def test_close_preset_applies_front_pinna_presence_and_micro_motion(self):
+        sr = 48000
+        # 1. Near-ear 3.2 kHz frontal pinna presence boost on right_close vs 1.0 kHz
+        raw_1k = make_pcm16_wav_bytes(sr, 1, 0.2, 1000.0, 0.4)
+        raw_3k2 = make_pcm16_wav_bytes(sr, 1, 0.2, 3200.0, 0.4)
+        _, _, l1, r1, _ = amix.read_wav_bytes(raw_1k, '1k.wav')
+        _, _, l3, r3, _ = amix.read_wav_bytes(raw_3k2, '3k2.wav')
+        _, out_r1 = amix.apply_binaural_spatial(l1, r1, sr, 'right_close')
+        _, out_r3 = amix.apply_binaural_spatial(l3, r3, sr, 'right_close')
+        rms_1k = math.sqrt(sum(v * v for v in out_r1[400:]) / (len(out_r1) - 400))
+        rms_3k2 = math.sqrt(sum(v * v for v in out_r3[400:]) / (len(out_r3) - 400))
+        self.assertGreater(amix.lin_to_db(rms_3k2) - amix.lin_to_db(rms_1k), 1.5)
+
+        # 2. Micro-motion gently modulates far/near ratio over 1.2s, while micro_motion=0.0 stays strictly static
+        raw_long = make_pcm16_wav_bytes(sr, 1, 1.2, 600.0, 0.4)
+        _, _, ll, rl, _ = amix.read_wav_bytes(raw_long, 'long.wav')
+        ml, mr = amix.apply_binaural_spatial(ll, rl, sr, 'right_close')
+        sl, sr_fixed = amix.apply_binaural_spatial(ll, rl, sr, {'preset': 'right_close', 'micro_motion': 0.0})
+
+        def ild_db_in(l_ch: array, r_ch: array, slc: slice) -> float:
+            rms_l = math.sqrt(sum(v * v for v in l_ch[slc]) / (slc.stop - slc.start))
+            rms_r = math.sqrt(sum(v * v for v in r_ch[slc]) / (slc.stop - slc.start))
+            return amix.lin_to_db(rms_r) - amix.lin_to_db(rms_l)
+
+        w_start = slice(int(sr * 0.05), int(sr * 0.20))
+        w_peak = slice(int(sr * 0.82), int(sr * 0.97))
+        self.assertGreater(abs(ild_db_in(ml, mr, w_peak) - ild_db_in(ml, mr, w_start)), 0.30)
+        self.assertLess(abs(ild_db_in(sl, sr_fixed, w_peak) - ild_db_in(sl, sr_fixed, w_start)), 0.01)
+
+        # 3. Crossing pan=0 with high proximity ('move_right_to_left') has no step discontinuity
+        raw_cross = make_pcm16_wav_bytes(sr, 1, 0.3, 3200.0, 0.4)
+        _, _, lc, rc, _ = amix.read_wav_bytes(raw_cross, 'cross.wav')
+        cl, cr = amix.apply_binaural_spatial(lc, rc, sr, 'move_right_to_left')
+        mid = len(cl) // 2
+        max_step_l = max(abs(cl[i] - cl[i - 1]) for i in range(mid - 200, mid + 200))
+        max_step_r = max(abs(cr[i] - cr[i - 1]) for i in range(mid - 200, mid + 200))
+        # Pure 3.2 kHz sine at amp ~0.55 has max natural sample-to-sample step ~ 0.55 * 2*pi*3200/48000 ≈ 0.23
+        self.assertLess(max_step_l, 0.30)
+        self.assertLess(max_step_r, 0.30)
+
 
 if __name__ == '__main__':
     unittest.main()
